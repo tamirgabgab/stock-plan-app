@@ -170,7 +170,7 @@ def get_ticker_first_date(ticker_symbol: str) -> datetime:
 
 def get_stock_dates_bounds(portfolio_list: list):
     if not portfolio_list:
-        return datetime(1990, 1, 1).date(), (datetime.now() - relativedelta(days=2)).date()
+        return datetime(1990, 1, 1).date(), (datetime.now() - relativedelta(days=7)).date()
 
     tickers = set()
     total_months = 0
@@ -182,7 +182,7 @@ def get_stock_dates_bounds(portfolio_list: list):
 
     if not tickers:
         default_start = datetime(1990, 1, 1).date()
-        return default_start, (datetime.now() - relativedelta(months=total_months, days=2)).date()
+        return default_start, (datetime.now() - relativedelta(months=total_months, days=7)).date()
 
     first_start_date_list = []
     for ticker in tickers:
@@ -195,7 +195,7 @@ def get_stock_dates_bounds(portfolio_list: list):
     else:
         first_start_date = max(first_start_date_list)
 
-    final_start_date = (datetime.now() - relativedelta(months=total_months, days=2)).date()
+    final_start_date = (datetime.now() - relativedelta(months=total_months, days=7)).date()
 
     return first_start_date, final_start_date
 
@@ -456,3 +456,4 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
                   'max_val': max_val, 'max_date_range': max_date_str_range, 'total_withdraw': avg_withdraw}
 
     return {'stats_data': stats_data, 'hist_data': x_opt_np, 'x_var_name': x_var, 'results_data': results_data}
+

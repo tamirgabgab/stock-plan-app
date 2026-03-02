@@ -38,8 +38,8 @@ def apply_leverage_numpy(data_array: np.ndarray, leverage_factor: float, base_pr
 def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_date: datetime,
                               max_start_date: datetime, res_days: int, transition_tax: bool,
                               gain_tax: float, portfolio_list: list, x_var: str) -> dict:
-    result = calculate_date_rage(min_start_date=min_start_date, max_start_date=max_start_date,
-                                 res_days=res_days, portfolio_list=portfolio_list)
+    result = calculate_date_range(min_start_date=min_start_date, max_start_date=max_start_date,
+                                  res_days=res_days, portfolio_list=portfolio_list)
 
     ticker_data_dict = result['ticker_data_dict']
     start_date_arr = result['start_date_arr']
@@ -170,7 +170,7 @@ def get_ticker_first_date(ticker_symbol: str) -> datetime:
 
 def get_stock_dates_bounds(portfolio_list: list):
     if not portfolio_list:
-        return datetime(1990, 1, 1).date(), (datetime.now() - relativedelta(days=7)).date()
+        return datetime(1990, 1, 1).date(), LAST_DAY_DATA
 
     tickers = set()
     total_months = 0
@@ -182,7 +182,7 @@ def get_stock_dates_bounds(portfolio_list: list):
 
     if not tickers:
         default_start = datetime(1990, 1, 1).date()
-        return default_start, (datetime.now() - relativedelta(months=total_months, days=7)).date()
+        return default_start, LAST_DAY_DATA
 
     first_start_date_list = []
     for ticker in tickers:
@@ -195,14 +195,14 @@ def get_stock_dates_bounds(portfolio_list: list):
     else:
         first_start_date = max(first_start_date_list)
 
-    final_start_date = (datetime.now() - relativedelta(months=total_months, days=7)).date()
+    final_start_date = LAST_DAY_DATA
 
     return first_start_date, final_start_date
 
 
 @st.cache_data(show_spinner=False)
-def calculate_date_rage(min_start_date: datetime, max_start_date: datetime,
-                        res_days: int, portfolio_list: list) -> dict:
+def calculate_date_range(min_start_date: datetime, max_start_date: datetime,
+                         res_days: int, portfolio_list: list) -> dict:
     tickers = set()
     coeff_p = []
     total_motnhs = 0
@@ -234,7 +234,9 @@ def calculate_date_rage(min_start_date: datetime, max_start_date: datetime,
         full_dates = ticker_data.index
 
     first_start_date = max(first_start_date)
-    final_start_date = min(max_start_date, (datetime.now() - relativedelta(months=total_motnhs, days=2)).date())
+
+    bck_dawys = (datetime.now() - relativedelta(months=total_motnhs, days=BACKWARD_DAYS)).date()
+    final_start_date = min(max_start_date, bck_dawys)
 
     start_date_arr = pd.date_range(start=first_start_date, end=final_start_date, freq=f'{res_days}D')
 
@@ -341,8 +343,8 @@ def get_initial_guess(start_amount: float, end_amount: float, withdraw_p: float,
 def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min_start_date: datetime,
                                      max_start_date: datetime, res_days: int, x_var: str, gain_tax: float,
                                      portfolio_list: list) -> dict:
-    result = calculate_date_rage(min_start_date=min_start_date, max_start_date=max_start_date,
-                                 res_days=res_days, portfolio_list=portfolio_list)
+    result = calculate_date_range(min_start_date=min_start_date, max_start_date=max_start_date,
+                                  res_days=res_days, portfolio_list=portfolio_list)
 
     ticker_data_dict = result['ticker_data_dict']
     start_date_arr = result['start_date_arr']
@@ -456,4 +458,3 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
                   'max_val': max_val, 'max_date_range': max_date_str_range, 'total_withdraw': avg_withdraw}
 
     return {'stats_data': stats_data, 'hist_data': x_opt_np, 'x_var_name': x_var, 'results_data': results_data}
-

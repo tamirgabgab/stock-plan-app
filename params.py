@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+from dateutil.relativedelta import relativedelta
+from datetime import datetime
 
 STOCK_OPTIONS = {
     # --- Indices & ETFs ---
@@ -226,3 +228,6 @@ DF_HISTORY_2_CFG = {
 
 DEF_PORTFOLIO = [{COL_STOCK: "S&P 500 (^GSPC)", COL_WEIGHT: 100.0, COL_LEVERAGE: 1.0}]
 DEF_PORTFOLIO_2 = pd.DataFrame(columns=[COL_STOCK, COL_WEIGHT, COL_LEVERAGE])
+
+BACKWARD_DAYS = 7
+LAST_DAY_DATA = (datetime.now() - relativedelta(days=BACKWARD_DAYS)).date()

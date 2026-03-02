@@ -247,35 +247,33 @@ def stock_statistics_tab(st):
         with header_spot:
             st.subheader("📊 ניתוח התפלגות תשואות")
 
-        min_val = float(np.min(final_arr))
-        max_val = float(np.max(final_arr))
-
         with bin_spot:
             n_bins = st.slider("\u202bמספר עמודות (Bins) :", min_value=10,
                                max_value=400, value=100, step=1)
 
         with slider_spot:
-            col1, col2, col3, col4 = st.columns(spec=[2, 2, 1, 4])
-            unit_mapping = {"1": 1, "K": 1e3, "M": 1e6}
+            col1, col2, col3 = st.columns(spec=[2, 1, 1, ])
+            unit_mapping = {"1": float(1), "K": float(1e3), "M": float(1e6)}
 
             selected_label = st.session_state.get("unit_selector", "1")
             current_step = unit_mapping.get(selected_label, 1.0)
+            with col2:
+                selected_unit = st.segmented_control("\u202bיחידות :", options=["1", "K", "M"],
+                                                     default="1", key="unit_selector")
 
             with col1:
-                a_units = st.number_input("מינימום", min_value=0.0, max_value=None,
-                                          value=0.0, step=0.01, format="%.3f")
+                min_val = float(np.min(final_arr)) / current_step
+                max_val = float(np.max(final_arr)) / current_step
+                a_units, b_units = st.slider(label="טווח ערכים", min_value=min_val, max_value=max_val,
+                                             value=(min_val, max_val), step=0.01, format="%.3f", key="range_slider")
+
                 a = a_units * current_step
-            with col2:
-                b_units = st.number_input("מקסימום", min_value=0.0, max_value=None,
-                                          value=0.0, step=0.01, format="%.3f")
                 b = b_units * current_step
+
             with col3:
-                selected_unit = st.segmented_control("\u202bיחידות :", options=["1", "K", "M"],
-                                                     default="M", key="unit_selector")
-            with col4:
                 count_in_range = np.sum((final_arr >= a) & (final_arr <= b))
                 percentage = (count_in_range / len(final_arr)) * 100
-                col4.metric("מספר דגימות בטווח", f"{count_in_range:,} / {len(final_arr):,} ({percentage:.2f}%)")
+                col3.metric("מספר דגימות בטווח", f"{count_in_range:,} / {len(final_arr):,} ({percentage:.2f}%)")
 
         with warn_spot:
             if a > b:
@@ -297,32 +295,48 @@ def stock_statistics_tab(st):
             col1, col2 = st.columns(2)
             with col1:
                 min_val = final_stats['min_val']
-                min_range = final_stats['min_date_range']
-                col1.metric("מינימום", f"{min_val:,.2f}₪  ({min_range})")
+                col1.metric("מינימום", f"{min_val:,.2f}₪ ")
             with col2:
+                min_range = final_stats['min_date_range']
+                col2.metric("טווח תאריך מינימום", f"{min_range}")
+
+            col1, col2 = st.columns(2)
+            with col1:
                 max_val = final_stats['max_val']
+                col1.metric("מקסימום", f"{max_val:,.2f}₪")
+            with col2:
                 max_range = final_stats['max_date_range']
-                col2.metric("מקסימום", f"{max_val:,.2f}₪  ({max_range})")
+                col2.metric("טווח תאריך מינימום", f"{max_range}")
 
         with plot_spot:
             fig = px.histogram(x=final_arr, nbins=n_bins, title="",
                                labels={'x': '', 'y': 'שכיחות'}, color_discrete_sequence=['#1f77b4'])
 
-            fig.update_xaxes(range=[min_val, max_val], automargin=True, showspikes=True, spikesnap="data")
-
-            fig.update_layout(hovermode="x unified", hoverlabel=dict(bgcolor="white", font_size=14), bargap=0.02)
-
             bin_size = (max_val - min_val) / n_bins if max_val != min_val else 1
             highlight_end = b + (bin_size * 1) if b >= max_val * 0.99 else b
-            fig.update_traces(xbins=dict(start=min_val, end=max_val + bin_size, size=bin_size))
 
             if a < b:
                 fig.add_vrect(x0=a, x1=highlight_end, fillcolor="rgba(255, 165, 0, 0.25)",
                               layer="below", line_width=0)
 
-            fig.add_vline(x=np.mean(final_arr), line_dash="dash", line_color="red", annotation_text="ממוצע")
-            fig.add_vline(x=np.median(final_arr), line_dash="dash", line_color="black", annotation_text="חציון")
+            mean_val = np.mean(final_arr)
+            median_val = np.median(final_arr)
+
+            fig.add_vline(x=mean_val, line_dash="dash", line_color="red", layer="above")
+            fig.add_vline(x=median_val, line_dash="dash", line_color="black", layer="above")
+
+            fig.add_scatter(x=[None], y=[None], mode="lines", line=dict(color="red", dash="dash"),
+                            name=f"\u202bממוצע : {mean_val:,.2f}", showlegend=True)
+
+            fig.add_scatter(x=[None], y=[None], mode="lines", line=dict(color="black", dash="dash"),
+                            name=f"\u202bחציון : {median_val:,.2f}", showlegend=True)
+
+            fig.update_xaxes(range=[min_val, max_val + bin_size], automargin=True, showspikes=True, spikesnap="data")
+            fig.update_layout(hovermode="x unified", hoverlabel=dict(bgcolor="white", font_size=14), bargap=0.02,
+                              xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True),
+                              legend=dict(orientation="v", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                              font=dict(size=16, color="black"), )
             fig.update_annotations(align="right")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, config={'displayModeBar': False}, use_container_width=True)
 
     st.markdown('<div style="height: 400px;"></div>', unsafe_allow_html=True)

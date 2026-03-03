@@ -136,7 +136,6 @@ def stock_statistics_tab(st):
 
     limit_spot = st.empty()
     st.button("➕ הוסף תוכנית חדשה", on_click=add_plan)
-    st.write("גרסה: 1.1 - עם סליידר ומקרא")
 
     for i, plan in enumerate(st.session_state.plans):
         plan_id = plan["id"]
@@ -341,4 +340,5 @@ def stock_statistics_tab(st):
             st.plotly_chart(fig, config={'displayModeBar': False}, use_container_width=True)
 
     st.markdown('<div style="height: 400px;"></div>', unsafe_allow_html=True)
+
 

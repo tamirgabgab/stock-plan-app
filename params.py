@@ -191,16 +191,19 @@ PRTFOLIO_COFIG = {
 DF_HISTORY_CFG = {
     "תאריך התחלה": st.column_config.DateColumn("תאריך התחלה", format="DD/MM/YYYY"),
     "תאריך סיום": st.column_config.DateColumn("תאריך סיום", format="DD/MM/YYYY"),
-    "סך משיכות": st.column_config.TextColumn("סך משיכות"),
-    "יתרה סופית": st.column_config.TextColumn("יתרה סופית"),
+    "יתרה התחלתית": st.column_config.NumberColumn("יתרה התחלתית", format="₪ %.2f"),
+    "סך משיכות": st.column_config.NumberColumn("סך משיכות", format="₪ %.2f"),
+    "יתרה סופית": st.column_config.NumberColumn("יתרה סופית", format="₪ %.2f"),
 }
 
 
 DF_HISTORY_2_CFG = {
     "תאריך התחלה": st.column_config.DateColumn("תאריך התחלה", format="DD/MM/YYYY"),
     "תאריך סיום": st.column_config.DateColumn("תאריך סיום", format="DD/MM/YYYY"),
-    "סך הפקדות": st.column_config.TextColumn("סך הפקדות"),
-    "יתרה סופית": st.column_config.TextColumn("יתרה סופית")
+    "יתרה התחלתית": st.column_config.NumberColumn("יתרה התחלתית", format="₪ %.2f"),
+    "סך הפקדות": st.column_config.NumberColumn("סך הפקדות", format="₪ %.2f"),
+    "יתרה סופית": st.column_config.NumberColumn("יתרה סופית", format="₪ %.2f"),
+    "תשואה שנתית שקולה": st.column_config.NumberColumn("תשואה שנתית שקולה", format="%.2f %%")
 }
 
 DEF_PORTFOLIO = [{COL_STOCK: "S&P 500 (^GSPC)", COL_WEIGHT: 100.0, COL_LEVERAGE: 1.0}]

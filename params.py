@@ -189,41 +189,18 @@ PRTFOLIO_COFIG = {
 }
 
 DF_HISTORY_CFG = {
-    "תאריך התחלה": st.column_config.DateColumn(
-        "תאריך התחלה",
-        format="DD/MM/YYYY"  # פורמט ישראלי ומיון תקין
-    ),
-    "תאריך סיום": st.column_config.DateColumn(
-        "תאריך סיום",
-        format="DD/MM/YYYY"
-    ),
-    "יתרה סופית": st.column_config.NumberColumn(
-        "יתרה סופית",
-        format="%,.2f ₪"
-    ),
-    "סך משיכות נומינלי": st.column_config.NumberColumn(
-        "סך משיכות נומינלי",
-        format="%,.2f ₪"
-    )
+    "תאריך התחלה": st.column_config.DateColumn("תאריך התחלה", format="DD/MM/YYYY"),
+    "תאריך סיום": st.column_config.DateColumn("תאריך סיום", format="DD/MM/YYYY"),
+    "סך משיכות": st.column_config.TextColumn("סך משיכות"),
+    "יתרה סופית": st.column_config.TextColumn("יתרה סופית"),
 }
 
+
 DF_HISTORY_2_CFG = {
-    "תאריך התחלה": st.column_config.DateColumn(
-        "תאריך התחלה",
-        format="DD/MM/YYYY"
-    ),
-    "תאריך סיום": st.column_config.DateColumn(
-        "תאריך סיום",
-        format="DD/MM/YYYY"
-    ),
-    "יתרה סופית": st.column_config.NumberColumn(
-        "יתרה סופית",
-        format="₪ %.2f"
-    ),
-    "סך הפקדות נומינלי": st.column_config.NumberColumn(
-        "סך משיכות נומינלי",
-        format="₪ %.2f"
-    )
+    "תאריך התחלה": st.column_config.DateColumn("תאריך התחלה", format="DD/MM/YYYY"),
+    "תאריך סיום": st.column_config.DateColumn("תאריך סיום", format="DD/MM/YYYY"),
+    "סך הפקדות": st.column_config.TextColumn("סך הפקדות"),
+    "יתרה סופית": st.column_config.TextColumn("יתרה סופית")
 }
 
 DEF_PORTFOLIO = [{COL_STOCK: "S&P 500 (^GSPC)", COL_WEIGHT: 100.0, COL_LEVERAGE: 1.0}]

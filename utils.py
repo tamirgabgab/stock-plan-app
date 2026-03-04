@@ -132,15 +132,14 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
         x_opt_list.append(x_opt)
         r_opt_list.append(r_opt)
         total_depos_list.append(total_depos)
-
         next_row = {
             "יתרה התחלתית": f"₪ {round(start_amount, 2)}",
             "תאריך התחלה": start_date,
             "תאריך סיום": start_date + relativedelta(months=total_motnhs),
-            f"{x_var}": f"₪ {x_opt:,.2f}",
-            "סך הפקדות": f"₪ {total_depos:,.2f}",
-            "יתרה סופית": f"₪ {end_money:,.2f}",
-            "תשואה שנתית שקולה": f"{r_opt:,.2f} %"
+            f"{x_var}": x_opt,
+            "סך הפקדות": total_depos,
+            "יתרה סופית": end_money,
+            "תשואה שנתית שקולה": r_opt
         }
         if x_var == "סכום התחלתי":
             next_row.pop(f"{x_var}")
@@ -445,9 +444,10 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
         next_row = {
             "תאריך התחלה": start_date,
             "תאריך סיום": start_date + relativedelta(months=total_motnhs),
-            f"{x_var}": f"₪ {x_opt:,.2f}",
-            "סך משיכות": f"₪ {total_withdraw:,.2f}",
-            "יתרה סופית":  f"₪ {end_money:,.2f}"
+            f"{x_var}": x_opt,
+            "יתרה התחלתית": start_amount,
+            "סך משיכות": total_withdraw,
+            "יתרה סופית": end_money
         }
 
         if x_var == "סכום התחלתי":

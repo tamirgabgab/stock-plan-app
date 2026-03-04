@@ -196,22 +196,6 @@ def stock_statistics_tab(st):
 
     with st.expander("הדפס את כל נתוני התוכניות", expanded=False):
         if st.button("הדפס את כל נתוני התוכניות"):
-            if dict_final:
-                st.write("### ריכוז נתוני כל התוכניות:")
-                for plan_res in dict_final:
-                    with st.container():
-                        st.subheader(f"📋 {plan_res['שם תוכנית']}")
-                        col_info1, col_info2, col_info3 = st.columns(3)
-                        col_info1.metric("הפקדה התחלתית", f"₪{plan_res['הפקדה התחלתית']}")
-                        col_info2.metric("הפקדה חודשית", f"₪{plan_res['הפקדה חודשית']}")
-                        col_info3.metric("תקופה", f"\u202b חודשים {plan_res['מספר חודשים']}")
-
-                        st.write("**הרכב התיק:**")
-                        st.table(plan_res['הרכב התיק'])
-                        st.divider()
-            else:
-                st.warning("לא נמצאו נתונים לשליפה (וודא שהזנת מניות בטבלה).")
-
             st.write(dict_final)
 
     if "final_results" not in st.session_state:
@@ -243,6 +227,7 @@ def stock_statistics_tab(st):
         final_stats = st.session_state.final_results['stats_data']
         results_df_data = st.session_state.final_results['results_data']
         total_deposit_avgerage = st.session_state.final_results['total_depos_avg']
+        ann_r_avg = st.session_state.final_results['ann_r_avg']
 
         with header_spot:
             st.subheader("📊 ניתוח התפלגות תשואות")
@@ -286,7 +271,9 @@ def stock_statistics_tab(st):
         with stats_spot:
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                col1.metric("\u202b (ממוצע) סך הפקדות", f"{total_deposit_avgerage:,.2f}₪")
+                col1.metric("\u202b סך הפקדות (ממוצע)", f"{total_deposit_avgerage:,.2f}₪")
+            with col2:
+                col2.metric("\u202b תשואה שנתית שקולה (ממוצע)", f"{ann_r_avg:,.2f} %")
             with col3:
                 col3.metric("ממוצע", f"{np.mean(final_arr):,.2f}₪")
             with col4:
@@ -295,7 +282,8 @@ def stock_statistics_tab(st):
             col1, col2 = st.columns(2)
             with col1:
                 min_val = final_stats['min_val']
-                col1.metric("מינימום", f"{min_val:,.2f}₪ ")
+                min_r_val = final_stats['min_r_val']
+                col1.metric("מינימום", f"{min_val:,.2f}₪ ({min_r_val:,.2f} %)")
             with col2:
                 min_range = final_stats['min_date_range']
                 col2.metric("טווח תאריך מינימום", f"{min_range}")
@@ -303,7 +291,8 @@ def stock_statistics_tab(st):
             col1, col2 = st.columns(2)
             with col1:
                 max_val = final_stats['max_val']
-                col1.metric("מקסימום", f"{max_val:,.2f}₪")
+                max_r_val = final_stats['max_r_val']
+                col1.metric("מקסימום", f"{max_val:,.2f}₪ ({max_r_val:,.2f} %)")
             with col2:
                 max_range = final_stats['max_date_range']
                 col2.metric("טווח תאריך מינימום", f"{max_range}")
@@ -340,5 +329,3 @@ def stock_statistics_tab(st):
             st.plotly_chart(fig, config={'displayModeBar': False}, use_container_width=True)
 
     st.markdown('<div style="height: 400px;"></div>', unsafe_allow_html=True)
-
-

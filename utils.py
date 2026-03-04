@@ -48,7 +48,7 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
     all_dates_map = result['all_dates_map']
     lev_np_dict = result['lev_np_dict']
 
-    def sim_one_date(x_val: float, month_indices: np.ndarray):
+    def sim_one_date(x_val: float, ann_ret: float, month_indices: np.ndarray):
         s_amt = x_val if x_var == "סכום התחלתי" else start_amount
         d_amt = x_val if x_var == "הפקדה חודשית" else None
         t_end = x_val if x_var == "סכום סופי" else end_amount
@@ -71,16 +71,21 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
                     for next_row_0 in next_portfolio['הרכב התיק']:
                         next_stocks.append(next_row_0[COL_STOCK])
 
+            n_monts = portfolio["מספר חודשים"]
             start_deposit = final_money + portfolio['הפקדה התחלתית']
             total_deposit = total_deposit + start_money + portfolio['הפקדה התחלתית']
-            total_deposit = total_deposit + portfolio["מספר חודשים"] * monthly_deposit
+            total_deposit = total_deposit + n_monts * monthly_deposit
 
             for row in portfolio['הרכב התיק']:
                 stock, weight, leaverage = row[COL_STOCK], row[COL_WEIGHT] / sum_weights, row[COL_LEVERAGE]
                 lev_key = f"{row[COL_STOCK]}_{row[COL_LEVERAGE]}"
 
-                start_price = lev_np_dict[lev_key][month_indices[:-1]]
-                end_price = np.ones(shape=(portfolio["מספר חודשים"],)) * lev_np_dict[lev_key][month_indices[-1]]
+                if ann_ret is None:
+                    start_price = lev_np_dict[lev_key][month_indices[:-1]]
+                    end_price = np.ones(shape=(n_monts,)) * lev_np_dict[lev_key][month_indices[-1]]
+                else:
+                    start_price = 100 * ((1 + ann_ret / 100) ** (np.arange(n_monts) / 12))
+                    end_price = 100 * ((1 + ann_ret / 100) ** (n_monts / 12)) * np.ones(shape=(n_monts,))
 
                 num_stocks = (monthly_deposit * weight) / start_price
                 num_stocks[0] = num_stocks[0] + (start_deposit * weight) / start_price[0]
@@ -99,36 +104,43 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
     progress_bar = st.progress(value=0)
     total_depos_list = []
     x_opt_list = []
+    r_opt_list = []
     results_data = []
     x_0 = get_initial_guess_stats(start_amount=start_amount, end_amount=end_amount, deposit_val=coeff_p_avg,
                                   total_motnhs=total_motnhs, r_assume_p=6.0, x_var=x_var)
     last_x_opt = x_0
+    last_r_opt = 6.0
+
     for i, start_date in enumerate(start_date_arr):
         val_complete = i / len(start_date_arr)
         progress_bar.progress(value=val_complete, text=f"מעבד נתונים : {int(100 * val_complete)}%")
-
-        current_indices = all_dates_map[i]
+        curr_idc = all_dates_map[i]
 
         if x_var == "סכום סופי":
-            _, end_money, total_depos = sim_one_date(x_val=0, month_indices=current_indices)
+            _, end_money, total_depos = sim_one_date(x_val=0, ann_ret=None, month_indices=curr_idc)
             x_opt = end_money
         else:
-            x_opt = fsolve(lambda x: sim_one_date(x_val=x, month_indices=current_indices)[0], x0=last_x_opt)[0]
-            _, end_money, total_depos = sim_one_date(x_val=x_opt, month_indices=current_indices)
+            x_opt = fsolve(lambda x: sim_one_date(x_val=x, ann_ret=None, month_indices=curr_idc)[0], x0=last_x_opt)[0]
+            _, end_money, total_depos = sim_one_date(x_val=x_opt, ann_ret=None, month_indices=curr_idc)
             last_x_opt = x_opt
+
+        r_opt = fsolve(lambda x: sim_one_date(x_val=x_opt, ann_ret=x, month_indices=curr_idc)[0], x0=last_r_opt)[0]
+        last_r_opt = r_opt
 
         end_money, total_depos = round(end_money, 2), round(total_depos, 2)
 
         x_opt_list.append(x_opt)
+        r_opt_list.append(r_opt)
         total_depos_list.append(total_depos)
 
         next_row = {
             "יתרה התחלתית": f"₪ {round(start_amount, 2)}",
             "תאריך התחלה": start_date,
             "תאריך סיום": start_date + relativedelta(months=total_motnhs),
-            f"{x_var}": f"₪ {round(x_opt, 2)}",
-            "יתרה סופית": float(end_money),
-            "סך הפקדות נומינלי": float(total_depos)
+            f"{x_var}": f"₪ {x_opt:,.2f}",
+            "סך הפקדות": f"₪ {total_depos:,.2f}",
+            "יתרה סופית": f"₪ {end_money:,.2f}",
+            "תשואה שנתית שקולה": f"{r_opt:,.2f} %"
         }
         if x_var == "סכום התחלתי":
             next_row.pop(f"{x_var}")
@@ -138,10 +150,15 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
 
     progress_bar.empty()
     x_opt_np = np.array(x_opt_list)
+    r_opt_np = np.array(r_opt_list)
+
     min_idx = np.argmin(x_opt_np)
     max_idx = np.argmax(x_opt_np)
+
     min_val = x_opt_np[min_idx]
     max_val = x_opt_np[max_idx]
+    min_r_val = r_opt_np[min_idx]
+    max_r_val = r_opt_np[max_idx]
 
     min_date_str = start_date_arr[min_idx].strftime('%d/%m/%Y')
     min_end_date_str = (start_date_arr[min_idx] + relativedelta(months=total_motnhs)).strftime('%d/%m/%Y')
@@ -150,13 +167,14 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
     max_date_str = start_date_arr[max_idx].strftime('%d/%m/%Y')
     max_end_date_str = (start_date_arr[max_idx] + relativedelta(months=total_motnhs)).strftime('%d/%m/%Y')
     max_date_str_range = f"{max_date_str} - {max_end_date_str}"
-    stats_data = {'min_val': min_val, 'min_date_range': min_date_str_range,
-                  'max_val': max_val, 'max_date_range': max_date_str_range}
+    stats_data = {'min_val': min_val, 'min_r_val': min_r_val, 'min_date_range': min_date_str_range,
+                  'max_val': max_val, 'max_r_val': max_r_val, 'max_date_range': max_date_str_range}
 
     total_depos_avg = sum(total_depos_list) / len(total_depos_list)
+    ann_r_avg = sum(r_opt_list) / len(r_opt_list)
 
     return {'stats_data': stats_data, 'hist_data': x_opt_np, 'x_var_name': x_var,
-            'results_data': results_data, 'total_depos_avg': total_depos_avg}
+            'results_data': results_data, 'total_depos_avg': total_depos_avg, 'ann_r_avg': ann_r_avg}
 
 
 @st.cache_data(show_spinner=False)
@@ -427,10 +445,11 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
         next_row = {
             "תאריך התחלה": start_date,
             "תאריך סיום": start_date + relativedelta(months=total_motnhs),
-            f"{x_var}": round(x_opt, 2),
-            "יתרה סופית": round(end_money, 2),
-            "סך משיכות נומינלי": float(total_withdraw)
+            f"{x_var}": f"₪ {x_opt:,.2f}",
+            "סך משיכות": f"₪ {total_withdraw:,.2f}",
+            "יתרה סופית":  f"₪ {end_money:,.2f}"
         }
+
         if x_var == "סכום התחלתי":
             next_row.pop(f"{x_var}")
         elif x_var == "סכום סופי":
@@ -458,4 +477,3 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
                   'max_val': max_val, 'max_date_range': max_date_str_range, 'total_withdraw': avg_withdraw}
 
     return {'stats_data': stats_data, 'hist_data': x_opt_np, 'x_var_name': x_var, 'results_data': results_data}
-

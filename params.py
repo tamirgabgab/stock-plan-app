@@ -141,8 +141,14 @@ HTML_STYLE = """<style>
 
 html, body, [data-testid="stAppViewContainer"] {
     font-family: "Inter", sans-serif;
-    background-color: #FBFBFB !important;
-    color: #1E293B;
+    background-color: var(--background-color) !important;
+    color: var(--text-color) !important;
+}
+
+/* עיצוב המדדים והטבלאות כך שישתלבו בשני המצבים */
+[data-testid="stMetric"], [data-testid="stDataFrame"], [data-testid="stTable"] {
+    background-color: var(--secondary-background-color) !important;
+    border: 1px solid rgba(128, 128, 128, 0.1);
 }
 
 .block-container {
@@ -200,17 +206,24 @@ div[data-baseweb="segmented-control"] {
 [data-testid="stMetric"] {
     padding: 0.6rem 0.8rem !important;
     border-radius: 12px;
-    background: white;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.03);
+    background: var(--secondary-background-color) !important;
+    border: 1px solid rgba(128, 128, 128, 0.1);
     transition: all 0.3s ease;
-    border: 1px solid #F1F5F9;
 }
+
+/* Hover חכם שלא "בולע" את הטקסט */
 [data-testid="stMetric"]:hover {
     transform: translateY(-4px);
-    background: linear-gradient(145deg, #f8fafc, #ffffff);
-    box-shadow: 0 10px 20px rgba(0,0,0,0.05);
+    background: rgba(128, 128, 128, 0.05) !important;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.1);
 }
-[data-testid="stMetricValue"] { font-family: 'JetBrains Mono', monospace; font-size: 1.3rem !important; }
+
+/* מבטיח שהמספר תמיד יהיה בצבע הטקסט הראשי של המערכת */
+[data-testid="stMetricValue"] {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.3rem !important;
+    color: var(--text-color) !important;
+}
 
 /* 4. עיצוב כפתורים - שקופים עם Hover אפור (Ghost Design) */
 .stButton>button, [data-testid="column"] button {

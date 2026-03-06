@@ -145,7 +145,7 @@ def stock_statistics_tab(st):
         name_key = f"name_input_{plan_id}"
         current_name = st.session_state.get(name_key, plan.get("name", f"תכנית {plan_id}"))
 
-        with st.expander(f"📌 **הגדרות עבור : {current_name}**", expanded=True):
+        with (st.expander(f"📌 **הגדרות עבור : {current_name}**", expanded=True)):
             col_title, empty_col, col_up, col_down, col_del = st.columns([0.5, 0.4, 0.1, 0.1, 0.1])
 
             with col_title:
@@ -176,7 +176,8 @@ def stock_statistics_tab(st):
             current_df = plan.get("current_df")
             if isinstance(current_df, list):
                 current_df = pd.DataFrame(current_df)
-            if current_df is None or (isinstance(current_df, pd.DataFrame) and current_df.empty):
+            if current_df is None or (isinstance(current_df, pd.DataFrame) and current_df.empty) or \
+                (isinstance(current_df, list) and len(current_df) == 0):
                 current_df = DEF_PORTFOLIO
 
             plan["current_df"] = st.data_editor(data=current_df, column_config=PRTFOLIO_COFIG,
@@ -268,7 +269,7 @@ def stock_statistics_tab(st):
 
         with history_spot:
             with st.expander("📋 פירוט תוצאות לפי תקופות היסטוריות", expanded=False):
-                st.dataframe(results_df_data, use_container_width=True, column_config=DF_HISTORY_2_CFG)
+                st.dataframe(results_df_data, use_container_width=True, hide_index=True, column_config=DF_HISTORY_2_CFG)
 
         with stats_spot:
             col1, col2, col3, col4 = st.columns(4)

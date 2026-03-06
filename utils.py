@@ -53,19 +53,14 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
         d_amt = x_val if x_var == "הפקדה חודשית" else None
         t_end = x_val if x_var == "סכום סופי" else end_amount
 
-        start_money = s_amt
         final_money = s_amt
-        # total_deposit = 0
         total_deposit = s_amt
         month_offset = 0
         sheild_tax = 0
         for idx, portfolio in enumerate(portfolio_list):
+
             sum_weights = 0
-            taxable_money = 0
             next_stocks = []
-
-            monthly_deposit = portfolio['הפקדה חודשית'] if d_amt is None else d_amt
-
             for row in portfolio['הרכב התיק']:
                 sum_weights = sum_weights + row[COL_WEIGHT]
                 if idx <= len(portfolio_list) - 2:
@@ -74,9 +69,12 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
                         next_stocks.append(next_row_0[COL_STOCK])
 
             n_monts = portfolio["מספר חודשים"]
+            monthly_deposit = portfolio['הפקדה חודשית'] if d_amt is None else d_amt
             start_deposit = final_money + portfolio['הפקדה התחלתית']
             total_deposit = total_deposit + portfolio['הפקדה התחלתית'] + n_monts * monthly_deposit
 
+            taxable_money = 0
+            final_gross_money = 0  # ברוטו
             for row in portfolio['הרכב התיק']:
                 stock, weight, leaverage = row[COL_STOCK], row[COL_WEIGHT] / sum_weights, row[COL_LEVERAGE]
                 lev_key = f"{row[COL_STOCK]}_{row[COL_LEVERAGE]}"
@@ -93,14 +91,15 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
                 num_stocks = (monthly_deposit * weight) / start_price
                 num_stocks[0] = num_stocks[0] + (start_deposit * weight) / start_price[0]
 
-                start_money = start_money + np.dot(num_stocks, start_price)
-                final_money = final_money + np.dot(num_stocks, end_price)
+                final_gross_money = final_gross_money + np.dot(num_stocks, end_price)
 
                 if idx == len(portfolio_list) - 1 or (transition_tax and stock not in next_stocks):
-                    taxable_money = taxable_money + final_money - start_money
+                    taxable_money = taxable_money + np.dot(num_stocks, end_price - start_price)
 
-            final_money = final_money - (gain_tax / 100) * max(taxable_money - sheild_tax, 0)
+            final_tax = (gain_tax / 100) * max(taxable_money - sheild_tax, 0)
+            final_money = final_gross_money - final_tax
             sheild_tax = max(sheild_tax - taxable_money, 0)
+
             month_offset = month_offset + n_monts
 
         return final_money - t_end, final_money, total_deposit
@@ -384,7 +383,7 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
         t_end = x_val if x_var == "סכום סופי" else end_amount
 
         final_money = s_amt
-        total_final_withdraw = 0
+        tot_withdraw = 0
         month_offset = 0
 
         for idx, portfolio in enumerate(portfolio_list):
@@ -403,28 +402,28 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
             base_w = s_amt if base_style_is_start else final_money
             start_withdraw = (1 / 12) * start_w_pct * base_w
             start_withdraw = min(start_withdraw, final_money)
-            final_money -= start_withdraw
-            total_final_withdraw += start_withdraw
+            final_money = final_money - start_withdraw
+            tot_withdraw = tot_withdraw + start_withdraw
 
             for j in range(n_monts):
                 m_idx = month_indices[month_offset + j]
                 m_next_idx = month_indices[month_offset + j + 1]
 
                 gains = np.array([arr[m_next_idx] / arr[m_idx] for arr in stock_arrays])
-
+                step_gain = np.dot(weights, gains)
+                
                 base_w = s_amt if base_style_is_start else final_money
                 relative_withdraw = (1 / 1200) * yearly_w_pct * base_w
 
-                step_gain = np.dot(weights, gains)
-                final_money = (final_money * step_gain) - (min(relative_withdraw, final_money) * step_gain)
+                final_money = (final_money - min(relative_withdraw, final_money)) * step_gain
 
-                total_final_withdraw += relative_withdraw
+                tot_withdraw = tot_withdraw + relative_withdraw
                 if final_money < 0.0001:
                     final_money = 0
                     break
 
             month_offset = month_offset + n_monts
-        return final_money - t_end, final_money, total_final_withdraw
+        return final_money - t_end, final_money, tot_withdraw
 
     progress_bar = st.progress(value=0)
     total_withdraw_list = []

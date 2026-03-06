@@ -146,6 +146,46 @@ html, body, [data-testid="stAppViewContainer"] {
     color: var(--text-color) !important;
 }
 
+/* 1. ביטול המרחק בין הטבלה למסגרת של ה-Form */
+[data-testid="stForm"] {
+    padding: 0px !important;
+}
+
+/* ביטול המסגרת (Border) שעוטפת את ה-DataFrame */
+[data-testid="stDataFrame"] {
+    border: none !important;
+}
+
+/* 1. הקטנה משמעותית של הפונט והריווחים כדי שהכל ייכנס ברוחב אחד */
+[data-testid="stDataFrame"] td, [data-testid="stDataFrame"] th {
+    font-size: 10px !important; /* פונט קטן יותר חוסך המון רוחב */
+    padding: 2px 4px !important; /* צמצום הריווח בין עמודות */
+    white-space: nowrap !important;
+}
+
+/* 2. ביטול הגלילה הרוחבית בתוך המיכל של הטבלה */
+[data-testid="stDataFrame"] > div {
+    overflow-x: hidden !important; 
+}
+
+/* 3. מניעת "קפיצה" של הטבלה החוצה מה-Form */
+[data-testid="stDataFrame"] canvas {
+    max-width: 100% !important;
+}
+
+/* אם הטבלה בתוך אקספנדר או פורם, נשמור רק על המסגרת החיצונית שלהם */
+.stDataFrame iframe {
+    border: none !important;
+}
+
+/* מונע מהטבלה לחרוג מהגבולות של ה-Form או ה-Expander */
+[data-testid="stDataFrame"] {
+    margin: 0px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: auto !important; /* מוסיף פס גלילה פנימי אם חסר מקום, במקום לחרוג */
+}
+
 /* עיצוב המדדים והטבלאות כך שישתלבו בשני המצבים */
 [data-testid="stMetric"], [data-testid="stDataFrame"], [data-testid="stTable"] {
     background-color: var(--secondary-background-color) !important;
@@ -283,7 +323,6 @@ div[data-baseweb="segmented-control"] {
     background-color: white;
     border-radius: 15px;
     padding: 10px;
-    border: 1px solid #E2E8F0;
 }
 
 /* 1. תיקון למחשב (מעל 768 פיקסלים) */
@@ -378,12 +417,12 @@ DF_HISTORY_CFG = {
 
 
 DF_HISTORY_2_CFG = {
-    "תאריך התחלה": st.column_config.DateColumn("תאריך התחלה", format="DD/MM/YYYY"),
-    "תאריך סיום": st.column_config.DateColumn("תאריך סיום", format="DD/MM/YYYY"),
-    "יתרה התחלתית": st.column_config.NumberColumn("יתרה התחלתית", format="₪ %.2f"),
-    "סך הפקדות": st.column_config.NumberColumn("סך הפקדות", format="₪ %.2f"),
-    "יתרה סופית": st.column_config.NumberColumn("יתרה סופית", format="₪ %.2f"),
-    "תשואה שנתית שקולה": st.column_config.NumberColumn("תשואה שנתית שקולה", format="%.2f %%")
+    "תאריך התחלה": st.column_config.DateColumn("תאריך התחלה", format="DD/MM/YYYY", width="small"),
+    "תאריך סיום": st.column_config.DateColumn("תאריך סיום", format="DD/MM/YYYY", width="small"),
+    "יתרה התחלתית": st.column_config.NumberColumn("יתרה התחלתית", format="₪ %.2f", width=None),
+    "סך הפקדות": st.column_config.NumberColumn("סך הפקדות", format="₪ %.2f", width=None),
+    "יתרה סופית": st.column_config.NumberColumn("יתרה סופית", format="₪ %.2f", width=None),
+    "תשואה שנתית שקולה": st.column_config.NumberColumn("תשואה שנתית שקולה", format="%.2f %%", width=None)
 }
 
 DEF_PORTFOLIO = [{COL_STOCK: "S&P 500 (^GSPC)", COL_WEIGHT: 100.0, COL_LEVERAGE: 1.0}]

@@ -406,7 +406,7 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
             final_money -= start_withdraw
             total_final_withdraw += start_withdraw
 
-            for j in range(total_motnhs):
+            for j in range(n_monts):
                 m_idx = month_indices[month_offset + j]
                 m_next_idx = month_indices[month_offset + j + 1]
 

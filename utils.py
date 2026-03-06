@@ -133,7 +133,7 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
         r_opt_list.append(r_opt)
         total_depos_list.append(total_depos)
         next_row = {
-            "יתרה התחלתית": f"₪ {round(start_amount, 2)}",
+            "יתרה התחלתית": start_amount,
             "תאריך התחלה": start_date,
             "תאריך סיום": start_date + relativedelta(months=total_motnhs),
             f"{x_var}": x_opt,

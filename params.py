@@ -134,23 +134,184 @@ DEFAULT_IDX = list(STOCK_OPTIONS.keys()).index("S&P 500 (^GSPC)")
 DEFAULT_IDX_KEY = STOCK_OPTIONS_KEYS.index("S&P 500 (^GSPC)")
 
 PAGE_CONFIG_LAYOUT = "wide"
+
 HTML_STYLE = """<style>
-            .block-container {
-            padding-top: 2rem;
-            padding-bottom: 0rem;
-        }
-        ::-webkit-scrollbar {
-            width: 10px;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #4A90E2;
-            border-radius: 10px;
-        }
-        /* הקטנת מספרים במטריקות (כמו ה-5,000₪ ששלחת) */
-        [data-testid="stMetricValue"] {
-            font-size: 1.8rem !important;
-        }
-        </style>"""
+/* 1. בסיס וטיפוגרפיה */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+html, body, [data-testid="stAppViewContainer"] {
+    font-family: "Inter", sans-serif;
+    background-color: #FBFBFB !important;
+    color: #1E293B;
+}
+
+.block-container {
+    max-width: 1200px;
+    padding-top: 3rem !important;
+}
+
+/* 1. הגדרות בסיסיות לכל המכשירים */
+h1 {
+    margin-bottom: 0.5rem !important;
+    padding-top: 0.5rem !important;
+}
+
+/* 1. החזרת המרווח האנכי הבריא בין שורות */
+[data-testid="stVerticalBlock"] {
+    gap: 1.5rem !important; /* מגדיל חזרה את המרווח בין האלמנטים */
+}
+
+[data-testid="stVerticalBlock"] > div { 
+    gap: 1.6rem !important; 
+}
+
+/* ביטול חסימת הרוחב כדי שהכל ייכנס בשורה אחת */
+[data-testid="column"] {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-end !important; /* מוודא שכל התיבות "יושבות" על הרצפה */
+}
+
+/* יישור גובה ה-Segmented Control לשדות המספר */
+div[data-baseweb="segmented-control"] {
+    margin-top: 0px !important;
+    height: 42px !important; /* גובה זהה לשדות המספר */
+    display: flex !important;
+    align-items: center !important;
+}
+
+/* 4. צמצום הפדינג הפנימי של שדות המספר כדי לחסוך מקום */
+[data-testid="stNumberInput"] div[data-baseweb="input"] {
+    min-width: 60px !important;
+}
+
+/* מבטיח שכל הכותרות מעל השדות יתפסו גובה זהה ויצמדו לשדה למטה */
+[data-testid="stWidgetLabel"] {
+    min-height: unset !important; 
+    height: auto !important;
+    margin-bottom: 2px !important; /* צמצום מ-8px ל-2px */
+    display: flex !important;
+    align-items: flex-end !important;
+}
+
+/* 3. עיצוב מדדים (Metrics) עם Hover */
+[data-testid="stMetric"] {
+    padding: 0.6rem 0.8rem !important;
+    border-radius: 12px;
+    background: white;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.03);
+    transition: all 0.3s ease;
+    border: 1px solid #F1F5F9;
+}
+[data-testid="stMetric"]:hover {
+    transform: translateY(-4px);
+    background: linear-gradient(145deg, #f8fafc, #ffffff);
+    box-shadow: 0 10px 20px rgba(0,0,0,0.05);
+}
+[data-testid="stMetricValue"] { font-family: 'JetBrains Mono', monospace; font-size: 1.3rem !important; }
+
+/* 4. עיצוב כפתורים - שקופים עם Hover אפור (Ghost Design) */
+.stButton>button, [data-testid="column"] button {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(0, 0, 0, 0.1) !important;
+    color: #475569 !important;
+    border-radius: 10px !important;
+    transition: all 0.3s ease-in-out !important;
+    display: inline-flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    height: 42px !important;
+}
+
+/* כפתורי אייקונים (ריבוע) */
+[data-testid="column"] button { min-width: 42px !important; max-width: 42px !important; }
+
+/* אפקט Hover אפור יוקרתי */
+.stButton>button:hover, [data-testid="column"] button:hover {
+    background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%) !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #1e293b !important;
+    transform: translateY(-2px);
+}
+
+/* 5. מרכוז מושלם של האייקונים בתוך הכפתור */
+[data-testid="column"] button div, 
+[data-testid="column"] button p, 
+[data-testid="column"] button span {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    margin: 0 !important;
+    width: 100% !important;
+}
+
+/* 1. ביטול המרווח התחתון המובנה של כל הווידג'טים בשורה */
+[data-testid="column"] [data-testid="stVerticalBlock"] > div {
+    margin-bottom: 0px !important;
+    padding-bottom: 0px !important;
+}
+
+/* מבטל את הרווח הנסתר שדוחף את שדה המספר למעלה */
+[data-testid="column"] div[data-testid="stVerticalBlock"] > div {
+    padding-bottom: 0px !important;
+    margin-bottom: 0px !important;
+}
+
+/* 7. עיצוב טבלאות ו-Dataframes */
+[data-testid="stDataFrame"], [data-testid="stTable"] {
+    background-color: white;
+    border-radius: 15px;
+    padding: 10px;
+    border: 1px solid #E2E8F0;
+}
+
+/* 1. תיקון למחשב (מעל 768 פיקסלים) */
+@media (min-width: 768px) {
+    [data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+        gap: 1.5rem !important; /* הגדלת הרווח בין השדות למראה נקי */
+        align-items: flex-end !important;
+        display: flex !important;
+    }
+
+    [data-testid="column"] {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: flex-end !important;
+    }
+
+    /* איפוס המרווח הפנימי ש-Streamlit דוחף מתחת לכל שדה קלט */
+    [data-testid="column"] div[data-testid="stVerticalBlock"] > div {
+        padding-bottom: 0px !important;
+        margin-bottom: 0px !important;
+    }
+}
+
+/* 2. תיקון למובייל (מתחת ל-768 פיקסלים) - צמצום הרווחים שסימנת באדום */
+@media (max-width: 767px) {
+    [data-testid="column"] {
+        margin-bottom: -15px !important; /* מושך את השדה הבא למעלה ומבטל את ה"בור" */
+        padding-bottom: 0px !important;
+    }
+
+    /* צמצום הרווח בתוך המיכל הכללי במובייל */
+    [data-testid="stVerticalBlock"] {
+        gap: 0.5rem !important;
+    }
+
+    /* הצמדת הכותרת (Label) לשדה מתחתיה */
+    [data-testid="stWidgetLabel"] {
+        margin-bottom: 2px !important;
+        height: auto !important;
+        min-height: unset !important;
+    }
+}
+
+</style>"""
 
 SIDE_BAR = "תמיר המלך"
 

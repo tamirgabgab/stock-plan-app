@@ -137,6 +137,7 @@ PAGE_CONFIG_LAYOUT = "wide"
 
 HTML_STYLE = """<style>
 /* 1. בסיס וטיפוגרפיה */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;700&family=Geist:wght@400;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 html, body, [data-testid="stAppViewContainer"] {
@@ -154,6 +155,11 @@ html, body, [data-testid="stAppViewContainer"] {
 .block-container {
     max-width: 1200px;
     padding-top: 3rem !important;
+}
+
+/* החרגה למספרים בטבלאות ובמדדים - כדי שייראו מקצועיים יותר */
+[data-testid="stMetricValue"], .stDataFrame, code {
+    font-family: 'Inter', monospace !important;
 }
 
 /* 1. הגדרות בסיסיות לכל המכשירים */

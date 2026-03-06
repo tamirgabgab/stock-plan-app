@@ -41,7 +41,7 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
     result = calculate_date_range(min_start_date=min_start_date, max_start_date=max_start_date,
                                   res_days=res_days, portfolio_list=portfolio_list)
 
-    ticker_data_dict = result['ticker_data_dict']
+    # ticker_data_dict = result['ticker_data_dict']
     start_date_arr = result['start_date_arr']
     total_motnhs = result['total_motnhs']
     coeff_p_avg = result['coeff_p_avg']
@@ -55,11 +55,13 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
 
         start_money = s_amt
         final_money = s_amt
-        total_deposit = 0
+        # total_deposit = 0
+        total_deposit = s_amt
+        month_offset = 0
+        sheild_tax = 0
         for idx, portfolio in enumerate(portfolio_list):
             sum_weights = 0
             taxable_money = 0
-            sheild_tax = 0
             next_stocks = []
 
             monthly_deposit = portfolio['הפקדה חודשית'] if d_amt is None else d_amt
@@ -73,16 +75,17 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
 
             n_monts = portfolio["מספר חודשים"]
             start_deposit = final_money + portfolio['הפקדה התחלתית']
-            total_deposit = total_deposit + start_money + portfolio['הפקדה התחלתית']
-            total_deposit = total_deposit + n_monts * monthly_deposit
+            total_deposit = total_deposit + portfolio['הפקדה התחלתית'] + n_monts * monthly_deposit
 
             for row in portfolio['הרכב התיק']:
                 stock, weight, leaverage = row[COL_STOCK], row[COL_WEIGHT] / sum_weights, row[COL_LEVERAGE]
                 lev_key = f"{row[COL_STOCK]}_{row[COL_LEVERAGE]}"
 
                 if ann_ret is None:
-                    start_price = lev_np_dict[lev_key][month_indices[:-1]]
-                    end_price = np.ones(shape=(n_monts,)) * lev_np_dict[lev_key][month_indices[-1]]
+                    month_offset_end_idx = month_offset + n_monts + 1
+                    p_indices = month_indices[month_offset:month_offset_end_idx]
+                    start_price = lev_np_dict[lev_key][p_indices[:-1]]
+                    end_price = np.ones(shape=(n_monts,)) * lev_np_dict[lev_key][p_indices[-1]]
                 else:
                     start_price = 100 * ((1 + ann_ret / 100) ** (np.arange(n_monts) / 12))
                     end_price = 100 * ((1 + ann_ret / 100) ** (n_monts / 12)) * np.ones(shape=(n_monts,))
@@ -98,6 +101,7 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
 
             final_money = final_money - (gain_tax / 100) * max(taxable_money - sheild_tax, 0)
             sheild_tax = max(sheild_tax - taxable_money, 0)
+            month_offset = month_offset + n_monts
 
         return final_money - t_end, final_money, total_deposit
 
@@ -181,7 +185,7 @@ def get_ticker_first_date(ticker_symbol: str) -> datetime:
     try:
         data = yf.Ticker(ticker_symbol).history(period="max")
         return data.index[0].date()
-    except Exception:
+    except (IndexError, Exception):
         return None
 
 
@@ -242,7 +246,11 @@ def calculate_date_range(min_start_date: datetime, max_start_date: datetime,
         full_range = pd.date_range(start=ticker_data.index[0], end=ticker_data.index[-1], freq='D')
 
         ticker_data = ticker_data.reindex(full_range, method="bfill")
-        ticker_data.index = ticker_data.index.tz_localize(None)
+
+        if ticker_data.index.tz is not None:
+            ticker_data.index = ticker_data.index.tz_convert(None)
+        else:
+            ticker_data.index = ticker_data.index.tz_localize(None)
 
         first_start_date.append(ticker_data.index[0].date())
 
@@ -363,7 +371,7 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
     result = calculate_date_range(min_start_date=min_start_date, max_start_date=max_start_date,
                                   res_days=res_days, portfolio_list=portfolio_list)
 
-    ticker_data_dict = result['ticker_data_dict']
+    # ticker_data_dict = result['ticker_data_dict']
     start_date_arr = result['start_date_arr']
     total_motnhs = result['total_motnhs']
     coeff_p_avg = result['coeff_p_avg']
@@ -377,10 +385,13 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
 
         final_money = s_amt
         total_final_withdraw = 0
+        month_offset = 0
 
         for idx, portfolio in enumerate(portfolio_list):
             weights = np.array([row[COL_WEIGHT] for row in portfolio['הרכב התיק']])
             weights /= weights.sum()
+
+            n_monts = portfolio["מספר חודשים"]
 
             stock_arrays = [lev_np_dict[f"{row[COL_STOCK]}_{row[COL_LEVERAGE]}"] for row in
                             portfolio['הרכב התיק']]
@@ -389,7 +400,6 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
             start_w_pct = portfolio['אחוז משיכה התחלתי'] / 100
             yearly_w_pct = portfolio['אחוז משיכה שנתי'] if w_pct is None else w_pct
 
-            # משיכה התחלתית (חודש 0)
             base_w = s_amt if base_style_is_start else final_money
             start_withdraw = (1 / 12) * start_w_pct * base_w
             start_withdraw = min(start_withdraw, final_money)
@@ -397,8 +407,8 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
             total_final_withdraw += start_withdraw
 
             for j in range(total_motnhs):
-                m_idx = month_indices[j]
-                m_next_idx = month_indices[j + 1]
+                m_idx = month_indices[month_offset + j]
+                m_next_idx = month_indices[month_offset + j + 1]
 
                 gains = np.array([arr[m_next_idx] / arr[m_idx] for arr in stock_arrays])
 
@@ -413,6 +423,7 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
                     final_money = 0
                     break
 
+            month_offset = month_offset + n_monts
         return final_money - t_end, final_money, total_final_withdraw
 
     progress_bar = st.progress(value=0)

@@ -109,8 +109,8 @@ def stock_trinity_tab(st):
             st.session_state.trin_plans[index], st.session_state.trin_plans[new_index] = \
                 st.session_state.trin_plans[new_index], st.session_state.trin_plans[index]
 
-    col1, col2, col3, col4, col5, col6, col7 = st.columns(spec=[2, 2, 1, 1, 1, 1, 2])
-    with col7:
+    col1, col2, col3, col4 = st.columns(spec=[2, 2, 1, 2.4])
+    with col4:
         x_variable = st.segmented_control(label=f"\u202bחשב :", options=["סכום סופי", "אחוז משיכה", "סכום התחלתי"],
                                           default="סכום סופי", key=f"trin_x_variable")
     with col1:
@@ -122,19 +122,21 @@ def stock_trinity_tab(st):
         end_amount = st.number_input(label="יעד סופי בתיק", min_value=0.0, disabled=end_amount_dis,
                                      max_value=1_000_000_000.0, value=1_000_000.0, step=1.0, key="end_amount")
     with col3:
+        trin_gain_tax = st.number_input(label="\u202bמס רווחי הון (%)", min_value=0.0, max_value=100.0,
+                                        value=25.0, step=0.01, key="trin_gain_tax")
+
+    col1, col2, col3 = st.columns(spec=[1, 1, 1])
+    with col1:
         trin_min_start_date = st.date_input(label="תאריך התחלה מינימלי", value=datetime(day=1, month=1, year=1980),
                                             format="DD/MM/YYYY", min_value=None, max_value=None,
                                             key="trin_min_start_date")
-    with col4:
+    with col2:
         trin_max_start_date = st.date_input(label="תאריך התחלה מקסימלי", value=datetime(day=1, month=1, year=2000),
                                             format="DD/MM/YYYY", min_value=None, max_value=None,
                                             key="trin_max_start_date")
-    with col5:
+    with col3:
         trin_res_days = st.number_input(label="רזולוצייה ימים לדגימה", min_value=1, max_value=500, value=40, step=1,
                                         key="trin_res_days")
-    with col6:
-        trin_gain_tax = st.number_input(label="\u202bמס רווחי הון (%)", min_value=0.0, max_value=100.0,
-                                        value=25.0, step=0.01, key="trin_gain_tax")
 
     limit_spot = st.empty()
 
@@ -147,7 +149,7 @@ def stock_trinity_tab(st):
         current_name = st.session_state.get(name_key, plan.get("trin_name", f"תכנית {plan_id}"))
 
         with st.expander(f"📌 **הגדרות עבור : {current_name}**", expanded=True):
-            col_title, empty_col, col_up, col_down, col_del = st.columns([0.5, 0.4, 0.03, 0.03, 0.03])
+            col_title, empty_col, col_up, col_down, col_del = st.columns([0.5, 0.4, 0.1, 0.1, 0.1])
 
             with col_title:
                 new_name = st.text_input(f"שם תכנית {plan_id}", value=plan.get("name", f"תכנית {plan_id}"),
@@ -209,9 +211,9 @@ def stock_trinity_tab(st):
         with limit_spot:
             st.warning("⚠️ אנא הזן הרכב תיק (מניות ומשקלים) כדי לראות את הטווח הזמין.")
 
-    with st.expander("הדפס את כל נתוני התוכניות", expanded=False):
-        if st.button("הדפס את כל נתוני התוכניות", key="print_trin"):
-            st.write(dict_final)
+    # with st.expander("הדפס את כל נתוני התוכניות", expanded=False):
+    #     if st.button("הדפס את כל נתוני התוכניות", key="print_trin"):
+    #         st.write(dict_final)
 
     if "final_results_trin" not in st.session_state:
         st.session_state.final_results_trin = None

@@ -152,7 +152,7 @@ def stock_trinity_tab(st):
             col_title, empty_col, col_up, col_down, col_del = st.columns([0.5, 0.4, 0.1, 0.1, 0.1])
 
             with col_title:
-                new_name = st.text_input(f"שם תכנית {plan_id}", value=plan.get("name", f"תכנית {plan_id}"),
+                new_name = st.text_input(f"שם תכנית {plan_id}", value=plan.get("trin_name", f"תכנית {plan_id}"),
                                          key=f"trin_name_input_{plan_id}", label_visibility="collapsed")
                 plan["trin_name"] = new_name
 

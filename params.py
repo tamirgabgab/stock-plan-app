@@ -148,7 +148,8 @@ html, body, [data-testid="stAppViewContainer"] {
 
 /* 1. ביטול המרחק בין הטבלה למסגרת של ה-Form */
 [data-testid="stForm"] {
-    padding: 0px !important;
+    padding: 0px 5px !important; /* הוספת מרווח קטן של 5px מונעת את החיתוך והגלילה */
+    overflow-x: hidden !important;
 }
 
 /* ביטול המסגרת (Border) שעוטפת את ה-DataFrame */

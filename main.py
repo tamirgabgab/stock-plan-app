@@ -9,7 +9,7 @@ from stock_trinity import stock_trinity_tab
 
 
 def main():
-    st.set_page_config(layout=PAGE_CONFIG_LAYOUT)
+    st.set_page_config(layout=PAGE_CONFIG_LAYOUT, initial_sidebar_state="collapsed")
     st.markdown(body=HTML_STYLE, unsafe_allow_html=True)
 
     tab_1, tab_2 = st.tabs(tabs=[TABS_1, TABS_2])

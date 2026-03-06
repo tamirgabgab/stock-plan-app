@@ -106,8 +106,8 @@ def stock_statistics_tab(st):
             st.session_state.plans[index], st.session_state.plans[new_index] = \
                 st.session_state.plans[new_index], st.session_state.plans[index]
 
-    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(spec=[1.2, 1.2, 1, 1, 1, 1, 1.5, 2])
-    with col8:
+    col1, col2, col3, col4, col5 = st.columns(spec=[2.8, 2.8, 2, 2, 5])
+    with col5:
         x_variable = st.segmented_control(label=f"\u202bחשב :", options=["סכום סופי", "הפקדה חודשית", "סכום התחלתי"],
                                           default="סכום סופי")
     with col1:
@@ -119,20 +119,22 @@ def stock_statistics_tab(st):
         end_amount = st.number_input(label="יעד סופי בתיק", min_value=0.0,
                                      max_value=1_000_000_000.0, value=1_000_000.0, step=1.0, disabled=end_amount_dis)
     with col3:
-        min_start_date = st.date_input(label="תאריך התחלה מינימלי", value=datetime(day=1, month=1, year=1980),
-                                       format="DD/MM/YYYY", min_value=None, max_value=None)
-    with col4:
-        max_start_date = st.date_input(label="תאריך התחלה מקסימלי", value=datetime(day=1, month=1, year=2000),
-                                       format="DD/MM/YYYY", min_value=None, max_value=None)
-    with col5:
-        res_days = st.number_input(label="רזולוצייה ימים לדגימה", min_value=1, max_value=500, value=40, step=1)
-    with col6:
         gain_tax = st.number_input(label="\u202bמס רווחי הון (%)", min_value=0.0, max_value=100.0, value=25.0,
                                    step=0.01)
-    with col7:
-        transition_tax = st.segmented_control(label="\u202b אירוע מס במעבר בין תמהילים", options=["בטל", "אפשר"],
+    with col4:
+        transition_tax = st.segmented_control(label="\u202b אירוע מס", options=["בטל", "אפשר"],
                                               default="בטל", help="בצע אירוע מס במעבר בין תמהילים בעלי מניות שונות")
         transition_tax_bool = (transition_tax == "אפשר")
+
+    col1, col2, col3 = st.columns(spec=[1, 1, 1])
+    with col1:
+        min_start_date = st.date_input(label="תאריך התחלה מינימלי", value=datetime(day=1, month=1, year=1980),
+                                       format="DD/MM/YYYY", min_value=None, max_value=None)
+    with col2:
+        max_start_date = st.date_input(label="תאריך התחלה מקסימלי", value=datetime(day=1, month=1, year=2000),
+                                       format="DD/MM/YYYY", min_value=None, max_value=None)
+    with col3:
+        res_days = st.number_input(label="רזולוציית ימים לדגימה", min_value=1, max_value=500, value=40, step=1)
 
     limit_spot = st.empty()
     st.button("➕ הוסף תוכנית חדשה", on_click=add_plan)
@@ -144,7 +146,7 @@ def stock_statistics_tab(st):
         current_name = st.session_state.get(name_key, plan.get("name", f"תכנית {plan_id}"))
 
         with st.expander(f"📌 **הגדרות עבור : {current_name}**", expanded=True):
-            col_title, empty_col, col_up, col_down, col_del = st.columns([0.5, 0.4, 0.03, 0.03, 0.03])
+            col_title, empty_col, col_up, col_down, col_del = st.columns([0.5, 0.4, 0.1, 0.1, 0.1])
 
             with col_title:
                 new_name = st.text_input(f"שם תכנית {plan_id}", value=plan.get("name", f"תכנית {plan_id}"),
@@ -188,20 +190,20 @@ def stock_statistics_tab(st):
 
         with limit_spot:
             if abs_max >= abs_min:
-                st.info(f"✅ טווח זמין לסימולציה: {abs_min.strftime('%d/%m/%Y')} עד {abs_max.strftime('%d/%m/%Y')}")
+                st.info(f"✅ טווח זמין לסימולציה : {abs_min.strftime('%d/%m/%Y')} עד {abs_max.strftime('%d/%m/%Y')}")
             else:
                 diff = relativedelta(datetime.now().date(), abs_min)
                 max_months = (diff.years * 12) + diff.months
                 st.error(f"❌ משך הסימולציה ארוך מדי. עבור המניות בתיק, ניתן להזין עד **{max_months}** חודשים.")
 
-    with st.expander("הדפס את כל נתוני התוכניות", expanded=False):
-        if st.button("הדפס את כל נתוני התוכניות"):
-            st.write(dict_final)
+    # with st.expander("הדפס את כל נתוני התוכניות", expanded=False):
+    #     if st.button("הדפס את כל נתוני התוכניות"):
+    #         st.write(dict_final)
 
     if "final_results" not in st.session_state:
         st.session_state.final_results = None
 
-    if st.button("בצע סימולציה"):
+    if st.button("🚀 בצע סימולציה"):
         st.session_state.final_results = calculate_portfolot_stats(start_amount=start_amount,
                                                                    end_amount=end_amount,
                                                                    min_start_date=min_start_date,

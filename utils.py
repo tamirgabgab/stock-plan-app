@@ -96,11 +96,11 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
                 if idx == len(portfolio_list) - 1 or (transition_tax and stock not in next_stocks):
                     taxable_money = taxable_money + np.dot(num_stocks, end_price - start_price)
 
+            used_shield = min(sheild_tax, taxable_money)
             final_tax = (gain_tax / 100) * max(taxable_money - sheild_tax, 0)
-            final_money = final_gross_money - final_tax
-            sheild_tax = max(sheild_tax - taxable_money, 0)
 
-            month_offset = month_offset + n_monts
+            final_money = final_gross_money - final_tax
+            sheild_tax = sheild_tax - used_shield
 
         return final_money - t_end, final_money, total_deposit
 
@@ -123,12 +123,24 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
             _, end_money, total_depos = sim_one_date(x_val=0, ann_ret=None, month_indices=curr_idc)
             x_opt = end_money
         else:
-            x_opt = fsolve(lambda x: sim_one_date(x_val=x, ann_ret=None, month_indices=curr_idc)[0], x0=last_x_opt)[0]
+            x_opt, _, ier_x, _ = fsolve(lambda x:
+                                        sim_one_date(x_val=x, ann_ret=None, month_indices=curr_idc)[0],
+                                        x0=last_x_opt, full_output=True, xtol=1e-4)
             _, end_money, total_depos = sim_one_date(x_val=x_opt, ann_ret=None, month_indices=curr_idc)
-            last_x_opt = x_opt
+            if ier_x == 1:
+                x_opt = x_opt[0]
+                last_x_opt = x_opt
+            else:
+                print(f"dont find any solution ier_x = {ier_x}")
 
-        r_opt = fsolve(lambda x: sim_one_date(x_val=x_opt, ann_ret=x, month_indices=curr_idc)[0], x0=last_r_opt)[0]
-        last_r_opt = r_opt
+        r_opt, _, ier_r, _ = fsolve(lambda x:
+                                    sim_one_date(x_val=x_opt, ann_ret=x, month_indices=curr_idc)[0],
+                                    x0=last_r_opt, full_output=True, xtol=1e-4)
+        if ier_r == 1:
+            r_opt = r_opt[0]
+            last_r_opt = r_opt
+        else:
+            print(f"dont find any solution r_opt = {r_opt}")
 
         end_money, total_depos = round(end_money, 2), round(total_depos, 2)
 
@@ -185,7 +197,7 @@ def get_ticker_first_date(ticker_symbol: str) -> datetime:
         data = yf.Ticker(ticker_symbol).history(period="max")
         return data.index[0].date()
     except (IndexError, Exception):
-        return None
+        raise Exception(f"didn't find ticker : {ticker_symbol}")
 
 
 def get_stock_dates_bounds(portfolio_list: list):
@@ -255,7 +267,8 @@ def calculate_date_range(min_start_date: datetime, max_start_date: datetime,
 
         ticker_data_dict[ticker] = ticker_data
 
-        full_dates = ticker_data.index
+        if full_dates is None:
+            full_dates = ticker_data.index
 
     first_start_date = max(first_start_date)
 
@@ -266,55 +279,25 @@ def calculate_date_range(min_start_date: datetime, max_start_date: datetime,
 
     coeff_p_avg = sum(coeff_p) / len(coeff_p)
 
-    fast_cacl = False
-    if fast_cacl:
-        base_date = start_date_arr[0]
-        offsets = [pd.DateOffset(months=m) for m in range(total_motnhs + 1)]
+    days_in_month = start_date_arr.day.values
 
-        base_monthly_dts = pd.to_datetime([base_date + opt for opt in offsets])
-        base_indices = np.searchsorted(full_dates, base_monthly_dts)
-        relative_offsets = base_indices - base_indices[0]
+    periods = start_date_arr.to_period('M')
+    month_offsets = np.arange(total_motnhs + 1)
 
-        start_indices = np.searchsorted(full_dates, start_date_arr)
+    all_periods_matrix = periods.values[:, None] + month_offsets
+    flat_periods = all_periods_matrix.ravel()
 
-        all_dates_map = start_indices[:, None] + relative_offsets
-        all_dates_map = np.clip(all_dates_map, 0, len(full_dates) - 1)
-    else:
-        # 1. נמצא את היום בחודש של כל תאריך התחלה
-        days_in_month = start_date_arr.day.values  # מערך של (N,)
+    flat_timestamps = pd.PeriodIndex(flat_periods).to_timestamp()
+    repeated_days = np.repeat(days_in_month, total_motnhs + 1)
 
-        # 2. נהפוך את תאריכי ההתחלה לתקופות חודשיות (N,)
-        periods = start_date_arr.to_period('M')
+    max_days_in_each_month = flat_timestamps.days_in_month.values
+    actual_days = np.clip(repeated_days, 1, max_days_in_each_month)
 
-        # 3. יצירת מטריצת תקופות (N, M) על ידי הוספת חודשים [0, 1, 2...]
-        month_offsets = np.arange(total_motnhs + 1)
-        all_periods_matrix = periods.values[:, None] + month_offsets
+    flat_dates = flat_timestamps + pd.to_timedelta(actual_days - 1, unit='D')
+    flat_indices = np.searchsorted(full_dates, flat_dates)
 
-        # 4. שיטוח המטריצה והמרה חזרה לתאריכים (Timestamp)
-        flat_periods = all_periods_matrix.ravel()
-        flat_timestamps = pd.PeriodIndex(flat_periods).to_timestamp()
-
-        # 5. שכפול מערך הימים שיתאים למטריצה השטוחה
-        repeated_days = np.repeat(days_in_month, total_motnhs + 1)
-
-        # --- התיקון למקרי קצה (פברואר/סוף חודש) ---
-        # מחלצים את מספר הימים המקסימלי שיש בכל חודש במטריצה (וקטורי)
-        max_days_in_each_month = flat_timestamps.days_in_month.values
-
-        # מגבילים את היום המקורי כך שלא יעבור את היום האחרון של אותו חודש
-        # אם repeated_days הוא 31 ובחודש יש 28, actual_days יהיה 28
-        actual_days = np.clip(repeated_days, 1, max_days_in_each_month)
-        # ------------------------------------------
-
-        # 6. יצירת התאריכים הסופיים המדויקים
-        flat_dates = flat_timestamps + pd.to_timedelta(actual_days - 1, unit='D')
-
-        # 7. חיפוש אינדקסים מהיר ב-NumPy ועיצוב מחדש למטריצה (N, M)
-        flat_indices = np.searchsorted(full_dates, flat_dates)
-        all_dates_map = flat_indices.reshape(all_periods_matrix.shape)
-
-        # הגנה מחריגה מגבולות המערך
-        all_dates_map = np.clip(all_dates_map, 0, len(full_dates) - 1)
+    all_dates_map = flat_indices.reshape(all_periods_matrix.shape)
+    all_dates_map = np.clip(all_dates_map, 0, len(full_dates) - 1)
 
     lev_np_dict = {}
     for portfolio in portfolio_list:
@@ -411,7 +394,7 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
 
                 gains = np.array([arr[m_next_idx] / arr[m_idx] for arr in stock_arrays])
                 step_gain = np.dot(weights, gains)
-                
+
                 base_w = s_amt if base_style_is_start else final_money
                 relative_withdraw = (1 / 1200) * yearly_w_pct * base_w
 
@@ -435,16 +418,21 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
     for i, start_date in enumerate(start_date_arr):
         val_complete = i / len(start_date_arr)
         progress_bar.progress(value=val_complete, text=f"מעבד נתונים : {int(100 * val_complete)}%")
-
-        current_indices = all_dates_map[i]
+        curr_idc = all_dates_map[i]
 
         if x_var == "סכום סופי":
-            _, end_money, total_withdraw = simulate_single_date(x_val=0, month_indices=current_indices)
+            _, end_money, total_withdraw = simulate_single_date(x_val=0, month_indices=curr_idc)
             x_opt = end_money
         else:
-            x_opt = fsolve(lambda x: simulate_single_date(x_val=x, month_indices=current_indices)[0], x0=last_x_opt)[0]
-            _, end_money, total_withdraw = simulate_single_date(x_val=x_opt, month_indices=current_indices)
-            last_x_opt = x_opt
+            x_opt, _, ier, _ = fsolve(lambda x:
+                                      simulate_single_date(x_val=x, month_indices=curr_idc)[0],
+                                      x0=last_x_opt, full_output=True, xtol=1e-4)
+            _, end_money, total_withdraw = simulate_single_date(x_val=x_opt, month_indices=curr_idc)
+            if ier == 1:
+                x_opt = x_opt[0]
+                last_x_opt = x_opt
+            else:
+                print(f"dont find any solution ier = {ier}")
 
         end_money, total_withdraw = round(end_money, 2), round(total_withdraw, 2)
 

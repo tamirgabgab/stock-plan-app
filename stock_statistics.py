@@ -260,7 +260,8 @@ def stock_statistics_tab(st):
                 b = b_units * current_step
 
             with col3:
-                count_in_range = np.sum((final_arr >= a) & (final_arr <= b))
+                bin_sz = (final_stats['max_val'] - final_stats['min_val']) / n_bins
+                count_in_range = np.sum((final_arr >= a - 0.5 * bin_sz) & (final_arr <= b + 1.0 * bin_sz))
                 percentage = (count_in_range / len(final_arr)) * 100
                 col3.metric("מספר דגימות בטווח", f"{count_in_range:,} / {len(final_arr):,} ({percentage:.2f}%)")
 
@@ -308,8 +309,8 @@ def stock_statistics_tab(st):
                                labels={'x': '', 'y': 'שכיחות'}, color_discrete_sequence=['#1f77b4'])
 
             bin_size = (max_val - min_val) / n_bins if max_val != min_val else 1
-            highlight_start = a - bin_size * 0.5
-            highlight_end = b + (bin_size * 1) if b >= max_val * 0.99 else b
+            highlight_start = a - 0.5 * bin_size
+            highlight_end = b + 1.0 * bin_size
 
             if a < b:
                 fig.add_vrect(x0=highlight_start, x1=highlight_end, fillcolor="rgba(255, 165, 0, 0.25)",
@@ -327,7 +328,7 @@ def stock_statistics_tab(st):
             fig.add_scatter(x=[None], y=[None], mode="lines", line=dict(color="black", dash="dash"),
                             name=f"\u202bחציון : {median_val:,.2f}", showlegend=True)
 
-            fig.update_xaxes(range=[hist_min - bin_size * 0.5, hist_max + bin_size],
+            fig.update_xaxes(range=[hist_min - 0.6 * bin_size, hist_max + 1.0 * bin_size],
                              automargin=True, showspikes=True, spikesnap="data")
             fig.update_layout(hovermode="x unified", hoverlabel=dict(bgcolor="white", font_size=14), bargap=0.02,
                               xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True),

@@ -250,10 +250,11 @@ def stock_statistics_tab(st):
                                                      default="1", key="unit_selector")
 
             with col1:
-                min_val = float(np.min(final_arr)) / current_step
-                max_val = float(np.max(final_arr)) / current_step
-                a_units, b_units = st.slider(label="טווח ערכים", min_value=min_val, max_value=max_val,
-                                             value=(min_val, max_val), step=0.01, format="%.3f", key="range_slider")
+                stat_min_val = float(np.min(final_arr)) / current_step
+                stat_max_val = float(np.max(final_arr)) / current_step
+                a_units, b_units = st.slider(label="טווח ערכים", min_value=stat_min_val, max_value=stat_max_val,
+                                             value=(stat_min_val, stat_max_val), step=0.01,
+                                             format="%.3f", key="range_slider")
 
                 a = a_units * current_step
                 b = b_units * current_step
@@ -298,7 +299,7 @@ def stock_statistics_tab(st):
                 col1.metric("מקסימום", f"{max_val:,.2f}₪ ({max_r_val:,.2f} %)")
             with col2:
                 max_range = final_stats['max_date_range']
-                col2.metric("טווח תאריך מינימום", f"{max_range}")
+                col2.metric("טווח תאריך מקסימום", f"{max_range}")
 
         with plot_spot:
             fig = px.histogram(x=final_arr, nbins=n_bins, title="",

@@ -314,7 +314,7 @@ def stock_trinity_tab(st):
                 col1.metric("מקסימום", f"{max_val:,.2f}{res_units}")
             with col2:
                 max_range = final_stats['max_date_range']
-                col2.metric("טווח תאריך מינימום", f"{max_range}")
+                col2.metric("טווח תאריך מקסימום", f"{max_range}")
 
         with plot_spot:
             fig = px.histogram(x=final_arr, nbins=n_bins, title="",

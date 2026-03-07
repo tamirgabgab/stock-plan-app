@@ -317,16 +317,19 @@ def stock_trinity_tab(st):
                 col2.metric("טווח תאריך מקסימום", f"{max_range}")
 
         with plot_spot:
+            hist_min = float(np.min(final_arr))
+            hist_max = float(np.max(final_arr))
             fig = px.histogram(x=final_arr, nbins=n_bins, title="",
                                labels={'x': '', 'y': 'שכיחות'}, color_discrete_sequence=['#1f77b4'])
 
             bin_size = (max_val - min_val) / n_bins if max_val != min_val else 1
+            highlight_start = a - bin_size * 0.5
             highlight_end = b + (bin_size * 1) if b >= max_val * 0.99 else b
 
             fig.update_traces(xbins=dict(start=min_val, end=max_val + bin_size, size=bin_size), autobinx=False)
 
             if a < b:
-                fig.add_vrect(x0=a, x1=highlight_end, fillcolor="rgba(255, 165, 0, 0.25)",
+                fig.add_vrect(x0=highlight_start, x1=highlight_end, fillcolor="rgba(255, 165, 0, 0.25)",
                               layer="below", line_width=0)
 
             mean_val = np.mean(final_arr)
@@ -341,7 +344,8 @@ def stock_trinity_tab(st):
             fig.add_scatter(x=[None], y=[None], mode="lines", line=dict(color="black", dash="dash"),
                             name=f"\u202bחציון : {median_val:,.2f}", showlegend=True)
 
-            fig.update_xaxes(range=[min_val, max_val + bin_size], automargin=True, showspikes=True, spikesnap="data")
+            fig.update_xaxes(range=[hist_min - bin_size * 0.5, hist_max + bin_size],
+                             automargin=True, showspikes=True, spikesnap="data")
             fig.update_layout(hovermode="x unified", hoverlabel=dict(bgcolor="white", font_size=14), bargap=0.02,
                               xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True),
                               legend=dict(orientation="v", yanchor="bottom", y=1.02, xanchor="right", x=1),

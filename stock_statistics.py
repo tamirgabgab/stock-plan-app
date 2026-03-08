@@ -4,7 +4,7 @@ import numpy as np
 import plotly.express as px
 from datetime import datetime
 from params import *
-from utils import get_stock_dates_bounds, calculate_portfolot_stats
+from utils import get_stock_dates_bounds, calculate_portfolot_stats, calculate_ann_gain_limits
 
 
 def get_all_plans_data() -> list:
@@ -177,7 +177,7 @@ def stock_statistics_tab(st):
             if isinstance(current_df, list):
                 current_df = pd.DataFrame(current_df)
             if current_df is None or (isinstance(current_df, pd.DataFrame) and current_df.empty) or \
-                (isinstance(current_df, list) and len(current_df) == 0):
+                    (isinstance(current_df, list) and len(current_df) == 0):
                 current_df = DEF_PORTFOLIO
 
             plan["current_df"] = st.data_editor(data=current_df, column_config=PRTFOLIO_COFIG,
@@ -236,34 +236,42 @@ def stock_statistics_tab(st):
             st.subheader("📊 ניתוח התפלגות תשואות")
 
         with bin_spot:
-            n_bins = st.slider("\u202bמספר עמודות (Bins) :", min_value=10,
-                               max_value=400, value=100, step=1)
-
-        with slider_spot:
-            col1, col2, col3 = st.columns(spec=[2, 1, 1, ])
+            col1, col2, col3 = st.columns(spec=[3, 1, 0.5])
             unit_mapping = {"1": float(1), "K": float(1e3), "M": float(1e6)}
-
-            selected_label = st.session_state.get("unit_selector", "1")
-            current_step = unit_mapping.get(selected_label, 1.0)
+            with col3:
+                n_bins = st.number_input("\u202bמס'  Bins :", min_value=10,
+                                         max_value=400, value=100, step=1)
             with col2:
                 selected_unit = st.segmented_control("\u202bיחידות :", options=["1", "K", "M"],
                                                      default="1", key="unit_selector")
 
             with col1:
+                selected_label = st.session_state.get("unit_selector", "1")
+                current_step = unit_mapping.get(selected_label, 1.0)
                 stat_min_val = float(np.min(final_arr)) / current_step
                 stat_max_val = float(np.max(final_arr)) / current_step
-                a_units, b_units = st.slider(label="טווח ערכים", min_value=stat_min_val, max_value=stat_max_val,
-                                             value=(stat_min_val, stat_max_val), step=0.01,
-                                             format="%.3f", key="range_slider")
-
+                a_units, b_units = st.slider(label="\u202bטווח ערכים :", min_value=stat_min_val,
+                                             max_value=stat_max_val, value=(stat_min_val, stat_max_val), step=0.01,
+                                             format="%.2f", key="range_slider")
                 a = a_units * current_step
                 b = b_units * current_step
 
-            with col3:
+        with slider_spot:
+            col1, col2 = st.columns(spec=[1, 1])
+
+            with col1:
+                r_val_1, r_val_2 = calculate_ann_gain_limits(start_amount=start_amount, end_amount=end_amount,
+                                                             x_val_1=a, x_val_2=b, transition_tax=transition_tax_bool,
+                                                             gain_tax=gain_tax, portfolio_list=dict_final,
+                                                             x_var=x_variable)
+
+                col1.metric("טווח תשואה שנתית", f"{r_val_1:,.2f}% - {r_val_2:,.2f}%")
+
+            with col2:
                 bin_sz = (final_stats['max_val'] - final_stats['min_val']) / n_bins
                 count_in_range = np.sum((final_arr >= a - 0.5 * bin_sz) & (final_arr <= b + 1.0 * bin_sz))
                 percentage = (count_in_range / len(final_arr)) * 100
-                col3.metric("מספר דגימות בטווח", f"{count_in_range:,} / {len(final_arr):,} ({percentage:.2f}%)")
+                col2.metric("מספר דגימות בטווח", f"{count_in_range:,} / {len(final_arr):,} ({percentage:.2f}%)")
 
         with warn_spot:
             if a > b:

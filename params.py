@@ -154,7 +154,9 @@ html, body, [data-testid="stAppViewContainer"] {
 
 /* ביטול המסגרת (Border) שעוטפת את ה-DataFrame */
 [data-testid="stDataFrame"] {
-    border: none !important;
+    margin: 0px !important;
+    width: 100% !important; /* בדיוק 100%, בלי פלוס 4 פיקסלים */
+    max-width: 100% !important;
 }
 
 /* 1. הקטנה משמעותית של הפונט והריווחים כדי שהכל ייכנס ברוחב אחד */
@@ -348,6 +350,13 @@ div[data-baseweb="segmented-control"] {
         padding-bottom: 0px !important;
         margin-bottom: 0px !important;
     }
+    [data-testid="stSliderTickBarMin"], [data-testid="stSliderTickBarMax"] {
+        display: none;
+    }
+    [data-testid="stNumberInputStepDown"], [data-testid="stNumberInputStepUp"] {
+        display: none;
+    }
+    
 }
 
 /* 2. תיקון למובייל (מתחת ל-768 פיקסלים) - צמצום הרווחים שסימנת באדום */

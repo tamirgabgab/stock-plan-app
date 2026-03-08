@@ -475,3 +475,69 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
                   'max_val': max_val, 'max_date_range': max_date_str_range, 'total_withdraw': avg_withdraw}
 
     return {'stats_data': stats_data, 'hist_data': x_opt_np, 'x_var_name': x_var, 'results_data': results_data}
+
+
+@st.cache_data(show_spinner=False)
+def calculate_ann_gain_limits(start_amount: float, end_amount: float, x_val_1: float, x_val_2: float,
+                              transition_tax: bool, gain_tax: float, portfolio_list: list, x_var: str) -> dict:
+    def sim_r_one_date(x_val: float, ann_ret: float):
+        s_amt = x_val if x_var == "סכום התחלתי" else start_amount
+        d_amt = x_val if x_var == "הפקדה חודשית" else None
+        t_end = x_val if x_var == "סכום סופי" else end_amount
+
+        final_money = s_amt
+        sheild_tax = 0
+        for idx, portfolio in enumerate(portfolio_list):
+
+            sum_weights = 0
+            next_stocks = []
+            for row in portfolio['הרכב התיק']:
+                sum_weights = sum_weights + row[COL_WEIGHT]
+                if idx <= len(portfolio_list) - 2:
+                    next_portfolio = portfolio_list[idx + 1]
+                    for next_row_0 in next_portfolio['הרכב התיק']:
+                        next_stocks.append(next_row_0[COL_STOCK])
+
+            n_monts = portfolio["מספר חודשים"]
+            monthly_deposit = portfolio['הפקדה חודשית'] if d_amt is None else d_amt
+            start_deposit = final_money + portfolio['הפקדה התחלתית']
+
+            taxable_money = 0
+            final_gross_money = 0  # ברוטו
+            for row in portfolio['הרכב התיק']:
+                stock, weight, leaverage = row[COL_STOCK], row[COL_WEIGHT] / sum_weights, row[COL_LEVERAGE]
+
+                start_price = 100 * ((1 + ann_ret / 100) ** (np.arange(n_monts) / 12))
+                end_price = 100 * ((1 + ann_ret / 100) ** (n_monts / 12)) * np.ones(shape=(n_monts,))
+
+                num_stocks = (monthly_deposit * weight) / start_price
+                num_stocks[0] = num_stocks[0] + (start_deposit * weight) / start_price[0]
+
+                final_gross_money = final_gross_money + np.dot(num_stocks, end_price)
+
+                if idx == len(portfolio_list) - 1 or (transition_tax and stock not in next_stocks):
+                    taxable_money = taxable_money + np.dot(num_stocks, end_price - start_price)
+
+            used_shield = min(sheild_tax, taxable_money)
+            final_tax = (gain_tax / 100) * max(taxable_money - sheild_tax, 0)
+
+            final_money = final_gross_money - final_tax
+            sheild_tax = sheild_tax - used_shield
+
+        return final_money - t_end
+
+    r_opt_1, _, ier_r_1, _ = fsolve(lambda x:
+                                    sim_r_one_date(x_val=x_val_1, ann_ret=x), x0=6.1, full_output=True, xtol=1e-8)
+    if ier_r_1 == 1:
+        r_opt_1 = r_opt_1[0]
+    else:
+        print(f"dont find any solution r_opt = {r_opt_1}")
+
+    r_opt_2, _, ier_r_2, _ = fsolve(lambda x:
+                                    sim_r_one_date(x_val=x_val_2, ann_ret=x), x0=6.0, full_output=True, xtol=1e-8)
+    if ier_r_2 == 1:
+        r_opt_2 = r_opt_2[0]
+    else:
+        print(f"dont find any solution r_opt = {r_opt_2}")
+
+    return round(r_opt_1, 2), round(r_opt_2, 2)

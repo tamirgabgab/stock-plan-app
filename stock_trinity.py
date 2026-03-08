@@ -252,34 +252,34 @@ def stock_trinity_tab(st):
             st.subheader("📊 ניתוח התפלגות תשואות")
 
         with bin_spot:
-            n_bins = st.slider("\u202bמספר עמודות (Bins) :", min_value=10,
-                               max_value=400, value=100, step=1, key="trin_bins")
-
-        with slider_spot:
-            col1, col2, col3 = st.columns(spec=[2, 1, 1, ])
+            col1, col2, col3, col4 = st.columns(spec=[3, 1, 0.5, 2])
             unit_mapping = {"1": float(1), "K": float(1e3), "M": float(1e6)}
-
-            selected_label = st.session_state.get("trin_unit_selector", "1")
-            current_step = unit_mapping.get(selected_label, 1.0)
+            with col3:
+                n_bins = st.number_input("\u202bמס'  Bins :", min_value=10,
+                                         max_value=400, value=100, step=1, key="trin_bins")
             with col2:
                 selected_unit = st.segmented_control("\u202bיחידות :", options=["1", "K", "M"],
                                                      default="1", key="trin_unit_selector")
 
             with col1:
-                min_val = float(np.min(final_arr)) / current_step
-                max_val = float(np.max(final_arr)) / current_step
-                a_units, b_units = st.slider(label="טווח ערכים", min_value=min_val, max_value=max_val,
-                                             value=(min_val, max_val), step=0.01, format="%.3f",
-                                             key="trin_range_slider")
-
+                selected_label = st.session_state.get("unit_selector", "1")
+                current_step = unit_mapping.get(selected_label, 1.0)
+                stat_min_val = float(np.min(final_arr)) / current_step
+                stat_max_val = float(np.max(final_arr)) / current_step
+                a_units, b_units = st.slider(label="\u202bטווח ערכים :", min_value=stat_min_val,
+                                             max_value=stat_max_val, value=(stat_min_val, stat_max_val), step=0.01,
+                                             format="%.2f", key="trin_range_slider")
                 a = a_units * current_step
                 b = b_units * current_step
 
-            with col3:
+            with col4:
                 bin_sz = (final_stats['max_val'] - final_stats['min_val']) / n_bins
                 count_in_range = np.sum((final_arr >= a) & (final_arr <= b + 1.0 * bin_sz))
                 percentage = (count_in_range / len(final_arr)) * 100
-                col3.metric("מספר דגימות בטווח", f"{count_in_range:,} / {len(final_arr):,} ({percentage:.2f}%)")
+                col4.metric("מספר דגימות בטווח", f"{count_in_range:,} / {len(final_arr):,} ({percentage:.2f}%)")
+
+        with slider_spot:
+            pass
 
         with warn_spot:
             if a > b:

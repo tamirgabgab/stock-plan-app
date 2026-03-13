@@ -13,6 +13,10 @@ def get_all_plans_data() -> list:
     if 'plans' not in st.session_state:
         return []
 
+    if 'sim_date_lims' not in st.session_state:
+        st.session_state.sim_date_lims = [datetime(day=1, month=1, year=1900).date(),
+                                          datetime.now().date()]
+
     for plan in st.session_state.plans:
         p_id = plan["id"]
         p_name = plan.get("name", f"תכנית {p_id}")
@@ -127,12 +131,17 @@ def stock_statistics_tab(st):
         transition_tax_bool = (transition_tax == "אפשר")
 
     col1, col2, col3 = st.columns(spec=[1, 1, 1])
+    sim_date_min, sim_date_max = st.session_state.get('sim_date_lims',
+                                                      [datetime(day=1, month=1, year=1900).date(),
+                                                       datetime.now().date()])
+    start_val = max(sim_date_min, datetime(day=1, month=1, year=1980).date())
+    end_val = min(sim_date_max, datetime(day=1, month=1, year=2000).date())
     with col1:
-        min_start_date = st.date_input(label="תאריך התחלה מינימלי", value=datetime(day=1, month=1, year=1980),
-                                       format="DD/MM/YYYY", min_value=None, max_value=None)
+        min_start_date = st.date_input(label="תאריך התחלה מינימלי", value=start_val,
+                                       format="DD/MM/YYYY", min_value=sim_date_min, max_value=sim_date_max)
     with col2:
-        max_start_date = st.date_input(label="תאריך התחלה מקסימלי", value=datetime(day=1, month=1, year=2000),
-                                       format="DD/MM/YYYY", min_value=None, max_value=None)
+        max_start_date = st.date_input(label="תאריך התחלה מקסימלי", value=end_val,
+                                       format="DD/MM/YYYY", min_value=min_start_date, max_value=sim_date_max)
     with col3:
         res_days = st.number_input(label="רזולוציית ימים לדגימה", min_value=1, max_value=500, value=40, step=1)
 
@@ -188,6 +197,9 @@ def stock_statistics_tab(st):
     dict_final = get_all_plans_data()
     if dict_final:
         abs_min, abs_max = get_stock_dates_bounds(portfolio_list=dict_final)
+        if st.session_state.get('sim_date_lims') != [abs_min, abs_max]:
+            st.session_state.sim_date_lims = [abs_min, abs_max]
+            st.rerun()
 
         with limit_spot:
             if abs_max >= abs_min:
@@ -261,6 +273,7 @@ def stock_statistics_tab(st):
 
             with col1:
                 r_val_1, r_val_2 = calculate_ann_gain_limits(start_amount=start_amount, end_amount=end_amount,
+                                                             stats_data=final_stats,
                                                              x_val_1=a, x_val_2=b, transition_tax=transition_tax_bool,
                                                              gain_tax=gain_tax, portfolio_list=dict_final,
                                                              x_var=x_variable)

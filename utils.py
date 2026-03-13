@@ -250,7 +250,7 @@ def calculate_date_range(min_start_date: datetime, max_start_date: datetime,
     first_start_date = [min_start_date]
     ticker_data_dict = {}
     full_dates = None
-    for ticker in tickers:
+    for i, ticker in enumerate(tickers):
         ticker_data = yf.Ticker(ticker=STOCK_OPTIONS[ticker])
         ticker_data = ticker_data.history(period="max", interval="1d")
         ticker_data = ticker_data[["Close"]]
@@ -478,8 +478,14 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
 
 
 @st.cache_data(show_spinner=False)
-def calculate_ann_gain_limits(start_amount: float, end_amount: float, x_val_1: float, x_val_2: float,
+def calculate_ann_gain_limits(start_amount: float, end_amount: float, stats_data: dict,
+                              x_val_1: float, x_val_2: float,
                               transition_tax: bool, gain_tax: float, portfolio_list: list, x_var: str) -> dict:
+    min_val = stats_data['min_val']
+    max_val = stats_data['max_val']
+    min_r_val = stats_data['min_r_val']
+    max_r_val = stats_data['max_r_val']
+
     def sim_r_one_date(x_val: float, ann_ret: float):
         s_amt = x_val if x_var == "סכום התחלתי" else start_amount
         d_amt = x_val if x_var == "הפקדה חודשית" else None
@@ -526,15 +532,19 @@ def calculate_ann_gain_limits(start_amount: float, end_amount: float, x_val_1: f
 
         return final_money - t_end
 
+    r_1_initial = min_r_val + (x_val_1 - min_val) * (max_r_val - min_r_val) / (max_val - min_val)
     r_opt_1, _, ier_r_1, _ = fsolve(lambda x:
-                                    sim_r_one_date(x_val=x_val_1, ann_ret=x), x0=6.1, full_output=True, xtol=1e-8)
+                                    sim_r_one_date(x_val=x_val_1, ann_ret=x),
+                                    x0=r_1_initial, full_output=True, xtol=1e-6)
     if ier_r_1 == 1:
         r_opt_1 = r_opt_1[0]
     else:
         print(f"dont find any solution r_opt = {r_opt_1}")
 
+    r_2_initial = min_r_val + (x_val_2 - min_val) * (max_r_val - min_r_val) / (max_val - min_val)
     r_opt_2, _, ier_r_2, _ = fsolve(lambda x:
-                                    sim_r_one_date(x_val=x_val_2, ann_ret=x), x0=6.0, full_output=True, xtol=1e-8)
+                                    sim_r_one_date(x_val=x_val_2, ann_ret=x),
+                                    x0=r_2_initial, full_output=True, xtol=1e-6)
     if ier_r_2 == 1:
         r_opt_2 = r_opt_2[0]
     else:

@@ -14,6 +14,10 @@ def get_all_trin_plans_data() -> list:
     if 'trin_plans' not in st.session_state:
         return []
 
+    if 'trin_sim_date_lims' not in st.session_state:
+        st.session_state.trin_sim_date_lims = [datetime(day=1, month=1, year=1900).date(),
+                                               datetime.now().date()]
+
     for plan in st.session_state.trin_plans:
         p_id = plan["trin_id"]
         p_name = plan.get("trin_name", f"תכנית {p_id}")
@@ -126,13 +130,18 @@ def stock_trinity_tab(st):
                                         value=25.0, step=0.01, key="trin_gain_tax")
 
     col1, col2, col3 = st.columns(spec=[1, 1, 1])
+    sim_date_min, sim_date_max = st.session_state.get('trin_sim_date_lims',
+                                                      [datetime(day=1, month=1, year=1900).date(),
+                                                       datetime.now().date()])
+    start_val = max(sim_date_min, datetime(day=1, month=1, year=1980).date())
+    end_val = min(sim_date_max, datetime(day=1, month=1, year=2000).date())
     with col1:
-        trin_min_start_date = st.date_input(label="תאריך התחלה מינימלי", value=datetime(day=1, month=1, year=1980),
-                                            format="DD/MM/YYYY", min_value=None, max_value=None,
+        trin_min_start_date = st.date_input(label="תאריך התחלה מינימלי", value=start_val,
+                                            format="DD/MM/YYYY", min_value=sim_date_min, max_value=sim_date_max,
                                             key="trin_min_start_date")
     with col2:
-        trin_max_start_date = st.date_input(label="תאריך התחלה מקסימלי", value=datetime(day=1, month=1, year=2000),
-                                            format="DD/MM/YYYY", min_value=None, max_value=None,
+        trin_max_start_date = st.date_input(label="תאריך התחלה מקסימלי", value=end_val,
+                                            format="DD/MM/YYYY", min_value=trin_min_start_date, max_value=sim_date_max,
                                             key="trin_max_start_date")
     with col3:
         trin_res_days = st.number_input(label="רזולוצייה ימים לדגימה", min_value=1, max_value=500, value=40, step=1,
@@ -199,6 +208,9 @@ def stock_trinity_tab(st):
     dict_final = get_all_trin_plans_data()
     if dict_final:
         abs_min, abs_max = get_stock_dates_bounds(portfolio_list=dict_final)
+        if st.session_state.get('trin_sim_date_lims') != [abs_min, abs_max]:
+            st.session_state.trin_sim_date_lims = [abs_min, abs_max]
+            st.rerun()
 
         with limit_spot:
             if abs_max >= abs_min:

@@ -133,20 +133,24 @@ def stock_trinity_tab(st):
     sim_date_min, sim_date_max = st.session_state.get('trin_sim_date_lims',
                                                       [datetime(day=1, month=1, year=1900).date(),
                                                        datetime.now().date()])
-    start_val = max(sim_date_min, datetime(day=1, month=1, year=1980).date())
-    end_val = min(sim_date_max, datetime(day=1, month=1, year=2000).date())
-    with col1:
-        trin_min_start_date = st.date_input(label="תאריך התחלה מינימלי", value=start_val,
-                                            format="DD/MM/YYYY", min_value=sim_date_min, max_value=sim_date_max,
-                                            key="trin_min_start_date")
-    with col2:
-        trin_max_start_date = st.date_input(label="תאריך התחלה מקסימלי", value=end_val,
-                                            format="DD/MM/YYYY", min_value=trin_min_start_date, max_value=sim_date_max,
-                                            key="trin_max_start_date")
-    with col3:
-        trin_res_days = st.number_input(label="רזולוצייה ימים לדגימה", min_value=1, max_value=500, value=40, step=1,
-                                        key="trin_res_days")
-
+    # start_val = max(sim_date_min, datetime(day=1, month=1, year=1980).date())
+    # end_val = min(sim_date_max, datetime(day=1, month=1, year=2000).date())
+    start_val = sim_date_min
+    end_val = sim_date_max
+    if sim_date_max > sim_date_min:
+        with col1:
+            trin_min_start_date = st.date_input(label="תאריך התחלה מינימלי", value=start_val,
+                                                format="DD/MM/YYYY", min_value=sim_date_min,
+                                                max_value=sim_date_max, key="trin_min_start_date")
+        with col2:
+            trin_max_start_date = st.date_input(label="תאריך התחלה מקסימלי", value=end_val,
+                                                format="DD/MM/YYYY", min_value=trin_min_start_date,
+                                                max_value=sim_date_max, key="trin_max_start_date")
+        with col3:
+            trin_res_days = st.number_input(label="רזולוצייה ימים לדגימה", min_value=1, max_value=500,
+                                            value=40, step=1, key="trin_res_days")
+    else:
+        st.warning("הזנת נתונים שגויים")
     limit_spot = st.empty()
 
     st.button("➕ הוסף תוכנית חדשה", on_click=add_plan, key="add_plan_trin")

@@ -134,17 +134,21 @@ def stock_statistics_tab(st):
     sim_date_min, sim_date_max = st.session_state.get('sim_date_lims',
                                                       [datetime(day=1, month=1, year=1900).date(),
                                                        datetime.now().date()])
-    start_val = max(sim_date_min, datetime(day=1, month=1, year=1980).date())
-    end_val = min(sim_date_max, datetime(day=1, month=1, year=2000).date())
-    with col1:
-        min_start_date = st.date_input(label="תאריך התחלה מינימלי", value=start_val,
-                                       format="DD/MM/YYYY", min_value=sim_date_min, max_value=sim_date_max)
-    with col2:
-        max_start_date = st.date_input(label="תאריך התחלה מקסימלי", value=end_val,
-                                       format="DD/MM/YYYY", min_value=min_start_date, max_value=sim_date_max)
-    with col3:
-        res_days = st.number_input(label="רזולוציית ימים לדגימה", min_value=1, max_value=500, value=40, step=1)
-
+    # start_val = max(sim_date_min, datetime(day=1, month=1, year=1980).date())
+    # end_val = min(sim_date_max, datetime(day=1, month=1, year=2000).date())
+    start_val = sim_date_min
+    end_val = sim_date_max
+    if sim_date_max > sim_date_min:
+        with col1:
+            min_start_date = st.date_input(label="תאריך התחלה מינימלי", value=start_val,
+                                           format="DD/MM/YYYY", min_value=sim_date_min, max_value=sim_date_max)
+        with col2:
+            max_start_date = st.date_input(label="תאריך התחלה מקסימלי", value=end_val,
+                                           format="DD/MM/YYYY", min_value=min_start_date, max_value=sim_date_max)
+        with col3:
+            res_days = st.number_input(label="רזולוציית ימים לדגימה", min_value=1, max_value=500, value=10, step=1)
+    else:
+        st.warning("הזנת נתונים שגויים")
     limit_spot = st.empty()
     st.button("➕ הוסף תוכנית חדשה", on_click=add_plan)
 
@@ -180,7 +184,7 @@ def stock_statistics_tab(st):
                                 max_value=10_000.0, value=1000.0, step=0.01, key=f"amt_{plan_id}", disabled=dep_dis)
             with c3:
                 st.number_input(label=f"מספר חודשי הפקדה", min_value=0,
-                                max_value=500, value=240, step=1, key=f"pay_{plan_id}")
+                                max_value=500, value=0, step=1, key=f"pay_{plan_id}")
 
             current_df = plan.get("current_df")
             if isinstance(current_df, list):
@@ -208,10 +212,6 @@ def stock_statistics_tab(st):
                 diff = relativedelta(datetime.now().date(), abs_min)
                 max_months = (diff.years * 12) + diff.months
                 st.error(f"❌ משך הסימולציה ארוך מדי. עבור המניות בתיק, ניתן להזין עד **{max_months}** חודשים.")
-
-    # with st.expander("הדפס את כל נתוני התוכניות", expanded=False):
-    #     if st.button("הדפס את כל נתוני התוכניות"):
-    #         st.write(dict_final)
 
     if "final_results" not in st.session_state:
         st.session_state.final_results = None

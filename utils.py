@@ -305,7 +305,9 @@ def calculate_date_range(min_start_date: datetime, max_start_date: datetime,
             stock, lev = row[COL_STOCK], row[COL_LEVERAGE]
             key = f"{stock}_{lev}"
             if key not in lev_np_dict:
-                raw_prices = ticker_data_dict[stock]['Close'].to_numpy()
+                ticker_df = ticker_data_dict[stock]
+                aligned_df = ticker_df.reindex(full_dates, method="bfill")
+                raw_prices = aligned_df['Close'].to_numpy()
                 if lev == 1.0:
                     lev_np_dict[key] = raw_prices
                 else:

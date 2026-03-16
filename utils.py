@@ -126,12 +126,13 @@ def calculate_portfolot_stats(start_amount: float, end_amount: float, min_start_
             x_opt, _, ier_x, _ = fsolve(lambda x:
                                         sim_one_date(x_val=x, ann_ret=None, month_indices=curr_idc)[0],
                                         x0=last_x_opt, full_output=True, xtol=1e-4)
-            _, end_money, total_depos = sim_one_date(x_val=x_opt, ann_ret=None, month_indices=curr_idc)
             if ier_x == 1:
                 x_opt = x_opt[0]
                 last_x_opt = x_opt
             else:
                 print(f"dont find any solution ier_x = {ier_x}")
+
+            _, end_money, total_depos = sim_one_date(x_val=x_opt, ann_ret=None, month_indices=curr_idc)
 
         r_opt, _, ier_r, _ = fsolve(lambda x:
                                     sim_one_date(x_val=x_opt, ann_ret=x, month_indices=curr_idc)[0],

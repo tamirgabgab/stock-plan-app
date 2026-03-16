@@ -552,5 +552,5 @@ def calculate_ann_gain_limits(start_amount: float, end_amount: float, stats_data
         r_opt_2 = r_opt_2[0]
     else:
         print(f"dont find any solution r_opt = {r_opt_2}")
-
-    return round(r_opt_1, 2), round(r_opt_2, 2)
+    r_opt_1, r_opt_2 = min(r_opt_1, r_opt_2), max(r_opt_1, r_opt_2)
+    return r_opt_1, r_opt_2

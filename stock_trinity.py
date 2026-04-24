@@ -8,6 +8,10 @@ from params import *
 from utils import get_stock_dates_bounds, calculate_trinity_withdraw_stats
 
 
+def reset_results():
+    st.session_state.final_results_trin = None
+
+
 def get_all_trin_plans_data() -> list:
     out_list = []
 
@@ -116,7 +120,7 @@ def stock_trinity_tab(st):
     col1, col2, col3, col4 = st.columns(spec=[2, 2, 1, 2.4])
     with col4:
         x_variable = st.segmented_control(label=f"\u202bחשב :", options=["סכום סופי", "אחוז משיכה", "סכום התחלתי"],
-                                          default="סכום סופי", key=f"trin_x_variable")
+                                          default="סכום סופי", key=f"trin_x_variable", on_change=reset_results)
     with col1:
         start_amount_dis = bool(x_variable == "סכום התחלתי")
         start_amount = st.number_input(label="סכום התחלתי בתיק", min_value=0.0, disabled=start_amount_dis,

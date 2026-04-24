@@ -7,6 +7,10 @@ from params import *
 from utils import get_stock_dates_bounds, calculate_portfolot_stats, calculate_ann_gain_limits
 
 
+def reset_results():
+    st.session_state.final_results = None
+
+
 def get_all_plans_data() -> list:
     out_list = []
     # וודא שאנחנו רצים על מה שיש בזיכרון
@@ -113,7 +117,7 @@ def stock_statistics_tab(st):
     col1, col2, col3, col4, col5 = st.columns(spec=[2.8, 2.8, 2, 2, 5])
     with col5:
         x_variable = st.segmented_control(label=f"\u202bחשב :", options=["סכום סופי", "הפקדה חודשית", "סכום התחלתי"],
-                                          default="סכום סופי")
+                                          default="סכום סופי", key="calc_type_selector", on_change=reset_results)
     with col1:
         start_amount_dis = bool(x_variable == "סכום התחלתי")
         start_amount = st.number_input(label="סכום התחלתי בתיק", min_value=0.0,

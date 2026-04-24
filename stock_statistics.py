@@ -184,7 +184,7 @@ def stock_statistics_tab(st):
                                 max_value=10_000.0, value=1000.0, step=0.01, key=f"amt_{plan_id}", disabled=dep_dis)
             with c3:
                 st.number_input(label=f"מספר חודשי הפקדה", min_value=0,
-                                max_value=500, value=0, step=1, key=f"pay_{plan_id}")
+                                max_value=500, value=240, step=1, key=f"pay_{plan_id}")
 
             current_df = plan.get("current_df")
             if isinstance(current_df, list):
@@ -217,6 +217,17 @@ def stock_statistics_tab(st):
         st.session_state.final_results = None
 
     if st.button("🚀 בצע סימולציה"):
+        invalid_plans = [p.get("שם תוכנית") for p in dict_final if p["מספר חודשים"] == 0]
+
+        if invalid_plans:
+            if len(invalid_plans) == 1:
+                st.error(f"⚠️ שגיאה: ב-'{invalid_plans[0]}' מספר חודשי ההפקדה הוא 0. יש להזין לפחות חודש אחד כדי לבצע "
+                         f"חישוב.")
+                st.stop()
+            else:
+                plans_str = ", ".join(invalid_plans)
+                st.error(f"⚠️ שגיאה: בתוכניות הבאות מספר חודשי ההפקדה הוא 0: {plans_str}. יש להזין ערך חיובי.")
+
         st.session_state.final_results = calculate_portfolot_stats(start_amount=start_amount,
                                                                    end_amount=end_amount,
                                                                    min_start_date=min_start_date,

@@ -344,6 +344,7 @@ def get_initial_guess(start_amount: float, end_amount: float, withdraw_p: float,
         x_0 = end_amount / (G_n - (1 / 1200) * withdraw_p * A_n)
     elif x_var == "אחוז משיכה":
         x_0 = 12 * 100 * (G_n - end_amount / start_amount) / A_n
+        x_0 = x_0 / 2
     else:
         x_0 = None
     return x_0
@@ -364,6 +365,8 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
     lev_np_dict = result['lev_np_dict']
 
     def simulate_single_date(x_val: float, month_indices: np.ndarray):
+        if isinstance(x_val, (np.ndarray, list)):
+            x_val = float(x_val[0])
         s_amt = x_val if x_var == "סכום התחלתי" else start_amount
         w_pct = x_val if x_var == "אחוז משיכה" else None
         t_end = x_val if x_var == "סכום סופי" else end_amount
@@ -435,7 +438,17 @@ def calculate_trinity_withdraw_stats(start_amount: float, end_amount: float, min
                 x_opt = x_opt[0]
                 last_x_opt = x_opt
             else:
-                print(f"dont find any solution ier = {ier}")
+                last_x_opt = 1
+                x_opt, _, ier, _ = fsolve(lambda x:
+                                          simulate_single_date(x_val=x, month_indices=curr_idc)[0],
+                                          x0=last_x_opt, full_output=True, xtol=1e-4)
+                _, end_money, total_withdraw = simulate_single_date(x_val=x_opt, month_indices=curr_idc)
+                if ier == 1:
+                    x_opt = x_opt[0]
+                    last_x_opt = x_opt
+                else:
+                    print(f"dont find any solution ier = {ier}")
+                    continue
 
         end_money, total_withdraw = round(end_money, 2), round(total_withdraw, 2)
 

@@ -46,6 +46,7 @@ def test_simulate_returns_paths_matrix():
     paths = np.frombuffer(base64.b64decode(body["paths"]), dtype="<f4").reshape(n, T1)
     assert len(body["start_dates"]) == n
     assert np.allclose(paths[:, -1], body["final"], rtol=1e-5)
+    assert len(body["account_drawdown"]) == n and all(v <= 0 for v in body["account_drawdown"])
 
 
 def test_solve_mode():

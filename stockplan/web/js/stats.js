@@ -95,3 +95,33 @@ export function nearestRow(m, c, y) {
   }
   return best;
 }
+
+// Percentile rank (0..100) of realization r among all realizations at every month, using
+// the column-sorted copies: binary search per column, ties get the middle rank.
+export function rankSeries(m, sorted, r) {
+  const out = new Float64Array(m.cols);
+  const n = m.rows;
+  for (let c = 0; c < m.cols; c++) {
+    const v = m.flat[r * m.cols + c];
+    const s = sorted[c];
+    let lo = 0, hi = n;                       // first index with s[i] >= v
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (s[mid] < v) lo = mid + 1; else hi = mid; }
+    let lo2 = lo, hi2 = n;                    // first index with s[i] > v
+    while (lo2 < hi2) { const mid = (lo2 + hi2) >> 1; if (s[mid] <= v) lo2 = mid + 1; else hi2 = mid; }
+    out[c] = n > 1 ? (100 * (lo + lo2 - 1) / 2) / (n - 1) : 50;
+  }
+  return out;
+}
+
+// Index of the realization whose score is closest to the p-th percentile of all scores.
+export function nearestToQuantile(scores, sorted, p) {
+  const q = quantileSorted(sorted, p);
+  let best = -1, dist = Infinity;
+  for (let r = 0; r < scores.length; r++) {
+    const v = scores[r];
+    if (v === null || !Number.isFinite(v)) continue;
+    const d = Math.abs(v - q);
+    if (d < dist) { dist = d; best = r; }
+  }
+  return best;
+}

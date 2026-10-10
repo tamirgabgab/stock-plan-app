@@ -20,6 +20,7 @@ export function theme() {
     bandEdge: v("--band-edge"),
     neutral: v("--neutral-mark"),
     rangeOut: v("--range-out"),
+    reps: [v("--rep-lo"), v("--rep-mid"), v("--rep-hi")],
   };
 }
 
@@ -51,7 +52,7 @@ function axis(t, extra = {}) {
 
 // Fan chart: percentile band, bold median, dashed mean, optional deposits, highlighted path.
 export function fanFigure({ cols, mean, deposits, p1, p2, target, showDeposits, showTarget, logY,
-                            currencySymbol, timeIdx, highlight }) {
+                            currencySymbol, timeIdx, highlight, reps = [] }) {
   const t = theme();
   const n = cols.length;
   const x = Array.from({ length: n }, (_, i) => i / 12);
@@ -69,6 +70,10 @@ export function fanFigure({ cols, mean, deposits, p1, p2, target, showDeposits, 
       hoverinfo: "skip", name: "ממוצע" },
     { x, y: deposits || [], mode: "lines", line: { width: 1.5, color: t.neutral, dash: "dot" },
       hoverinfo: "skip", name: "סך הפקדות", visible: showDeposits && deposits ? true : false },
+    ...reps.map((rep, i) => ({
+      x, y: rep.y, mode: "lines", line: { width: 1.5, color: t.reps[i] || t.violet },
+      hoverinfo: "skip", name: rep.label, opacity: 0.9,
+    })),
     highlightTrace(t, x, highlight),
   ];
   const shapes = [];
@@ -87,6 +92,33 @@ export function fanFigure({ cols, mean, deposits, p1, p2, target, showDeposits, 
     xaxis: axis(t, { title: { text: "שנים מתחילת התוכנית" }, range: [0, (n - 1) / 12], fixedrange: true }),
     yaxis: axis(t, { type: logY ? "log" : "linear", tickprefix: currencySymbol, tickformat: "~s",
                      fixedrange: true, rangemode: logY ? undefined : "tozero" }),
+  });
+  return { data, layout };
+}
+
+// Percentile rank of the selected paths over time; the p1-p2 strip is the fan chart's band.
+export function rankFigure({ T, p1, p2, series, timeIdx }) {
+  const t = theme();
+  const x = Array.from({ length: T + 1 }, (_, i) => i / 12);
+  const lo = Math.min(p1, p2), hi = Math.max(p1, p2);
+  const data = series.map((s) => ({
+    x, y: Array.from(s.y), mode: "lines", hoverinfo: "skip", name: s.label,
+    line: { width: s.main ? 2.5 : 1.5, color: s.color },
+  }));
+  if (!data.length) data.push({ x: [], y: [], mode: "lines", hoverinfo: "skip", showlegend: false });
+  const shapes = [
+    { type: "rect", xref: "paper", x0: 0, x1: 1, y0: lo, y1: hi, fillcolor: t.band, line: { width: 0 }, layer: "below" },
+    { type: "line", xref: "paper", x0: 0, x1: 1, y0: 50, y1: 50, line: { color: t.blue, width: 1.5 }, layer: "below" },
+  ];
+  if (timeIdx !== null && timeIdx !== undefined) {
+    shapes.push({ type: "line", yref: "paper", y0: 0, y1: 1, x0: timeIdx / 12, x1: timeIdx / 12,
+                  line: { color: t.text2, width: 1 } });
+  }
+  const layout = baseLayout(t, {
+    hovermode: false, dragmode: false, shapes, showlegend: false,
+    margin: { l: 64, r: 16, t: 6, b: 36 },
+    xaxis: axis(t, { title: { text: "שנים מתחילת התוכנית" }, range: [0, T / 12], fixedrange: true }),
+    yaxis: axis(t, { title: { text: "אחוזון" }, range: [0, 100], fixedrange: true, dtick: 25 }),
   });
   return { data, layout };
 }

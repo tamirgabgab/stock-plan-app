@@ -1,9 +1,10 @@
 // Results area: KPI tiles, fan chart over time, cross-section histogram, outcome by start date
 // and the realizations table. All panels share one "active realization" (hovered or pinned).
 import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
-import { fanFigure, histFigure, outcomeFigure, PLOT_CONFIG } from "./charts.js";
+import { fanFigure, histFigure, outcomeFigure, rankFigure, PLOT_CONFIG, theme } from "./charts.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
-import { column, fractionBetween, histogram, nearestRow, quantileSorted, row, summarize } from "./stats.js";
+import { column, fractionBetween, histogram, nearestRow, nearestToQuantile, quantileSorted, rankSeries, row,
+         sortedFinite, summarize } from "./stats.js";
 import { DualRange, Segmented, Toggle } from "./ui.js";
 
 const SOLVED_LABEL = { monthly_deposit: "הפקדה חודשית נדרשת", start_amount: "סכום התחלתי נדרש" };
@@ -31,11 +32,25 @@ function usePlot(ref, build, deps, bind) {
   useEffect(() => () => { if (ref.current) window.Plotly.purge(ref.current); }, []);
 }
 
+// Realizations that actually ended at the p1, median and p2 percentiles of the outcome
+// (final value, or the solved variable in solve mode, where every path ends at the target).
+export function representative(res, p1, p2) {
+  const solveMode = res.plan.solve_for !== "final";
+  const scores = solveMode ? res.raw.solved.map((v) => (v === null ? null : -v)) : res.raw.final;
+  const sorted = sortedFinite(Array.from(scores));
+  const lo = Math.min(p1, p2), hi = Math.max(p1, p2);
+  return [lo, 50, hi].map((p, i) => {
+    const idx = nearestToQuantile(scores, sorted, p);
+    return { idx, p, color: i, label: `אחוזון ${p}: התחלה ${dateHe(res.raw.start_dates[idx])}` };
+  }).filter((r) => r.idx >= 0);
+}
+
 export function Results({ res, ui, setUi, themeKey }) {
   const [hover, setHover] = useState(null);
   const [pinned, setPinned] = useState(null);
   const active = hover ?? pinned;
-  const shared = { res, ui, setUi, active, setHover, pinned, setPinned, themeKey };
+  const reps = useMemo(() => (ui.showReps ? representative(res, ui.p1, ui.p2) : []), [res, ui.showReps, ui.p1, ui.p2]);
+  const shared = { res, ui, setUi, active, setHover, pinned, setPinned, themeKey, reps };
   return html`<div class="results">
     ${res.raw.warnings.length ? html`<div class="callout warn">${res.raw.warnings.join(" · ")}</div>` : null}
     <${Kpis} res=${res} />
@@ -62,6 +77,7 @@ function Kpis({ res }) {
   const irr = summarize(raw.irr);
   const dep = summarize(raw.deposits_total);
   const dd = summarize(raw.max_drawdown);
+  const ddAcct = summarize(raw.account_drawdown);
   const tiles = [];
   if (plan.solve_for === "final") {
     const fin = summarize(raw.final);
@@ -88,8 +104,8 @@ function Kpis({ res }) {
       html`<${Tile} label="סך הפקדות (חציון)" value=${m(dep?.median)} />`,
     );
   }
-  tiles.push(html`<${Tile} label="ירידה מקסימלית חציונית" value=${pct(dd?.median, 1)}
-    sub=${`הגרועה: ${pct(dd?.min, 1)}`} />`);
+  tiles.push(html`<${Tile} label="ירידה מקסימלית חציונית (תשואת התיק)" value=${pct(dd?.median, 1)}
+    sub=${`הגרועה: ${pct(dd?.min, 1)} · שווי החשבון: ${pct(ddAcct?.median, 1)} (חציון)`} />`);
   return html`<section class="tiles" aria-label="סיכום">${tiles}
     <div class="tile meta-tile"><div class="tile-label">ריאליזציות</div><div class="tile-value">${raw.n.toLocaleString("he-IL")}</div>
       <div class="tile-sub">${plan.real ? "ריאלי, בכסף של היום" : "ערכים נומינליים"} · ${cur === "ILS" ? "שקלים" : "דולרים"}</div></div>
@@ -98,7 +114,7 @@ function Kpis({ res }) {
 
 // -------------------------------------------------------------------------- Fan chart
 
-function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, themeKey }) {
+function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, themeKey, reps }) {
   const ref = useRef(null);
   const [tip, setTip] = useState(null);
   const sym = CURRENCY_SYMBOL[res.plan.currency];
@@ -106,12 +122,13 @@ function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, themeKe
   const highlight = active !== null ? {
     y: row(res.paths, active), label: `התחלה ${dateHe(res.raw.start_dates[active])}`,
   } : null;
+  const repTraces = useMemo(() => reps.map((r) => ({ y: row(res.paths, r.idx), label: r.label })), [res, reps]);
 
   usePlot(ref, () => fanFigure({
     cols: res.cs.sorted, mean: res.cs.mean, deposits: res.depMean, p1: ui.p1, p2: ui.p2,
     target: res.plan.target_amount, showDeposits: ui.showDeposits, showTarget: ui.showTarget,
-    logY: ui.logY, currencySymbol: sym, timeIdx, highlight,
-  }), [res, ui.p1, ui.p2, ui.showDeposits, ui.showTarget, ui.logY, timeIdx, active, themeKey], (gd) => {
+    logY: ui.logY, currencySymbol: sym, timeIdx, highlight, reps: repTraces,
+  }), [res, ui.p1, ui.p2, ui.showDeposits, ui.showTarget, ui.logY, timeIdx, active, themeKey, repTraces], (gd) => {
     let frame = 0, last = null, curRow = null, side = "right";
     const locate = (e) => {
       const fl = gd._fullLayout;
@@ -183,12 +200,43 @@ function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, themeKe
       <${Toggle} label="הפקדות" checked=${ui.showDeposits} onChange=${(v) => setUi((u) => ({ ...u, showDeposits: v }))} />
       <${Toggle} label="יעד" checked=${ui.showTarget} onChange=${(v) => setUi((u) => ({ ...u, showTarget: v }))} />
       <${Toggle} label="סקאלה לוגריתמית" checked=${ui.logY} onChange=${(v) => setUi((u) => ({ ...u, logY: v }))} />
+      <${Toggle} label="מסלולים מייצגים" checked=${ui.showReps} onChange=${(v) => setUi((u) => ({ ...u, showReps: v }))}
+        hint="שלוש ריאליזציות אמיתיות: אלה שסיימו קרוב לאחוזון התחתון, לחציון ולאחוזון העליון של התוצאה. בשונה מהקרן, אלה מסלולים שבאמת קרו, עם כל הירידות והקפיצות." />
     </div>
     <div class="plot-wrap">
       <div ref=${ref} class="plot plot-tall"></div>
       ${tip ? html`<${FanTip} tip=${tip} res=${res} ui=${ui} />` : null}
     </div>
+    <${RankChart} res=${res} ui=${ui} active=${active} reps=${reps} timeIdx=${timeIdx} themeKey=${themeKey} />
   </section>`;
+}
+
+// Where the selected path sat among all realizations at each moment. A path leaves the
+// fan chart's band exactly when this line leaves the p1-p2 strip.
+function RankChart({ res, ui, active, reps, timeIdx, themeKey }) {
+  const ref = useRef(null);
+  const series = useMemo(() => {
+    const t = theme();
+    const out = reps.map((r) => ({ y: rankSeries(res.paths, res.cs.sorted, r.idx), label: r.label, color: t.reps[r.color] }));
+    if (active !== null) {
+      out.push({ y: rankSeries(res.paths, res.cs.sorted, active), color: t.violet, main: true,
+                 label: `התחלה ${dateHe(res.raw.start_dates[active])}` });
+    }
+    return out;
+  }, [res, reps, active, themeKey]);
+  usePlot(ref, () => rankFigure({ T: res.T, p1: ui.p1, p2: ui.p2, series, timeIdx }),
+    [res, ui.p1, ui.p2, series, timeIdx, themeKey]);
+  const now = active !== null ? rankSeries(res.paths, res.cs.sorted, active)[timeIdx] : null;
+  return html`<div class="rank">
+    <div class="rank-head">
+      <h3>דירוג המסלול לאורך הזמן</h3>
+      <p class="muted">${series.length
+        ? html`באיזה אחוזון היה המסלול בכל רגע. יציאה מהרצועה היא יציאה מהקרן בגרף שלמעלה.${now !== null
+            ? html` כרגע (${monthsLabel(timeIdx)}): <b dir="ltr">${now.toFixed(0)}</b>` : ""}`
+        : "רחף על מסלול או נעץ אותו, או הפעל מסלולים מייצגים, כדי לראות באיזה אחוזון הוא היה בכל רגע."}</p>
+    </div>
+    <div ref=${ref} class="plot plot-rank"></div>
+  </div>`;
 }
 
 function FanTip({ tip, res, ui }) {
@@ -215,16 +263,34 @@ function FanTip({ tip, res, ui }) {
 
 // ------------------------------------------------------------------- Cross-section
 
+const HIST_SOURCES = {
+  value: { label: "שווי התיק", title: (t) => `התפלגות השווי אחרי ${monthsLabel(t)}`, axis: "שווי התיק",
+           note: "גרור את הידיות שמתחת לגרף, או גרור על הגרף עצמו, כדי לבחור טווח." },
+  solved: { label: "המשתנה שנפתר", title: (t, name) => `התפלגות: ${name}`, axis: (name) => name,
+            note: "גרור את הידיות שמתחת לגרף, או גרור על הגרף עצמו, כדי לבחור טווח." },
+  dd: { label: "ירידה מהשיא: התיק", title: () => "התפלגות הירידה המקסימלית מהשיא: תשואת התיק", axis: "ירידה מהשיא (%)",
+        note: "הירידה הגדולה ביותר מהשיא של תשואת האסטרטגיה עצמה: יחידה אחת שהושקעה בהתחלה, כולל מינוף ודמי ניהול, בלי הפקדות ובלי מס. זה המדד המקובל ל'כמה כאב צפוי בדרך'." },
+  dd_acct: { label: "ירידה מהשיא: החשבון", title: () => "התפלגות הירידה המקסימלית מהשיא: שווי החשבון", axis: "ירידה מהשיא (%)",
+             note: "הירידה הגדולה ביותר של שווי החשבון נטו לאורך המסלול. ההפקדות השוטפות מרככות אותה, ולכן בדרך כלל היא קטנה מירידת התיק." },
+};
+
 function CrossSection({ res, ui, setUi, themeKey }) {
   const ref = useRef(null);
   const solveMode = res.plan.solve_for !== "final";
-  const source = solveMode ? ui.histSource : "value";
+  const sources = ["value", ...(solveMode ? ["solved"] : []), "dd", "dd_acct"];
+  const source = sources.includes(ui.histSource) ? ui.histSource : "value";
+  const isPct = source === "dd" || source === "dd_acct";
   const t = ui.timeIdx ?? res.T;
   const cur = res.plan.currency;
   const sym = CURRENCY_SYMBOL[cur];
+  const fmt = isPct ? (v) => pct(v, 1) : (v) => money(v, cur);
+  const fmtShort = isPct ? (v) => pct(v, 0) : (v) => money(v, cur, { compact: true });
+  const solvedName = SOLVED_LABEL[res.plan.solve_for];
 
-  const values = useMemo(() => (source === "solved" ? res.raw.solved : Array.from(column(res.paths, t))),
-    [res, t, source]);
+  const values = useMemo(() => ({
+    value: () => Array.from(column(res.paths, t)), solved: () => res.raw.solved,
+    dd: () => res.raw.max_drawdown, dd_acct: () => res.raw.account_drawdown,
+  })[source](), [res, t, source]);
   const sum = useMemo(() => summarize(values), [values]);
   const [range, setRange] = useState(null);
   useEffect(() => setRange(null), [sum]);
@@ -243,10 +309,12 @@ function CrossSection({ res, ui, setUi, themeKey }) {
     }
     return { loss: (100 * loss) / res.n, reach: (100 * reach) / res.n };
   }, [res, t, source]);
+  const worseThan = useMemo(() => (isPct && sum
+    ? [20, 30, 50].map((d) => ({ d, frac: 100 * fractionBetween(sum.sorted, -Infinity, -d).frac })) : null), [sum, isPct]);
 
   usePlot(ref, () => histFigure({
-    hist, a, b, median: sum.median, mean: sum.mean, prefix: sym, suffix: "",
-    xTitle: source === "solved" ? SOLVED_LABEL[res.plan.solve_for] : "שווי התיק",
+    hist, a, b, median: sum.median, mean: sum.mean, prefix: isPct ? "" : sym, suffix: isPct ? "%" : "",
+    xTitle: source === "solved" ? solvedName : HIST_SOURCES[source].axis,
   }), [res, hist, a, b, themeKey], (gd) => {
     gd.on("plotly_selected", (ev) => { if (ev && ev.range && ev.range.x) setRange(ev.range.x); });
     gd.on("plotly_deselect", () => setRange(null));
@@ -256,11 +324,11 @@ function CrossSection({ res, ui, setUi, themeKey }) {
   if (!sum) return html`<section class="card"><p class="muted">אין נתונים להצגה</p></section>`;
   return html`<section class="card" aria-label="התפלגות">
     <div class="card-head"><div>
-      <h2>${source === "solved" ? `התפלגות: ${SOLVED_LABEL[res.plan.solve_for]}` : `התפלגות השווי אחרי ${monthsLabel(t)}`}</h2>
-      <p class="muted">גרור את הידיות שמתחת לגרף, או גרור על הגרף עצמו, כדי לבחור טווח.</p></div></div>
+      <h2>${HIST_SOURCES[source].title(t, solvedName)}</h2>
+      <p class="muted">${HIST_SOURCES[source].note}</p></div></div>
     <div class="controls">
-      ${solveMode ? html`<${Segmented} small options=${[{ value: "solved", label: "המשתנה שנפתר" }, { value: "value", label: "שווי התיק" }]}
-        value=${source} onChange=${(v) => setUi((u) => ({ ...u, histSource: v }))} />` : null}
+      <${Segmented} small options=${sources.map((v) => ({ value: v, label: HIST_SOURCES[v].label }))}
+        value=${source} onChange=${(v) => setUi((u) => ({ ...u, histSource: v }))} />
       <label class="mini">עמודות <input type="number" dir="ltr" min="10" max="200" step="5" value=${ui.bins}
         onInput=${(e) => Number.isFinite(e.currentTarget.valueAsNumber) && setUi((u) => ({ ...u, bins: e.currentTarget.valueAsNumber }))} /></label>
     </div>
@@ -270,25 +338,25 @@ function CrossSection({ res, ui, setUi, themeKey }) {
         onInput=${(e) => setUi((u) => ({ ...u, timeIdx: Number(e.currentTarget.value) }))} />
     </div>` : null}
     <div ref=${ref} class="plot"></div>
-    <${DualRange} min=${sum.min} max=${sum.max} a=${a} b=${b} onChange=${setRange}
-      format=${(v) => money(v, cur, { compact: true })} />
+    <${DualRange} min=${sum.min} max=${sum.max} a=${a} b=${b} onChange=${setRange} format=${fmtShort} />
     <div class="range-box">
       <div class="prob"><span class="prob-value" dir="ltr">${pct(between.frac * 100, 1)}</span>
         <span class="muted">סיכוי להיות בטווח (${between.count.toLocaleString("he-IL")} מתוך ${sum.n.toLocaleString("he-IL")})</span></div>
       ${range ? html`<button class="btn link" onClick=${() => setRange(null)}>אפס טווח</button>` : null}
     </div>
     <dl class="stats">
-      <div><dt>מינימום</dt><dd dir="ltr">${money(sum.min, cur)}</dd></div>
-      <div><dt>אחוזון 5</dt><dd dir="ltr">${money(sum.p5, cur)}</dd></div>
-      <div><dt>אחוזון 25</dt><dd dir="ltr">${money(sum.p25, cur)}</dd></div>
-      <div><dt>חציון</dt><dd dir="ltr">${money(sum.median, cur)}</dd></div>
-      <div><dt>ממוצע</dt><dd dir="ltr">${money(sum.mean, cur)}</dd></div>
-      <div><dt>אחוזון 75</dt><dd dir="ltr">${money(sum.p75, cur)}</dd></div>
-      <div><dt>אחוזון 95</dt><dd dir="ltr">${money(sum.p95, cur)}</dd></div>
-      <div><dt>מקסימום</dt><dd dir="ltr">${money(sum.max, cur)}</dd></div>
-      <div><dt>סטיית תקן</dt><dd dir="ltr">${money(sum.std, cur)}</dd></div>
+      <div><dt>מינימום</dt><dd dir="ltr">${fmt(sum.min)}</dd></div>
+      <div><dt>אחוזון 5</dt><dd dir="ltr">${fmt(sum.p5)}</dd></div>
+      <div><dt>אחוזון 25</dt><dd dir="ltr">${fmt(sum.p25)}</dd></div>
+      <div><dt>חציון</dt><dd dir="ltr">${fmt(sum.median)}</dd></div>
+      <div><dt>ממוצע</dt><dd dir="ltr">${fmt(sum.mean)}</dd></div>
+      <div><dt>אחוזון 75</dt><dd dir="ltr">${fmt(sum.p75)}</dd></div>
+      <div><dt>אחוזון 95</dt><dd dir="ltr">${fmt(sum.p95)}</dd></div>
+      <div><dt>מקסימום</dt><dd dir="ltr">${fmt(sum.max)}</dd></div>
+      <div><dt>סטיית תקן</dt><dd dir="ltr">${fmt(sum.std)}</dd></div>
       ${extra ? html`<div><dt>סיכוי להפסד (שווי מתחת להפקדות)</dt><dd dir="ltr">${pct(extra.loss, 1)}</dd></div>
         <div><dt>סיכוי להיות מעל היעד</dt><dd dir="ltr">${pct(extra.reach, 1)}</dd></div>` : null}
+      ${worseThan ? worseThan.map(({ d, frac }) => html`<div><dt>סיכוי לירידה של יותר מ-${d}%</dt><dd dir="ltr">${pct(frac, 1)}</dd></div>`) : null}
     </dl>
   </section>`;
 }
@@ -384,7 +452,8 @@ function RealizationsTable({ res, active, setHover, pinned, setPinned }) {
     { key: "dep", label: "סך הפקדות", get: (i) => raw.deposits_total[i], fmt: (v) => money(v, cur) },
     { key: "irr", label: "IRR שנתי", get: (i) => raw.irr[i], fmt: (v) => pct(v) },
     { key: "cagr", label: "תשואת התיק", get: (i) => raw.cagr[i], fmt: (v) => pct(v) },
-    { key: "dd", label: "ירידה מקסימלית", get: (i) => raw.max_drawdown[i], fmt: (v) => pct(v, 1) },
+    { key: "dd", label: "ירידת התיק", get: (i) => raw.max_drawdown[i], fmt: (v) => pct(v, 1) },
+    { key: "dda", label: "ירידת החשבון", get: (i) => raw.account_drawdown[i], fmt: (v) => pct(v, 1) },
   ];
   const order = useMemo(() => {
     const c = cols.find((x) => x.key === sort.key);

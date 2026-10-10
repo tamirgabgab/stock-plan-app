@@ -1,6 +1,7 @@
 // App shell: state, persistence, API calls and layout.
 import { html, render, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
 import { InputsPanel, newId, newStage } from "./inputs.js";
+import { MathPage } from "./math.js";
 import { Results } from "./results.js";
 import { columnStats, decodeMatrix } from "./stats.js";
 
@@ -26,7 +27,7 @@ const DEFAULT_PLAN = {
 };
 
 const DEFAULT_UI = { p1: 10, p2: 90, showDeposits: true, showTarget: true, logY: false, timeIdx: null,
-                     bins: 50, histSource: "solved" };
+                     bins: 50, histSource: "solved", showReps: false };
 
 function loadPlan() {
   try {
@@ -86,6 +87,7 @@ function App() {
   const [ui, setUi] = useState(DEFAULT_UI);
   const [theme, setTheme] = useState(() => { try { return localStorage.getItem(THEME_KEY) || "auto"; } catch { return "auto"; } });
   const [themeKey, setThemeKey] = useState(0);
+  const [view, setView] = useState(() => (location.hash === "#math" ? "math" : "plan"));
   const ctrl = useRef(null);
 
   useEffect(() => { fetch("/api/meta").then((r) => r.json()).then(setMeta).catch(() => {}); }, []);
@@ -155,7 +157,10 @@ function App() {
       <div class="brand"><span class="logo" aria-hidden="true">▲</span>
         <div><h1>מתכנן השקעות היסטורי${meta.version ? html` <span class="version-badge" dir="ltr" title="גרסת האפליקציה">v${meta.version}</span>` : null}</h1><p class="muted">כל תאריך התחלה בהיסטוריה הוא ריאליזציה אחת</p></div></div>
       <nav class="tabs" aria-label="מצבים">
-        <button class="tab on" aria-current="page">צבירה</button>
+        <button class=${"tab" + (view === "plan" ? " on" : "")} aria-current=${view === "plan" ? "page" : null}
+          onClick=${() => setView("plan")}>צבירה</button>
+        <button class=${"tab" + (view === "math" ? " on" : "")} aria-current=${view === "math" ? "page" : null}
+          onClick=${() => setView("math")}>הסבר מתמטי</button>
         <button class="tab" disabled title="יגיע בסבב הבא">טריניטי (בקרוב)</button>
       </nav>
       <div class="actions">
@@ -173,8 +178,9 @@ function App() {
       <div class=${"main" + (busy ? " is-busy" : "")}>
         ${error ? html`<div class="callout error" role="alert">${error}</div>` : null}
         ${busy ? html`<div class="busy" role="status"><span class="spinner"></span>מחשב...</div>` : null}
-        ${res ? html`<${Results} key=${res.id} res=${res} ui=${ui} setUi=${setUi} themeKey=${themeKey} />`
-              : !error ? html`<div class="empty">${busy ? "טוען נתונים (בפעם הראשונה ההורדה לוקחת כמה שניות)..." : "הגדר תוכנית כדי לראות תוצאות"}</div>` : null}
+        ${view === "math" ? html`<${MathPage} plan=${plan} res=${res} />`
+          : res ? html`<${Results} key=${res.id} res=${res} ui=${ui} setUi=${setUi} themeKey=${themeKey} />`
+          : !error ? html`<div class="empty">${busy ? "טוען נתונים (בפעם הראשונה ההורדה לוקחת כמה שניות)..." : "הגדר תוכנית כדי לראות תוצאות"}</div>` : null}
       </div>
     </main>
     <footer class="foot muted">לצורכי מחקר ולימוד בלבד. אין לראות בכך ייעוץ השקעות.

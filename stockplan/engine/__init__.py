@@ -41,6 +41,13 @@ def _deflator(req: PlanRequest, market: Market, cpi) -> np.ndarray:
     return market.cpi_base / cpi
 
 
+def _max_drawdown(x: np.ndarray) -> np.ndarray:
+    """(R,) worst peak-to-trough fall of each row, in percent (negative or zero)."""
+    peak = np.maximum.accumulate(x, axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.nanmin(np.where(peak > 0, x / peak - 1, 0.0), axis=1) * 100
+
+
 def _initial_guess(req: PlanRequest) -> float:
     T = req.total_months
     r = 1.07 ** (1 / 12) - 1
@@ -86,8 +93,8 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
     unit = simulate(req, market, record=True, unit_growth=True).paths_net * D
     with np.errstate(divide="ignore", invalid="ignore"):
         cagr = (np.maximum(unit[:, T], 0) ** (12 / T) - 1) * 100
-        peak = np.maximum.accumulate(unit, axis=1)
-        max_dd = np.nanmin(np.where(peak > 0, unit / peak - 1, 0.0), axis=1) * 100
+        max_dd = _max_drawdown(unit)
+        account_dd = _max_drawdown(paths)
 
     starts = list(market.start_dates)
     ends = list(market.calendar[market.day_idx[:, -1]])
@@ -96,7 +103,8 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
 
     return SimulationResult(start_dates=starts, end_dates=ends, months=T, final=final,
                             deposits_total=deposits.sum(axis=1), irr=irr, cagr=cagr,
-                            max_drawdown=max_dd, paths=paths, deposits_path=np.cumsum(deposits, axis=1),
+                            max_drawdown=max_dd, account_drawdown=account_dd, paths=paths,
+                            deposits_path=np.cumsum(deposits, axis=1),
                             solved=solved, warnings=warnings)
 
 

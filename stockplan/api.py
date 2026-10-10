@@ -136,6 +136,7 @@ def simulate(plan: PlanIn):
         "irr": _floats(res.irr),
         "cagr": _floats(res.cagr),
         "max_drawdown": _floats(res.max_drawdown),
+        "account_drawdown": _floats(res.account_drawdown),
         "solved": None if res.solved is None else _floats(res.solved),
         "paths": _matrix_b64(res.paths),
         "deposits_path": _matrix_b64(res.deposits_path),

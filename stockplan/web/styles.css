@@ -15,6 +15,9 @@
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-7: #6250d6;
+  --rep-lo: #c2412f;
+  --rep-mid: #168f7c;
+  --rep-hi: #2f8f3a;
   --band: rgba(42, 120, 214, 0.16);
   --band-edge: rgba(42, 120, 214, 0.35);
   --neutral-mark: #8a8984;
@@ -42,6 +45,9 @@
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-7: #9085e9;
+    --rep-lo: #ef7a68;
+    --rep-mid: #3fc2ad;
+    --rep-hi: #6cc474;
     --band: rgba(57, 135, 229, 0.22);
     --band-edge: rgba(57, 135, 229, 0.45);
     --neutral-mark: #8a8984;
@@ -67,6 +73,9 @@
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-7: #9085e9;
+  --rep-lo: #ef7a68;
+  --rep-mid: #3fc2ad;
+  --rep-hi: #6cc474;
   --band: rgba(57, 135, 229, 0.22);
   --band-edge: rgba(57, 135, 229, 0.45);
   --neutral-mark: #8a8984;
@@ -359,3 +368,34 @@ table.data tbody tr.pinned { box-shadow: inset -3px 0 0 var(--series-7); }
   font-size: 11px; font-weight: 500; color: var(--text-secondary); background: var(--surface-2);
   border: 1px solid var(--border); font-variant-numeric: tabular-nums;
 }
+
+/* ------------------------------------------------------------- rank chart */
+.rank { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.rank-head { margin-bottom: 4px; }
+.rank-head h3 { margin: 0; font-size: 13px; font-weight: 700; }
+.rank-head p { font-size: 12px; }
+.plot-rank { height: 170px; }
+
+/* --------------------------------------------------------------- math page */
+.math { display: flex; flex-direction: column; gap: 12px; max-width: 980px; }
+.math .card h2 { font-size: 16px; margin-bottom: 6px; }
+.math .card h3 { font-size: 14px; margin: 14px 0 4px; }
+.math p { margin: 6px 0; line-height: 1.65; }
+.math ul, .math ol { margin: 4px 0 8px; padding-inline-start: 22px; line-height: 1.65; }
+.math li { margin: 2px 0; }
+/* position: relative keeps KaTeX's hidden absolute MathML box inside the formula's own box. */
+.tex { display: inline-block; position: relative; unicode-bidi: isolate; padding: 0 2px; max-width: 100%; overflow-x: auto; overflow-y: hidden; vertical-align: middle; }
+.tex-block { display: block; position: relative; unicode-bidi: isolate; overflow-x: auto; overflow-y: hidden; padding: 4px 8px; margin: 8px 0; }
+.tex-block .katex-display { margin: 0.4em 0; }
+.katex { font-size: 1.08em; }
+.math .note { background: var(--surface-2); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.math .note.ok { border-inline-start: 3px solid var(--rep-hi); }
+.math .note.warn { border-inline-start: 3px solid var(--series-2); }
+.math table.vals { border-collapse: collapse; width: 100%; font-size: 13px; }
+.math table.vals th, .math table.vals td { padding: 4px 8px; border-bottom: 1px solid var(--grid); text-align: start; vertical-align: top; }
+.math table.vals th { color: var(--text-secondary); font-weight: 500; white-space: nowrap; }
+.math table.vals td.num { direction: ltr; text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.math table.vals tr.cur { background: var(--band); }
+.math .toc { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.math .toc a { font-size: 12px; color: var(--accent); text-decoration: none; background: var(--surface-2); padding: 3px 9px; border-radius: 99px; }
+.math .toc a:hover { text-decoration: underline; }

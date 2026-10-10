@@ -69,7 +69,8 @@ class SimulationResult:
     deposits_total: "object"     # (R,) total deposits, display units
     irr: "object"                # (R,) money-weighted annual return, percent
     cagr: "object"               # (R,) time-weighted annual return of the portfolio, percent
-    max_drawdown: "object"       # (R,) percent (negative)
+    max_drawdown: "object"       # (R,) percent (negative): the strategy's own return path (unit growth)
+    account_drawdown: "object"   # (R,) percent (negative): the net account value, deposits included
     paths: "object"              # (R, months+1) net liquidation value, display units
     deposits_path: "object"      # (R, months+1) cumulative deposits, display units
     solved: "object" = None      # (R,) solved variable, or None

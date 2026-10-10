@@ -1,0 +1,231 @@
+// "Math" tab: the model behind every number in the app, as text plus LaTeX (KaTeX), with the
+// general equations next to a version that plugs in the current plan and its results.
+import { html, useEffect, useRef } from "../vendor/preact-htm.module.js";
+import { dateHe, money, monthsLabel, pct } from "./format.js";
+import { summarize } from "./stats.js";
+
+const S = String.raw;
+
+function Tex({ tex, display }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    if (!window.katex) { ref.current.textContent = tex; return; }
+    window.katex.render(tex, ref.current, { displayMode: !!display, throwOnError: false, strict: "ignore" });
+  }, [tex, display]);
+  return html`<span ref=${ref} class=${display ? "tex-block" : "tex"} dir="ltr"></span>`;
+}
+const T = (tex) => html`<${Tex} tex=${tex} />`;
+const D = (tex) => html`<${Tex} tex=${tex} display />`;
+
+// Numbers inside LaTeX: thousands separators without the extra math spacing.
+const n = (v, digits = 0) => (Number.isFinite(v)
+  ? v.toLocaleString("en-US", { maximumFractionDigits: digits }).replace(/,/g, "{,}") : "?");
+const fr = (v, digits = 4) => (Number.isFinite(v) ? v.toFixed(digits) : "?");
+
+export function MathPage({ plan, res }) {
+  const cur = plan.currency === "ILS" ? "שקל" : "דולר";
+  const months = plan.stages.reduce((a, s) => a + (Number(s.months) || 0), 0);
+  const tau = (Number(plan.tax_rate) || 0) / 100;
+  const fee = (Number(plan.annual_fee) || 0) / 100;
+  const phi = Math.pow(1 - fee, 1 / 12);
+  const lev = Math.max(...plan.stages.flatMap((s) => s.holdings.map((h) => Number(h.leverage) || 1)));
+  const multi = plan.stages.length > 1;
+  const closedForm = !(plan.tax_on_switch && multi);
+  const m = (v) => money(v, plan.currency);
+  const raw = res ? res.raw : null;
+  const stale = res && res.plan !== plan;   // the plan on screen changed since the last run
+  const sum = raw ? summarize(raw.final) : null;
+  const dep = raw ? summarize(raw.deposits_total) : null;
+  const sol = raw && raw.solved ? summarize(raw.solved) : null;
+  const sigmaCase = plan.real ? (plan.index_deposits ? 3 : 2) : (plan.index_deposits ? 1 : 0);
+
+  const sections = [
+    ["data", "נתוני השוק והסימונים"], ["deposits", "ההפקדות"], ["recursion", "משוואת ההפרשים של השווי"],
+    ["tax", "עלות, רווח ומס"], ["solve", "הנעלם: מה פותרים ואיך"], ["stats", "הסטטיסטיקה על הריאליזציות"],
+  ];
+  const stageRows = plan.stages.map((s, k) => html`<tr>
+    <th>שלב ${k + 1}${s.name ? ` (${s.name})` : ""}</th>
+    <td><span dir="ltr">${T(S`T_{${k + 1}} = ${s.months}`)}</span>, ${monthsLabel(s.months || 0)}</td>
+    <td class="num">${T(S`I_{${k + 1}} = ${n(s.initial_deposit)}`)}</td>
+    <td class="num">${plan.solve_for === "monthly_deposit" ? T(S`M_{${k + 1}} = M`) : T(S`M_{${k + 1}} = ${n(s.monthly_deposit)}`)}</td>
+    <td>${s.holdings.filter((h) => h.ticker).map((h) => html`<span dir="ltr" class="nowrap">${h.ticker} ${Number(h.weight)}%${Number(h.leverage) !== 1 ? ` ×${h.leverage}` : ""}</span> `)}</td>
+  </tr>`);
+
+  return html`<div class="math" dir="rtl">
+    <section class="card">
+      <h2>איך האפליקציה מחשבת את מה שהיא מציגה</h2>
+      <p>כל גרף בלשונית "צבירה" נובע מאותו מודל: לכל תאריך התחלה בהיסטוריה (ריאליזציה) מריצים את התוכנית על המחירים האמיתיים
+        חודש אחרי חודש, ובסוף עושים סטטיסטיקה על כל הריאליזציות. בדף הזה כל שלב מוצג פעמיים: הנוסחה הכללית בסימנים,
+        ולידה הגרסה עם המספרים של התוכנית שמוגדרת עכשיו בצד. שינוי בהגדרות מעדכן את הדף מיד.</p>
+      <div class="toc">${sections.map(([id, label]) => html`<a href=${"#" + id}>${label}</a>`)}</div>
+      ${stale ? html`<p class="note warn">ההגדרות השתנו מאז החישוב האחרון. המספרים שמבוססים על תוצאות מתייחסים לחישוב הקודם ויתעדכנו כשהחישוב החדש יסתיים.</p>` : null}
+      <h3>הפרמטרים של התוכנית הנוכחית</h3>
+      <div class="table-wrap"><table class="vals"><tbody>
+        <tr><th>משך</th><td colspan="4">${T(S`T = ${months}`)} חודשים (${monthsLabel(months)}), ב-${plan.stages.length} ${multi ? "שלבים" : "שלב"}</td></tr>
+        <tr><th>סכום התחלתי</th><td colspan="4">${plan.solve_for === "start_amount" ? html`${T(S`S_0`)} הוא הנעלם` : html`${T(S`S_0 = ${n(plan.start_amount)}`)} ${cur}`}</td></tr>
+        <tr><th>יעד</th><td colspan="4">${T(S`F^\star = ${n(plan.target_amount)}`)} ${cur}${plan.solve_for === "final" ? " (משמש רק לסיכוי להגיע ליעד)" : " (הסכום שצריך להגיע אליו)"}</td></tr>
+        <tr><th>מס</th><td colspan="4">${T(S`\tau = ${fr(tau, 3)}`)} על רווח ${plan.tax_basis === "real" ? "ריאלי" : "נומינלי"}${multi ? (plan.tax_on_switch ? ", מעבר בין שלבים הוא אירוע מס" : ", מעבר בין שלבים פטור ממס") : ""}</td></tr>
+        <tr><th>דמי ניהול</th><td colspan="4">${T(S`f = ${fr(fee, 4)}`)} לשנה, כלומר מקדם חודשי ${T(S`\varphi = (1-f)^{1/12} = ${fr(phi, 6)}`)}</td></tr>
+        <tr><th>מינוף</th><td colspan="4">${lev > 1 ? html`עד ${T(S`L = ${lev}`)}, עלות מינוף ${T(S`c = ${fr((Number(plan.leverage_cost) || 0) / 100, 4)}`)} לשנה` : "אין (כל הנכסים במינוף 1)"}</td></tr>
+        <tr><th>מטבע והצגה</th><td colspan="4">${cur}, ${plan.real ? "ערכים ריאליים בכסף של היום" : "ערכים נומינליים"}${plan.index_deposits ? ", ההפקדות צמודות למדד" : ""}</td></tr>
+        <tr><th></th><th>חודשים</th><th>הפקדה בתחילת השלב</th><th>הפקדה חודשית</th><th>נכסים ומשקלים</th></tr>
+        ${stageRows}
+      </tbody></table></div>
+      ${raw ? html`<h3>התוצאות הנוכחיות</h3>
+        <div class="table-wrap"><table class="vals"><tbody>
+          <tr><th>ריאליזציות</th><td class="num">${T(S`n = ${n(raw.n)}`)}</td><td>תאריכי התחלה מ-${dateHe(raw.start_dates[0])} עד ${dateHe(raw.start_dates[raw.n - 1])}</td></tr>
+          ${sol ? html`<tr><th>${plan.solve_for === "monthly_deposit" ? "הפקדה חודשית נדרשת" : "סכום התחלתי נדרש"}</th>
+            <td class="num">${m(sol.median)}</td><td>חציון על פני הריאליזציות; אחוזון 90: ${m(sol.p90)}</td></tr>` : null}
+          <tr><th>סכום סופי נטו</th><td class="num">${m(sum?.median)}</td><td>חציון של ${T(S`N_T`)}; ממוצע ${m(sum?.mean)}</td></tr>
+          <tr><th>סך הפקדות</th><td class="num">${m(dep?.median)}</td><td>חציון של ${T(S`\sum_m D_m`)}</td></tr>
+        </tbody></table></div>` : null}
+    </section>
+
+    <section class="card" id="data">
+      <h2>‏1. נתוני השוק והסימונים</h2>
+      <p>ריאליזציה היא תאריך התחלה ${T(S`s`)}. החודש ה-${T(S`m`)} של התוכנית הוא התאריך ${T(S`t_m = s + m`)} חודשים
+        (היום בחודש נשמר, ואם אין כזה לוקחים את האחרון בחודש), ${T(S`m = 0, 1, \dots, T`)}, כאשר ${T(S`T = \sum_k T_k`)} הוא סך החודשים בכל השלבים.</p>
+      <p><b>מחירים.</b> לכל נכס ${T(S`i`)} יש סדרת מחירים יומית מתואמת לדיבידנדים ${T(S`\Pi_i(d)`)} (Yahoo adjusted close),
+        שמותחים לכל יום קלנדרי: ביום שאין בו מסחר לוקחים את המחיר האחרון שהיה לפניו, כך שאין "הצצה לעתיד".
+        שער הדולר ${T(S`X(d)`)} (שקלים לדולר) מותח באותה דרך. המחיר במטבע ההצגה הוא</p>
+      ${D(S`P_i(d) = \begin{cases} \Pi_i(d)\,X(d) & \text{ILS} \\ \Pi_i(d) & \text{USD} \end{cases}`)}
+      <p>כלומר בשקלים כל הפקדה נקנית בשער של אותו יום, והשווי בכל רגע מתורגם בשער של אותו רגע: שינוי בשער הוא חלק מהתשואה.</p>
+      <p><b>מינוף.</b> נכס במינוף ${T(S`L`)} מחושב כמו קרן ממונפת יומית: עם התשואה היומית ${T(S`\rho_i(d) = \Pi_i(d)/\Pi_i(d-1) - 1`)}
+        והריבית השנתית ${T(S`c`)} על החלק המושאל,</p>
+      ${D(S`\Pi_i^{(L)}(d) = \Pi_i^{(L)}(d-1)\cdot\max\!\Big(1 + L\,\rho_i(d) - (L-1)\,\tfrac{c}{252},\;0\Big)`)}
+      <p>ה-${T(S`\max`)} מבטא שקרן ממונפת לא יכולה לרדת מתחת לאפס, ו-252 הוא מספר ימי המסחר בשנה.</p>
+      <p><b>מקדמי הצמיחה.</b> הגידול של נכס ${T(S`i`)} מחודש ${T(S`m`)} לחודש הבא, ומקדם דמי הניהול החודשי:</p>
+      ${D(S`g_{i,m} = \frac{P_i(t_{m+1})}{P_i(t_m)}, \qquad \varphi = (1-f)^{1/12}${fee ? S` = ${fr(phi, 6)}` : ""}`)}
+      <p><b>מדד המחירים.</b> ${T(S`C_m`)} הוא מדד המחירים לצרכן של מטבע ההצגה בחודש ${T(S`t_m`)}, ו-${T(S`C^\star`)} הוא המדד של החודש האחרון בנתונים, "היום".
+        ${plan.real || plan.index_deposits || plan.tax_basis === "real" ? "בתוכנית הנוכחית המדד בשימוש." : "בתוכנית הנוכחית (נומינלית, לא צמודה, מס נומינלי) המדד לא משפיע על שום חישוב."}</p>
+    </section>
+
+    <section class="card" id="deposits">
+      <h2>‏2. ההפקדות</h2>
+      <p>בחודש ${T(S`m`)} שבתוך שלב ${T(S`k`)} מפקידים את ההפקדה החודשית ${T(S`M_k`)}, ובחודש הראשון של השלב (${T(S`m = m_k`)}) גם את ההפקדה של תחילת השלב ${T(S`I_k`)}.
+        בחודש 0 נוסף הסכום ההתחלתי ${T(S`S_0`)}. הסכומים האלה הם ביחידות הקלט, והמקדם ${T(S`\sigma_m`)} מתרגם אותם לשקלים (או דולרים) נומינליים של אותו חודש:</p>
+      ${D(S`D_m = \sigma_m\Big(M_{k(m)} + I_{k(m)}\,[m = m_{k(m)}] + S_0\,[m = 0]\Big), \qquad m = 0,\dots,T-1`)}
+      <p>כאשר ${T(S`[\cdot]`)} שווה 1 כשהתנאי מתקיים ו-0 אחרת. בחודש ${T(S`T`)} אין הפקדה: רק מוכרים. המקדם ${T(S`\sigma_m`)} תלוי בשני מתגים, והשורה המודגשת היא המצב הנוכחי:</p>
+      <div class="table-wrap"><table class="vals"><tbody>
+        <tr><th>מצב</th><th>${T(S`\sigma_m`)}</th><th>משמעות</th></tr>
+        <tr class=${sigmaCase === 0 ? "cur" : ""}><td>נומינלי, לא צמוד</td><td class="num">${T(S`1`)}</td><td>אותו סכום נומינלי בכל חודש</td></tr>
+        <tr class=${sigmaCase === 1 ? "cur" : ""}><td>נומינלי, צמוד</td><td class="num">${T(S`C_m / C_0`)}</td><td>ההפקדה גדלה עם המדד מתחילת התוכנית</td></tr>
+        <tr class=${sigmaCase === 2 ? "cur" : ""}><td>ריאלי, לא צמוד</td><td class="num">${T(S`C_0 / C^\star`)}</td><td>הקלט בכסף של היום; ההפקדה הנומינלית קבועה ברמת המחירים של תחילת התוכנית</td></tr>
+        <tr class=${sigmaCase === 3 ? "cur" : ""}><td>ריאלי, צמוד</td><td class="num">${T(S`C_m / C^\star`)}</td><td>הקלט בכסף של היום וההפקדה שומרת על כוח הקנייה שלה כל חודש</td></tr>
+      </tbody></table></div>
+      <p>${multi ? "בתוכנית הנוכחית, בשלב הראשון:" : "בתוכנית הנוכחית:"}</p>
+      ${D(plan.solve_for === "monthly_deposit"
+        ? S`D_m = \sigma_m\big(M + ${n(plan.stages[0].initial_deposit)}\,[m=0] + ${n(plan.start_amount)}\,[m=0]\big)`
+        : S`D_m = \sigma_m\big(${n(plan.stages[0].monthly_deposit)} + ${n(plan.stages[0].initial_deposit)}\,[m=0] + ${plan.solve_for === "start_amount" ? "S_0" : n(plan.start_amount)}\,[m=0]\big)`)}
+      <p>סך ההפקדות שמוצג בטבלאות הוא ${T(S`\sum_{m=0}^{T-1} D_m`)}${plan.real ? ", מתורגם לכסף של היום (סעיף 4)" : ""}${dep ? html`, ובחציון יוצא ${m(dep.median)}` : ""}.</p>
+    </section>
+
+    <section class="card" id="recursion">
+      <h2>‏3. משוואת ההפרשים של השווי</h2>
+      <p>המצב בכל חודש הוא השווי של כל נכס, ${T(S`V_{i,m}`)}. ההפקדה מתחלקת לפי המשקלים ${T(S`w_{k,i}`)} של השלב (מנורמלים לסכום 1, ובלי איזון מחדש אחר כך),
+        ואז כל נכס צומח לפי המחיר שלו ומשלם דמי ניהול:</p>
+      ${D(S`V_{i,m+1} = \big(V_{i,m} + w_{k(m),i}\,D_m\big)\, g_{i,m}\,\varphi, \qquad V_{i,0} = 0`)}
+      <p>זו משוואת הפרשים ליניארית מסדר ראשון עם מקדמים משתנים בזמן. בגלל הליניאריות הפתרון הוא סופרפוזיציה: כל הפקדה צומחת בנפרד,
+        והשווי הוא סכום של כל ההפקדות כשכל אחת מוכפלת במקדם הצמיחה שלה עד הסוף. בשלב יחיד:</p>
+      ${D(S`V_{i,T} = \sum_{m=0}^{T-1} w_i\,D_m\,\varphi^{\,T-m}\,\frac{P_i(t_T)}{P_i(t_m)}, \qquad V_T = \sum_i V_{i,T} = \sum_{m=0}^{T-1} D_m\,\Gamma_m`)}
+      <p>כאשר ${T(S`\Gamma_m`)} הוא מה שיחידה אחת שהופקדה בחודש ${T(S`m`)} שווה בסוף:</p>
+      ${D(S`\Gamma_m = \varphi^{\,T-m}\sum_i w_i\,\frac{P_i(t_T)}{P_i(t_m)}`)}
+      <p>${multi ? html`<b>כמה שלבים.</b> בתחילת שלב ${T(S`k`)} (חודש ${T(S`m_k`)}) התיק כולו מחולק מחדש לפי המשקלים החדשים,
+        ${T(S`V_{i,m_k} \leftarrow w_{k,i}\sum_j V_{j,m_k}`)}. לכן ${T(S`\Gamma_m`)} הופך למכפלה: צמיחה לפי משקלי השלב של ההפקדה עד סוף אותו שלב,
+        ואז צמיחה של התיק כולו לפי משקלי כל שלב הבא, ${T(S`\Gamma_m = \varphi^{\,T-m}\,\gamma_{k(m)}(t_m)\prod_{k' > k(m)} \gamma_{k'}(t_{m_{k'}})`)}
+        עם ${T(S`\gamma_k(t) = \sum_i w_{k,i}\,P_i(t_{m_{k+1}})/P_i(t)`)} ו-${T(S`m_{K+1} = T`)}. ${plan.tax_on_switch ? "כשהמעבר הוא אירוע מס, המס שמשולם במעבר מקטין את הסכום שמושקע מחדש (סעיף 4), והמבנה כבר לא ליניארי בהפקדות." : "המעבר פטור ממס, אז הליניאריות נשמרת."}`
+        : html`בתוכנית הנוכחית יש שלב אחד, אז הנוסחה הזו היא בדיוק מה שמחושב.`}</p>
+      <p>עם המספרים הנוכחיים, ${T(S`T = ${months}`)}${fee ? html`, ${T(S`\varphi = ${fr(phi, 6)}`)}` : html`, ${T(S`\varphi = 1`)} (אין דמי ניהול)`}:</p>
+      ${D(S`V_{${months}} = \sum_{m=0}^{${months - 1}} D_m\,\Gamma_m, \qquad \Gamma_m = ${fee ? S`${fr(phi, 6)}^{\,${months}-m}` : ""}\sum_i w_i\,\frac{P_i(t_{${months}})}{P_i(t_m)}`)}
+      <p>המחירים ${T(S`P_i(t_m)`)} הם סדרות של אלפי מספרים, ולכן ${T(S`\Gamma_m`)} שונה לכל ריאליזציה. זה בדיוק מה שהופך כל תאריך התחלה לתוצאה אחרת.</p>
+    </section>
+
+    <section class="card" id="tax">
+      <h2>‏4. עלות, רווח ומס</h2>
+      <p><b>עלות.</b> העלות הנומינלית של ההחזקה היא סך ההפקדות, והעלות המוצמדת למדד היא סך ההפקדות כשכל אחת מתורגמת למחירי החודש הנוכחי:</p>
+      ${D(S`B_m = \sum_{m' \le m} D_{m'}, \qquad B^{\,\mathrm{idx}}_m = \sum_{m' \le m} D_{m'}\,\frac{C_m}{C_{m'}}`)}
+      <p><b>רווח.</b> במס נומינלי הרווח הוא ${T(S`G_m = V_m - B_m`)}. במס ריאלי (כמו בחוק בישראל) רק הרווח שמעל האינפלציה ממוסה,
+        ורווח אינפלציוני לא יוצר הפסד: אם השווי מעל העלות המוצמדת הרווח הוא ההפרש, ואם לא, רק הפסד נומינלי נחשב הפסד:</p>
+      ${D(S`G_m = \begin{cases} V_m - B^{\,\mathrm{idx}}_m & V_m \ge B^{\,\mathrm{idx}}_m \\ -\max(B_m - V_m,\,0) & \text{otherwise} \end{cases}`)}
+      <p>הרווח מחושב לכל נכס בנפרד ונסכם, כי בכל נכס העלות שלו שונה.</p>
+      <p><b>שווי נטו.</b> השווי אחרי מכירת הכול ותשלום המס, עם מגן המס ${T(S`H_m`)} (הפסדים שמומשו בעבר ועוד לא קוזזו):</p>
+      ${D(S`N_m = V_m - \tau\,\max\!\big(G_m - H_m,\,0\big)`)}
+      <p>זה הקו שמצויר בגרף השווי לאורך זמן, והסכום הסופי הוא ${T(S`F = N_T`)}. המס נדחה לסוף: הוא מופחת רק מהשווי המוצג, והכסף עצמו נשאר מושקע.</p>
+      <p><b>מעבר בין שלבים כאירוע מס.</b> ${plan.tax_on_switch && multi ? "בתוכנית הנוכחית זה פעיל. " : ""}בתחילת שלב מוכרים רק את מה שמשקלו קטן:
+        ${T(S`s_i = \max\!\big(V_{i} - w_{k,i}V,\,0\big)`)}, הרווח הממומש הוא החלק היחסי ${T(S`G^{\mathrm{sw}} = \sum_i G_i\,s_i / V_i`)}, המס הוא
+        ${T(S`\tau\max(G^{\mathrm{sw}} - H, 0)`)}, ומגן המס מתעדכן: ${T(S`H \leftarrow \max(H - G^{\mathrm{sw}}, 0)`)} כשיש רווח, ו-${T(S`H \leftarrow H - G^{\mathrm{sw}}`)}
+        (כלומר גדל) כשיש הפסד. המזומן אחרי מס נקנה בנכסים שחסר בהם, והעלות של החלק שנמכר נמחקת. נכס שנשאר לא ממוסה.
+        כשהמעבר פטור ממס, כל העלות עוברת כמו שהיא לתיק החדש, והמס על הרווח המצטבר משולם בסוף.</p>
+      <p><b>הצגה ריאלית.</b> ${plan.real ? "בתוכנית הנוכחית כל הערכים המוצגים הם" : "במצב ריאלי כל הערכים היו"} בכסף של היום: כל סכום נומינלי בחודש ${T(S`m`)} מוכפל ב-${T(S`C^\star / C_m`)}.
+        גם סך ההפקדות מוצג כך, ולכן "רווח" בלשונית צבירה הוא תמיד הפרש בין שני סכומים באותו כוח קנייה.</p>
+      ${D(S`N^{\mathrm{real}}_m = N_m\,\frac{C^\star}{C_m}`)}
+      ${sum ? html`<p>בריאליזציה החציונית: ${T(S`N_T = ${n(sum.median)}`)}, ${T(S`\sum D_m = ${n(dep.median)}`)}, כלומר רווח נטו של ${m(sum.median - dep.median)} ${cur}${plan.real ? " בכסף של היום" : ""}.</p>` : null}
+    </section>
+
+    <section class="card" id="solve">
+      <h2>‏5. הנעלם: מה פותרים ואיך</h2>
+      ${plan.solve_for === "final" ? html`
+        <p class="note ok">המצב הנוכחי: <b>סכום סופי</b>. אין נעלם. מריצים את הרקורסיה של סעיף 3 עם ההפקדות של סעיף 2, ו-${T(S`F = N_T`)} מתקבל ישירות (נוסחה פתוחה).</p>
+        ${D(S`F = N_{${months}} = V_{${months}} - ${fr(tau, 3)}\cdot\max\!\big(G_{${months}} - H_{${months}},\,0\big), \qquad V_{${months}} = \sum_{m=0}^{${months - 1}} D_m\,\Gamma_m`)}
+        ${sum ? html`<p>התוצאה בחציון: ${m(sum.median)}. בגרפים רואים את ההתפלגות של ${T(S`F`)} על פני כל ${raw.n.toLocaleString("he-IL")} הריאליזציות.</p>` : null}`
+      : null}
+      <h3>הפקדה חודשית כנעלם</h3>
+      <p>כאן ${T(S`M_k = M`)} לכל השלבים, וכל שאר ההפקדות (${T(S`S_0`)} וה-${T(S`I_k`)}) נתונות. נסמן אותן ${T(S`e_m`)}, כך ש-${T(S`D_m = \sigma_m(M + e_m)`)}.
+        השווי ברוטו ליניארי ב-${T(S`M`)}, וגם העלות:</p>
+      ${D(S`V_T = A + B\,M, \qquad A = \sum_m \sigma_m e_m \Gamma_m,\quad B = \sum_m \sigma_m \Gamma_m`)}
+      ${D(S`B_T = A_B + B_B\,M, \qquad A_B = \sum_m \sigma_m e_m \kappa_m,\quad B_B = \sum_m \sigma_m \kappa_m, \qquad \kappa_m = \begin{cases} 1 & \text{nominal basis} \\ C_T / C_m & \text{real basis}\end{cases}`)}
+      <p>היעד ${T(S`F^\star`)} מוזן ביחידות ההצגה; בנומינלי זה היעד עצמו, ובריאלי היעד הנומינלי בסוף התוכנית הוא ${T(S`F^\star C_T / C^\star`)}. כשאין מעבר ממוסה (${T(S`H \equiv 0`)}),
+        ${T(S`N_T = V_T - \tau\max(V_T - B_T, 0)`)} הוא ליניארי בכל צד של הנקודה שבה הרווח מתאפס, ולכן אפשר לבודד את הנעלם (נוסחה פתוחה):</p>
+      ${D(S`M = \begin{cases} \dfrac{F^\star - (1-\tau)A - \tau A_B}{(1-\tau)B + \tau B_B} & \text{if the gain is positive} \\[14pt] \dfrac{F^\star - A}{B} & \text{otherwise} \end{cases}`)}
+      <p>בודקים את המקרה הראשון; אם הרווח שמתקבל ממנו שלילי, הנכון הוא השני (ולהפך). עם המספרים הנוכחיים, ${T(S`\tau = ${fr(tau, 3)}`)}:</p>
+      ${D(S`M = \frac{${n(plan.target_amount)}${plan.real ? S`\cdot C_{${months}}/C^\star` : ""} - ${fr(1 - tau, 3)}\,A - ${fr(tau, 3)}\,A_B}{${fr(1 - tau, 3)}\,B + ${fr(tau, 3)}\,B_B}`)}
+      <h3>סכום התחלתי כנעלם</h3>
+      <p>אותו מבנה, רק שהנעלם מופיע רק בחודש 0: ${T(S`D_0 = \sigma_0(S_0 + e_0)`)}. התרומה שלו לשווי היא ${T(S`\sigma_0\Gamma_0 S_0`)} ולעלות ${T(S`\sigma_0\kappa_0 S_0`)}, וכשהרווח חיובי:</p>
+      ${D(S`S_0 = \frac{F^\star - (1-\tau)A' - \tau A'_B}{(1-\tau)\,\sigma_0\Gamma_0 + \tau\,\sigma_0\kappa_0}`)}
+      <p>כאשר ${T(S`A'`)} ו-${T(S`A'_B`)} הם השווי והעלות שנובעים מכל ההפקדות הנתונות (${T(S`M_k`)} ו-${T(S`I_k`)}). כשהיעד מושג גם בלי סכום התחלתי התשובה היא 0.</p>
+      <h3>מתי אין נוסחה פתוחה, ומה עושים</h3>
+      <p>כשמעבר בין שלבים הוא אירוע מס, המס במעבר תלוי ב-${T(S`\max`)} על רווח שתלוי בעצמו ב-${T(S`M`)}, ומגן המס תלוי בסימן של הרווח. ${T(S`N_T(M)`)} עדיין רציף,
+        עולה וליניארי למקוטעין, אבל עם כמה נקודות שבירה שלא ידועות מראש, ולכן המשוואה סתומה:</p>
+      ${D(S`N_T(x) = F^\star`)}
+      <p>האפליקציה פותרת אותה נומרית, לכל הריאליזציות בבת אחת (וקטורית), בשיטת המיקום השגוי בגרסת Illinois: מרחיבים את הגבול העליון ${T(S`x_{\mathrm{hi}} \leftarrow 4x_{\mathrm{hi}}`)}
+        עד ש-${T(S`N_T(x_{\mathrm{hi}}) \ge F^\star`)}, ואז בכל צעד לוקחים את נקודת החיתוך של המיתר עם ${T(S`F^\star`)}:</p>
+      ${D(S`x_{\mathrm{new}} = x_{\mathrm{hi}} - \big(N_T(x_{\mathrm{hi}}) - F^\star\big)\,\frac{x_{\mathrm{hi}} - x_{\mathrm{lo}}}{N_T(x_{\mathrm{hi}}) - N_T(x_{\mathrm{lo}})}`)}
+      <p>ומחליפים את הקצה שבאותו צד. אם אותו קצה נשאר פעמיים ברציפות, הערך שלו מוכפל ב-½ (התיקון של Illinois), מה שמונע את ההתכנסות האיטית של מיקום שגוי רגיל.
+        הסבילות היא ${T(S`10^{-7}\,F^\star`)}, ובפועל נדרשות פחות מעשר סימולציות. מכיוון שהפונקציה ליניארית למקוטעין, השיטה מגיעה לפתרון המדויק, ולא לקירוב.</p>
+      <p class=${"note " + (closedForm ? "ok" : "warn")}>${plan.solve_for === "final"
+        ? "במצב הנוכחי אין נעלם, ולכן הסולבר לא רץ בכלל."
+        : closedForm
+          ? html`בתוכנית הנוכחית (${multi ? "מעבר פטור ממס" : "שלב אחד"}) יש נוסחה פתוחה. האפליקציה בכל זאת משתמשת בסולבר הכללי, כי הוא נותן בדיוק אותו מספר (יש בדיקה אוטומטית שמשווה ביניהם) ועובד גם במקרים הסתומים.`
+          : html`בתוכנית הנוכחית המעבר בין שלבים הוא אירוע מס, ולכן המשוואה סתומה ונפתרת נומרית כמתואר.`}
+        ${sol ? html` התוצאה בחציון: <b dir="ltr">${m(sol.median)}</b>.` : ""}</p>
+    </section>
+
+    <section class="card" id="stats">
+      <h2>‏6. הסטטיסטיקה על הריאליזציות</h2>
+      <p>יש ${T(S`n`)} ריאליזציות${raw ? html` (כרגע ${T(S`n = ${n(raw.n)}`)})` : ""}, אחת לכל תאריך התחלה ברשת (יום, שבוע או חודש). לכל אחת יש מסלול ${T(S`N_r(t)`)}, ${T(S`r = 1,\dots,n`)}, ותוצאה ${T(S`X_r`)}:
+        הסכום הסופי ${T(S`F_r`)}, או במצבי הפתרון הנעלם שנפתר.</p>
+      <p><b>אחוזונים.</b> האחוזון ה-${T(S`p`)} של ערכים ממוינים ${T(S`x_{(0)} \le \dots \le x_{(n-1)}`)} מחושב באינטרפולציה ליניארית בין סטטיסטי הסדר:</p>
+      ${D(S`h = \frac{(n-1)\,p}{100}, \qquad Q_p = x_{(\lfloor h\rfloor)} + \big(h - \lfloor h\rfloor\big)\Big(x_{(\lfloor h\rfloor+1)} - x_{(\lfloor h\rfloor)}\Big)`)}
+      <p><b>הקרן בגרף השווי.</b> בכל חודש ${T(S`t`)} בנפרד לוקחים את כל ${T(S`N_r(t)`)} ומחשבים ${T(S`Q_{p_1}(t)`)}, ${T(S`Q_{50}(t)`)} (החציון, הקו המודגש), ${T(S`Q_{p_2}(t)`)},
+        והממוצע ${T(S`\bar N(t) = \tfrac1n\sum_r N_r(t)`)} (המקווקו). הקרן היא</p>
+      ${D(S`\mathcal{B} = \big\{(t, y) : Q_{p_1}(t) \le y \le Q_{p_2}(t)\big\}`)}
+      <p>היא לא מסלול של אף ריאליזציה: בכל רגע ${T(S`p_2 - p_1`)} אחוז מהריאליזציות בתוכה, אבל לא אותן ריאליזציות בכל רגע. לכן מסלול בודד יכול לצאת ממנה ולחזור.</p>
+      <p><b>דירוג המסלול לאורך הזמן.</b> האחוזון שבו נמצא מסלול ${T(S`r`)} בחודש ${T(S`t`)} (שוויונות מקבלים את הדרגה האמצעית):</p>
+      ${D(S`\rho_r(t) = \frac{100}{n-1}\Big(\#\{r' : N_{r'}(t) < N_r(t)\} + \tfrac12\big(\#\{r' : N_{r'}(t) = N_r(t)\} - 1\big)\Big)`)}
+      <p>המסלול בתוך הקרן בדיוק כש-${T(S`p_1 \le \rho_r(t) \le p_2`)}.</p>
+      <p><b>מסלולים מייצגים.</b> לכל ${T(S`p \in \{p_1, 50, p_2\}`)} בוחרים את הריאליזציה שהתוצאה שלה הכי קרובה לאחוזון:</p>
+      ${D(S`r_p = \arg\min_r \big|X_r - Q_p(X)\big|`)}
+      <p>במצבי הפתרון ${T(S`X_r`)} הוא מינוס הנעלם שנפתר, כך ש"אחוזון גבוה" הוא תמיד תוצאה טובה (הפקדה נמוכה יותר).</p>
+      <p><b>סיכוי להיות בטווח.</b> החלק היחסי של הריאליזציות שבטווח שנבחר בהיסטוגרמה, ${T(S`\Pr(a \le X \le b) = \tfrac1n\,\#\{r : a \le X_r \le b\}`)}. "סיכוי להגיע ליעד" הוא המקרה ${T(S`a = F^\star,\ b = \infty`)}.</p>
+      <p><b>תשואה שנתית (IRR).</b> שיעור התשואה החודשי ${T(S`\iota`)} שבו ההפקדות, כל אחת צוברת ריבית דריבית מהחודש שלה, מגיעות בדיוק לסכום הסופי:</p>
+      ${D(S`\sum_{m=0}^{T-1} D_m\,(1+\iota)^{\,T-m} = F, \qquad \mathrm{IRR} = (1+\iota)^{12} - 1`)}
+      <p>משוואה סתומה (פולינום ממעלה ${T(S`T`)}); נפתרת בחצייה על ${T(S`\iota \in [-0.9999, 1]`)} עם כלל הורנר, 70 צעדים, לכל הריאליזציות בבת אחת. בהצגה ריאלית ${T(S`D_m`)} ו-${T(S`F`)} בכסף של היום, ולכן ה-IRR ריאלי.</p>
+      <p><b>תשואת התיק (CAGR).</b> התשואה של האסטרטגיה עצמה, בלי תלות בעיתוי ההפקדות: מריצים את הרקורסיה עם יחידה אחת בחודש 0, בלי הפקדות ובלי מס (עם מינוף ודמי ניהול), ומקבלים ${T(S`U_m`)}:</p>
+      ${D(S`\mathrm{CAGR} = U_T^{\,12/T} - 1`)}
+      <p><b>ירידה מהשיא.</b> הנפילה הגדולה ביותר מהשיא הקודם לאורך המסלול, לכל מסלול ${T(S`Y_m`)}:</p>
+      ${D(S`\mathrm{DD} = \min_{m}\Big(\frac{Y_m}{\max_{k \le m} Y_k} - 1\Big)`)}
+      <p>"ירידת התיק" היא עם ${T(S`Y = U`)} (האסטרטגיה עצמה), ו"ירידת החשבון" עם ${T(S`Y = N`)} (השווי נטו, כולל ההפקדות שממשיכות להיכנס ולכן מרככות אותה). ההיסטוגרמה שלהן מציגה את ההתפלגות של ${T(S`\mathrm{DD}_r`)} על פני הריאליזציות.</p>
+    </section>
+  </div>`;
+}

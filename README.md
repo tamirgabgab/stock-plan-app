@@ -31,15 +31,22 @@ the UI — it is not real market history).
   (any Yahoo ticker, weights, daily-rebalanced leverage).
 - **Solve for the missing parameter** – final balance, required monthly deposit or
   required starting amount, for every start date.
-- **Nominal or real** – values in money of the start date (CPI-deflated); optional
-  CPI-indexed deposits.
+- **Nominal or real** – real mode puts every input and result in today's money
+  (CPI of the last data month); optional CPI-indexed deposits.
 - **Currency** – USD or ILS. Assets are assumed to trade in USD; ILS converts every
   deposit and valuation at that day's USD/ILS rate.
 - **Taxes** – capital-gains rate on nominal or real gains, tax-deferred or taxable
   stage switches, loss carry-forward (tax shield). Management fee and leverage cost.
 - **Statistics** – median (bold), mean (dashed) and a p1–p2 percentile band over time;
-  cross-section histogram with drag-to-select range probability; IRR, portfolio CAGR,
-  max drawdown; CSV export; share-by-link; light/dark theme.
+  optional *representative paths* (the real realizations that ended at p1, the median
+  and p2) and a percentile-rank-over-time chart for the hovered or pinned path;
+  cross-section histogram with drag-to-select range probability, for the portfolio
+  value, the solved variable or the max drawdown (of the strategy and of the account);
+  IRR, portfolio CAGR; CSV export; share-by-link; light/dark theme.
+- **Math tab** – every computation explained in text and LaTeX (KaTeX, offline): the
+  difference equation of the portfolio, deposits, tax, the closed-form solution for the
+  missing parameter where one exists and the numerical solver where it does not, plus
+  the same equations with the current plan's numbers plugged in.
 
 ## Data sources
 
@@ -61,7 +68,7 @@ stockplan/
   data/                # market data providers + disk cache (Yahoo, demo)
   engine/              # pure numpy simulation engine and solvers
   api.py               # FastAPI endpoints, serves the web UI
-  web/                 # static UI: Preact + htm + Plotly (vendored, no build step)
+  web/                 # static UI: Preact + htm + Plotly + KaTeX (vendored, no build step)
 tests/                 # pytest: engine and API
 legacy/                # the previous Streamlit app (still has the Trinity tab)
 ```

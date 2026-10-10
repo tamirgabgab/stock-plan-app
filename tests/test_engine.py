@@ -173,6 +173,22 @@ def test_solve_monthly_deposit_hits_target(tax):
         assert res.solved[0] == pytest.approx(100_000 / sum(p[-1] / p[m] for m in range(36)), rel=1e-6)
 
 
+def test_solver_matches_closed_form_with_tax():
+    # Without a taxable switch the net value is linear in the deposit on each side of the
+    # "gain > 0" kink, so the deposit has a closed form (see the math tab in the UI):
+    #   M = (F - (1-tau) S0 G0 - tau S0) / ((1-tau) sum_m G_m + tau T),  G_m = P_T / P_m
+    data = FakeData({"A": exp_series(0.08)})
+    T, S0, tau, F = 36, 5000.0, 0.25, 100_000.0
+    stages = [Stage(months=T, holdings=[Holding("A", 100)])]
+    res = run_plan(PlanRequest(stages=stages, start_amount=S0, target_amount=F, tax_rate=100 * tau,
+                               solve_for="monthly_deposit", min_start=START, max_start=START), data)
+    grid = month_grid(pd.DatetimeIndex([pd.Timestamp(START)]), T)[0]
+    p = data.prices("A").reindex(pd.DatetimeIndex(grid)).to_numpy()
+    G = p[-1] / p[:-1]
+    M = (F - (1 - tau) * S0 * G[0] - tau * S0) / ((1 - tau) * G.sum() + tau * T)
+    assert res.solved[0] == pytest.approx(M, rel=1e-6)
+
+
 def test_solve_start_amount_hits_target():
     data = FakeData({"A": exp_series(0.05)})
     stages = [Stage(months=24, holdings=[Holding("A", 100)], monthly_deposit=500)]
@@ -187,6 +203,15 @@ def test_target_already_reached_gives_zero():
     res = run_plan(PlanRequest(stages=stages, target_amount=1000, solve_for="start_amount",
                                min_start=START, max_start=START), data)
     assert res.solved[0] == 0.0
+
+
+def test_drawdown_of_strategy_and_of_account():
+    # Price halves on 2000-06-01 (month 5). The strategy falls 50%; the account, which had
+    # 1000 + 5 x 100 = 1500 at its peak, holds 750 + 100 = 850 right after the drop.
+    data = FakeData({"A": step_series({"2000-06-01": 0.5})})
+    res = one([Stage(months=12, holdings=[Holding("A", 100)], monthly_deposit=100)], data, start_amount=1000)
+    assert res.max_drawdown[0] == pytest.approx(-50.0)
+    assert res.account_drawdown[0] == pytest.approx((850 / 1500 - 1) * 100)
 
 
 def test_irr_simple_cases():

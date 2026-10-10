@@ -145,3 +145,38 @@ def realization_detail(req, md: MarketData, start: date) -> dict:
         "basket": series_at(days[keep]), "buys": series_at(marker_days), "sells": series_at(sale_days),
         "has_fx": fx is not None,
     }
+
+
+BENCH = "__BENCH__"
+
+
+def benchmark_path(req, md: MarketData, start: date, rate_pct: float, x: float | None = None) -> dict:
+    """The same plan on one start date, with every stage's portfolio replaced by a single
+    asset that earns a fixed ``rate_pct`` a year. Deposits, withdrawals, fees and tax follow
+    exactly the same rules as the real account (one asset, so a stage switch sells nothing).
+
+    In real mode the rate is real (above the CPI of the display currency); otherwise nominal.
+    ``x`` is the solved variable of that realization in solve modes.
+    """
+    from .simulate import simulate
+    from .withdraw import simulate_withdraw
+    from .models import Holding
+
+    trinity = isinstance(req, WithdrawRequest)
+    one = replace(req, min_start=start, max_start=start)
+    market = prepare_market(one, md)
+    T = one.total_months
+    days = np.arange(len(market.calendar), dtype=float)
+    growth = (1 + rate_pct / 100) ** (days / 365.25)
+    if req.real and market.cpi_daily is not None:
+        growth = growth * market.cpi_daily / market.cpi_daily[0]
+    bench_req = replace(one, stages=[replace(s, holdings=[Holding(BENCH, 100.0)]) for s in one.stages])
+    bench = replace(market, asset_keys=[(BENCH, 1.0)], prices=growth[None, :])
+    xv = None if (x is None or req.solve_for == SOLVE_FINAL) else np.array([float(x)])
+    out = (simulate_withdraw(bench_req, bench, x=xv, record=True) if trinity
+           else simulate(bench_req, bench, x=xv, record=True))
+    idx = market.day_idx[0]
+    cpi = market.cpi_daily[idx] if market.cpi_daily is not None else None
+    deflate = (market.cpi_base / cpi) if (req.real and cpi is not None) else np.ones(T + 1)
+    path = out.paths_net[0] * deflate
+    return {"rate": rate_pct, "path": [_num(v) for v in path], "final": _num(path[T])}

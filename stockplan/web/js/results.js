@@ -49,7 +49,8 @@ function usePlot(ref, build, deps, bind) {
 // (final value, or the solved variable in solve mode, where every path ends at the target).
 export function representative(res, p1, p2) {
   const solveMode = res.plan.solve_for !== "final";
-  const scores = solveMode ? res.raw.solved.map((v) => (v === null ? null : -v)) : res.raw.final;
+  const sign = res.labels.solvedHigherBetter ? 1 : -1;
+  const scores = solveMode ? res.raw.solved.map((v) => (v === null ? null : sign * v)) : res.raw.final;
   const sorted = sortedFinite(Array.from(scores));
   const lo = Math.min(p1, p2), hi = Math.max(p1, p2);
   return [lo, 50, hi].map((p, i) => {
@@ -70,14 +71,31 @@ export function useActive(res, ui) {
   return { active, setHover, pinned, setPinned, reps, detail, openDetail, closeDetail: () => setDetail(null) };
 }
 
-// In accumulation the target is meaningless in "final" mode (the final value is the unknown);
-// in Trinity it is the balance that must remain, so it is shown in every mode.
-const targetShown = (res) => res.plan.solve_for !== "final" || res.labels.targetInFinal;
+// In "final" mode the final value is the unknown, so there is no target to draw.
+const targetShown = (res) => res.plan.solve_for !== "final";
 
 // The detail modal for the open realization (if any); prev/next keep the pinned path in sync.
-export function DetailModal({ res, detail, openDetail, closeDetail, themeKey }) {
-  if (detail === null || detail === undefined) return null;
-  return html`<${RealizationDetail} res=${res} index=${detail} onClose=${closeDetail} onNav=${openDetail} themeKey=${themeKey} />`;
+// Also renders the floating bar for the pinned path, so "full detail" is reachable from any
+// scroll position (the table is far below the fan chart).
+export function DetailModal({ res, detail, openDetail, closeDetail, pinned, setPinned, themeKey }) {
+  return html`
+    ${pinned !== null && (detail === null || detail === undefined) ? html`<${PinBar} res=${res} pinned=${pinned}
+      setPinned=${setPinned} openDetail=${openDetail} />` : null}
+    ${detail !== null && detail !== undefined
+      ? html`<${RealizationDetail} res=${res} index=${detail} onClose=${closeDetail} onNav=${openDetail} themeKey=${themeKey} />`
+      : null}`;
+}
+
+function PinBar({ res, pinned, setPinned, openDetail }) {
+  const solved = res.plan.solve_for !== "final";
+  const v = solved ? res.raw.solved[pinned] : res.raw.final[pinned];
+  const fmt = solved ? (res.labels.solvedFmt || ((x) => money(x, res.plan.currency))) : (x) => money(x, res.plan.currency);
+  return html`<div class="pin-bar" role="region" aria-label="ריאליזציה נבחרת">
+    <span>ריאליזציה נעוצה: התחלה <b><bdi>${dateHe(res.raw.start_dates[pinned])}</bdi></b></span>
+    <span class="muted">${solved ? solvedLabel(res) : res.labels.outcome}: <b dir="ltr">${fmt(v)}</b></span>
+    <button class="btn primary small" onClick=${() => openDetail(pinned)}>פירוט מלא</button>
+    <button class="icon-btn" title="בטל נעיצה" aria-label="בטל נעיצה" onClick=${() => setPinned(null)}>✕</button>
+  </div>`;
 }
 
 export function Results({ res, ui, setUi, themeKey }) {
@@ -543,17 +561,15 @@ export function RealizationsTable({ res, active, setHover, pinned, setPinned, co
 
   return html`<section class="card" aria-label="כל הריאליזציות">
     <div class="card-head"><div><h2>כל הריאליזציות</h2>
-      <p class="muted">ריחוף על שורה מציג את המסלול שלה בגרף, ולחיצה נועצת אותו. "פירוט" (או לחיצה כפולה) פותח את כל פעולות המסחר של אותה ריאליזציה. לחיצה על כותרת ממיינת.</p></div>
+      <p class="muted">ריחוף על שורה מציג את המסלול שלה בגרף, ולחיצה פותחת את הפירוט המלא שלה (כל פעולות המסחר). לחיצה על כותרת ממיינת.</p></div>
       <button class="btn ghost" onClick=${toCsv}>הורד CSV</button></div>
     <div class="table-wrap"><table class="data">
       <thead><tr>${cols.map((c) => html`<th><button type="button" onClick=${() => clickSort(c.key)}>
-        ${c.label}${sort.key === c.key ? (sort.dir > 0 ? " ▲" : " ▼") : ""}</button></th>`)}<th></th></tr></thead>
+        ${c.label}${sort.key === c.key ? (sort.dir > 0 ? " ▲" : " ▼") : ""}</button></th>`)}</tr></thead>
       <tbody onMouseLeave=${() => setHover(null)}>
         ${shown.map((i) => html`<tr key=${i} class=${(i === active ? "active" : "") + (i === pinned ? " pinned" : "")}
-            onMouseEnter=${() => setHover(i)} onClick=${() => setPinned(i === pinned ? null : i)}
-            onDblClick=${() => openDetail(i)}>
+            onMouseEnter=${() => setHover(i)} onClick=${() => openDetail(i)} title="לחץ לפירוט מלא">
           ${cols.map((c) => html`<td dir=${c.key === "start" || c.key === "end" || c.rtl ? "rtl" : "ltr"}>${c.fmt(c.get(i))}</td>`)}
-          <td><button type="button" class="btn link small" onClick=${(e) => { e.stopPropagation(); openDetail(i); }}>פירוט ›</button></td>
         </tr>`)}
       </tbody>
     </table></div>

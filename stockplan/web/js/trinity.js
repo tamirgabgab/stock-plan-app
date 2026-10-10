@@ -11,7 +11,8 @@ import { NumberField, Segmented, Toggle } from "./ui.js";
 
 export const TRINITY_SOLVE_OPTIONS = [
   { value: "final", label: "יתרה סופית" },
-  { value: "rate", label: "אחוז משיכה" },
+  { value: "amount", label: "סכום משיכה קבוע" },
+  { value: "rate", label: "אחוז משיכה קבוע" },
   { value: "start_amount", label: "סכום התחלתי" },
 ];
 
@@ -41,9 +42,11 @@ export function prepareTrinityResult(raw, plan) {
   const cur = plan.currency;
   const isRate = plan.solve_for === "rate";
   const labels = {
-    solved: { rate: "אחוז משיכה מקסימלי", start_amount: "סכום התחלתי נדרש" },
+    solved: { amount: "משיכה חודשית מקסימלית", rate: "אחוז משיכה מקסימלי", start_amount: "סכום התחלתי נדרש" },
     outcome: "יתרה סופית", flow: "סך משיכות", flowVerb: "נמשך", detailApi: "/api/trinity/realization",
-    targetLabel: "יעד", targetInFinal: true,
+    targetLabel: "יתרה סופית (היעד)",
+    // A higher solved rate or amount is the better outcome (unlike a required deposit).
+    solvedHigherBetter: plan.solve_for === "rate" || plan.solve_for === "amount",
     solvedKind: isRate ? "pct" : "money",
     solvedFmt: isRate ? (v) => pct(v, 2) : (v) => money(v, cur),
     outcomeSub: (res, i) => `סך משיכות: ${money(res.raw.withdrawn_total[i], cur)}` +
@@ -72,14 +75,15 @@ export function TrinityInputs({ plan, setPlan, range, rangeError, favorites }) {
     <details open class="section">
       <summary>מה לחשב</summary>
       <${Segmented} options=${TRINITY_SOLVE_OPTIONS} value=${plan.solve_for} onChange=${set("solve_for")}
-        hint="יתרה סופית: מריצים את התוכנית כמו שהיא. אחוז משיכה: לכל תקופה היסטורית, האחוז הגבוה ביותר שמשאיר בסוף לפחות את היעד. סכום התחלתי: הסכום הנמוך ביותר שמספיק לכך." />
+        hint="השדה שנבחר הוא הנעלם, ולכן הוא נעול ומחושב. יתרה סופית: מריצים את התוכנית כמו שהיא, והצלחה פירושה שהכסף לא נגמר. סכום משיכה קבוע: לכל תקופה היסטורית, הסכום החודשי הגבוה ביותר שמשאיר בסוף לפחות את היתרה הסופית. אחוז משיכה קבוע: אותו דבר באחוז (מהסכום ההתחלתי או מהיתרה). סכום התחלתי: הסכום הנמוך ביותר שמספיק לכך." />
       <div class="grid-2">
         <${NumberField} label="סכום התחלתי" value=${plan.start_amount} onChange=${set("start_amount")}
           step=${10000} suffix=${sym} disabled=${plan.solve_for === "start_amount"}
           note=${plan.solve_for === "start_amount" ? "מחושב" : money(plan.start_amount, plan.currency)} />
-        <${NumberField} label="יתרה מינימלית בסוף (יעד)" value=${plan.target_amount} onChange=${set("target_amount")}
-          step=${10000} suffix=${sym} note=${money(plan.target_amount, plan.currency)}
-          hint="הצלחה פירושה שכל המשיכות שולמו במלואן ובסוף נשארה לפחות היתרה הזו. 0 = מספיק שהכסף לא נגמר. במצבי הפתרון זה הסכום שצריך להישאר." />
+        <${NumberField} label="יתרה סופית" value=${plan.target_amount} onChange=${set("target_amount")}
+          step=${10000} suffix=${sym} disabled=${plan.solve_for === "final"}
+          note=${plan.solve_for === "final" ? "מחושב" : money(plan.target_amount, plan.currency)}
+          hint="במצב יתרה סופית זה מה שמחושב, ולכן השדה נעול. בשאר המצבים זו היתרה שחייבת להישאר בסוף (0 = מספיק שהכסף לא נגמר)." />
       </div>
       <div class="grid-2">
         <${Segmented} label="מטבע" options=${[{ value: "ILS", label: "₪ שקל" }, { value: "USD", label: "$ דולר" }]}
@@ -107,28 +111,32 @@ export function TrinityInputs({ plan, setPlan, range, rangeError, favorites }) {
 function WithdrawStageCard({ stage, index, count, sym, plan, onChange, onMove, onRemove }) {
   const set = (key) => (value) => onChange((s) => ({ ...s, [key]: value }));
   const solveRate = plan.solve_for === "rate";
-  const pctUnit = solveRate || stage.rate_unit === "pct";
+  const solveAmount = plan.solve_for === "amount";
+  const locked = solveRate || solveAmount;
+  const pctUnit = solveRate || (!solveAmount && stage.rate_unit === "pct");
   const monthlyFromPct = (stage.rate / 1200) * plan.start_amount;
   const unitOptions = [{ value: "pct", label: "% לשנה" }, { value: "money", label: `${sym} לחודש` }];
+  const indexed = plan.index_withdrawals ? ", צמוד" : "";
   return html`<div class="stage-card">
     <${StageHead} stage=${stage} index=${index} count=${count} set=${set} onMove=${onMove} onRemove=${onRemove} />
     <div class="grid-2">
       <${NumberField} label="חודשים" value=${stage.months} onChange=${set("months")} min=${1} max=${1200}
         note=${monthsLabel(stage.months || 0)} />
-      <${Segmented} label="המשיכה מוגדרת כ" options=${unitOptions} value=${pctUnit ? "pct" : "money"}
+      <${Segmented} label="המשיכה מוגדרת כ" options=${unitOptions} value=${pctUnit ? "pct" : "money"} disabled=${locked}
+        note=${locked ? (solveRate ? "נקבע לפי מצב החישוב: אחוז" : "נקבע לפי מצב החישוב: סכום") : null}
         onChange=${(v) => onChange((s) => ({ ...s, rate_unit: v, basis: v === "money" ? "initial" : s.basis }))}
-        hint=${solveRate ? "במצב פתרון אחוז המשיכה, האחוז הוא הנעלם ומחושב לכל תקופה." : "אחוז לשנה (נמשך חודשית, 1/12) או סכום קבוע לחודש ביחידות הקלט."} />
+        hint=${locked ? "היחידה נקבעת לפי מה שמחשבים: בסכום משיכה קבוע המשיכה היא סכום לחודש, ובאחוז משיכה קבוע היא אחוז לשנה." : "אחוז לשנה (נמשך חודשית, 1/12) או סכום קבוע לחודש ביחידות הקלט."} />
     </div>
     <div class="grid-2">
       ${pctUnit
         ? html`<${NumberField} label="אחוז משיכה שנתי" value=${stage.rate} onChange=${set("rate")} step=${0.25} max=${100}
             suffix="%" disabled=${solveRate}
-            note=${solveRate ? "מחושב" : stage.basis === "initial" ? `${money(monthlyFromPct, plan.currency)} לחודש${plan.index_withdrawals ? ", צמוד" : ""}` : "מהיתרה בכל חודש"} />`
+            note=${solveRate ? "מחושב" : stage.basis === "initial" ? `${money(monthlyFromPct, plan.currency)} לחודש${indexed}` : "מהיתרה בכל חודש"} />`
         : html`<${NumberField} label="משיכה חודשית" value=${stage.amount} onChange=${set("amount")} step=${500}
-            suffix=${sym} note=${`${money(stage.amount, plan.currency)} לחודש${plan.index_withdrawals ? ", צמוד" : ""}`} />`}
+            suffix=${sym} disabled=${solveAmount} note=${solveAmount ? `מחושב (אותו סכום בכל השלבים${indexed})` : `${money(stage.amount, plan.currency)} לחודש${indexed}`} />`}
       ${pctUnit ? html`<${Segmented} label="האחוז נמדד מ" options=${[{ value: "initial", label: "הסכום ההתחלתי" }, { value: "current", label: "היתרה הנוכחית" }]}
           value=${stage.basis} onChange=${set("basis")}
-          hint="הסכום ההתחלתי: משיכה קבועה (צמודה למדד אם ההצמדה דלוקה), כמו במחקר טריניטי. היתרה הנוכחית: אחוז ממה שיש בתיק באותו חודש, אף פעם לא נגמר אבל ההכנסה משתנה." />` : null}
+          hint="הסכום ההתחלתי: משיכה קבועה (צמודה למדד אם ההצמדה דלוקה), כמו במחקר טריניטי. היתרה הנוכחית: אחוז ממה שיש בתיק באותו חודש, אף פעם לא נגמר אבל ההכנסה משתנה. כשמחשבים אחוז מהיתרה כדאי להגדיר יתרה סופית חיובית, אחרת אפשר פשוט למשוך הכל." />` : null}
     </div>
     ${pctUnit && stage.basis === "current" ? html`<div class="guard">
       <div class="field-label">רצפה ותקרה למשיכה החודשית (0 = בלי)</div>
@@ -168,17 +176,20 @@ function TrinityKpis({ res }) {
   const tiles = [];
   if (plan.solve_for === "final") {
     tiles.push(html`<${Tile} label="אחוז הצלחה" value=${pct((100 * okCount) / raw.n, 1)}
-      sub=${`${okCount.toLocaleString("he-IL")} מתוך ${raw.n.toLocaleString("he-IL")} תקופות${plan.target_amount > 0 ? ` נשארו עם לפחות ${m(plan.target_amount)}` : " לא נגמר להן הכסף"}`} />`);
+      sub=${`ב-${okCount.toLocaleString("he-IL")} מתוך ${raw.n.toLocaleString("he-IL")} תקופות הכסף לא נגמר`} />`);
   }
   if (plan.solve_for !== "final") {
     const sol = summarize(raw.solved) || {};
     const isRate = plan.solve_for === "rate";
+    const higher = res.labels.solvedHigherBetter;
     const f = isRate ? (v) => pct(v, 2) : m;
-    const safe = isRate ? sol.p10 : sol.p90;
+    const safe = higher ? sol.p10 : sol.p90;
+    const safeSub = { rate: "אחוז שעבד ב-90% מהמקרים ההיסטוריים", amount: "סכום חודשי שעבד ב-90% מהמקרים ההיסטוריים",
+                      start_amount: "סכום שהספיק ב-90% מהמקרים" }[plan.solve_for];
     tiles.push(
       html`<${Tile} label=${`${solvedLabel(res)} (חציון)`} value=${f(sol.median)} sub=${`ממוצע ${f(sol.mean)}`} />`,
-      html`<${Tile} label="בטוח ב-90% מהתקופות" value=${f(safe)} sub=${isRate ? "אחוז שעבד ב-90% מהמקרים ההיסטוריים" : "סכום שהספיק ב-90% מהמקרים"} />`,
-      html`<${Tile} label=${isRate ? "המקרה הגרוע" : "המקרה הגרוע"} value=${f(isRate ? sol.min : sol.max)} />`,
+      html`<${Tile} label="בטוח ב-90% מהתקופות" value=${f(safe)} sub=${safeSub} />`,
+      html`<${Tile} label="המקרה הגרוע" value=${f(higher ? sol.min : sol.max)} />`,
     );
   } else {
     tiles.push(

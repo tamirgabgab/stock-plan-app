@@ -206,7 +206,7 @@ input:disabled { background: var(--surface-2); }
   padding: 5px 8px; border-radius: 7px; cursor: pointer; white-space: nowrap; min-width: 0;
 }
 .segmented button { white-space: normal; line-height: 1.25; }
-.segmented button:hover:not(.on) { background: color-mix(in srgb, var(--surface-1) 55%, transparent); color: var(--text-primary); }
+.segmented button:hover:not(.on):not(:disabled) { background: color-mix(in srgb, var(--surface-1) 55%, transparent); color: var(--text-primary); }
 .segmented button.on { background: var(--surface-1); color: var(--text-primary); font-weight: 500; box-shadow: var(--shadow); }
 .segmented button { transition: background 0.12s, color 0.12s; }
 .segmented.small button { font-size: 12px; padding: 3px 8px; flex: 0 0 auto; }
@@ -319,6 +319,7 @@ table.data th { text-align: start; font-weight: 500; color: var(--text-secondary
 table.data th button { font: inherit; color: inherit; background: none; border: 0; padding: 6px 8px; cursor: pointer; }
 table.data td { padding: 5px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; text-align: start; }
 table.data tbody tr { cursor: pointer; }
+.results { padding-bottom: 64px; }
 table.data tbody tr:hover, table.data tbody tr.active { background: var(--surface-2); }
 table.data tbody tr.pinned { box-shadow: inset -3px 0 0 var(--series-7); }
 .pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 8px; font-size: 12px; }
@@ -538,6 +539,15 @@ body.modal-open { overflow: hidden; }
 .journal-table tbody tr:hover { background: var(--band); }
 .journal-foot { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: space-between; font-size: 12px; }
 .plot-basket { flex: 1; min-height: 380px; }
+.account-chart { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.account-chart p { margin: 0; }
+.plot-account { height: 300px; }
+.p-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.p-controls input { width: 70px; }
+.account-chart .pos { color: #2f8f3a; }
+.account-chart .neg { color: #c23434; }
+.journal-table tbody tr { cursor: default; }
 .formula-item { display: inline-block; margin-inline-end: 10px; }
 .formula { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .pin-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
@@ -551,3 +561,14 @@ body.modal-open { overflow: hidden; }
   .modal { border-radius: 0; height: 100%; }
   .modal-head { flex-direction: column; }
 }
+
+/* ------------------------------------------------------------ pinned bar */
+.pin-bar {
+  position: fixed; z-index: 70; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; gap: 12px; align-items: center;
+  padding: 8px 10px 8px 14px; background: var(--surface-1); border: 1px solid var(--accent); border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18); font-size: 13px; max-width: calc(100vw - 32px); flex-wrap: wrap; justify-content: center;
+}
+table.data tbody tr { cursor: pointer; }
+.results { padding-bottom: 64px; }
+.segmented button:disabled { cursor: not-allowed; }
+@media (max-width: 640px) { .pin-bar { border-radius: 14px; bottom: 8px; gap: 6px 10px; } }

@@ -19,7 +19,7 @@ from .config import FAVORITES
 from .data import DataError, get_market_data
 from .data.search import lookup, search
 from .engine import (Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range,
-                     realization_detail, run_plan, run_trinity, solve_trace, trinity_heatmap)
+                     benchmark_path, realization_detail, run_plan, run_trinity, solve_trace, trinity_heatmap)
 
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -84,7 +84,7 @@ class TrinityIn(BaseModel):
     stages: List[WithdrawStageIn] = Field(min_length=1)
     start_amount: float = Field(1_000_000.0, ge=0)
     target_amount: float = Field(0.0, ge=0)
-    solve_for: Literal["final", "rate", "start_amount"] = "final"
+    solve_for: Literal["final", "amount", "rate", "start_amount"] = "final"
     currency: Literal["USD", "ILS"] = "USD"
     real: bool = False
     index_withdrawals: bool = True
@@ -122,6 +122,16 @@ class RealizationIn(BaseModel):
 class TrinityRealizationIn(BaseModel):
     plan: TrinityIn
     start_date: date
+
+
+class BenchmarkIn(RealizationIn):
+    rate: float = Field(0.0, ge=-50, le=100)     # fixed annual return, percent
+    x: Optional[float] = None                     # the realization's solved variable (solve modes)
+
+
+class TrinityBenchmarkIn(TrinityRealizationIn):
+    rate: float = Field(0.0, ge=-50, le=100)
+    x: Optional[float] = None
 
 
 def _floats(a) -> list:
@@ -208,6 +218,23 @@ def plan_realization(body: RealizationIn):
 @app.post("/api/trinity/realization")
 def trinity_realization(body: TrinityRealizationIn):
     return _detail(body.plan.to_request(), body.start_date)
+
+
+def _bench(req, body):
+    try:
+        return benchmark_path(req, get_market_data(), body.start_date, body.rate, body.x)
+    except (DataError, ValueError) as exc:
+        raise _bad_request(exc)
+
+
+@app.post("/api/realization/benchmark")
+def plan_benchmark(body: BenchmarkIn):
+    return _bench(body.plan.to_request(), body)
+
+
+@app.post("/api/trinity/realization/benchmark")
+def trinity_benchmark(body: TrinityBenchmarkIn):
+    return _bench(body.plan.to_request(), body)
 
 
 @app.post("/api/range")

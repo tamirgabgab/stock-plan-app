@@ -17,7 +17,7 @@ from typing import Optional
 import numpy as np
 
 from .market import Market
-from .models import SOLVE_RATE, SOLVE_START, WithdrawRequest
+from .models import SOLVE_AMOUNT, SOLVE_RATE, SOLVE_START, WithdrawRequest
 from .portfolio import Book
 from .simulate import month_growth
 
@@ -51,7 +51,7 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
     is how the heat map runs many withdrawal rates in one pass).
 
     ``x`` overrides the solved variable per row: the annual withdrawal rate of every stage
-    (percent) or the start amount.
+    (percent), the monthly withdrawal of every stage (money, input units) or the start amount.
     """
     idx = market.day_idx if rows is None else market.day_idx[rows]
     R, T = idx.shape[0], idx.shape[1] - 1
@@ -78,6 +78,7 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
 
     start_amount = x if (x is not None and req.solve_for == SOLVE_START) else ones * req.start_amount
     rate_override = x if (x is not None and req.solve_for == SOLVE_RATE) else None
+    amount_override = x if (x is not None and req.solve_for == SOLVE_AMOUNT) else None
     stage_starts = np.cumsum([0] + [s.months for s in req.stages])
 
     cpi0 = cpi[:, 0] if cpi is not None else None
@@ -92,12 +93,15 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
             book.reallocate(w, cpi[:, m0] if cpi is not None else None, taxable=req.tax_on_switch)
 
         rate = rate_override if rate_override is not None else ones * stage.rate
-        if stage.rate_unit == "money" and rate_override is None:
+        basis = stage.basis
+        if amount_override is not None:
+            fixed, basis = amount_override, "initial"        # solving for a fixed amount
+        elif stage.rate_unit == "money" and rate_override is None:
             fixed = ones * stage.amount                      # per month, input units
         else:
             fixed = rate / 1200 * start_amount               # percent per year of the start amount
         floor = ceiling = None
-        if stage.basis == "current":
+        if basis == "current":
             if stage.floor > 0:
                 floor = ones * (stage.floor / 1200 * start_amount if stage.guard_unit == "pct" else stage.floor)
             if stage.ceiling > 0:
@@ -111,7 +115,7 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
             if j == 0 and stage.one_time > 0:
                 want += (stage.one_time / 100 * book.total if stage.one_time_unit == "pct"
                          else stage.one_time * sc)
-            if stage.basis == "current":
+            if basis == "current":
                 monthly = rate / 1200 * book.total
                 if floor is not None:
                     monthly = np.maximum(monthly, floor * sc)

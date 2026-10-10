@@ -47,13 +47,14 @@ export function NumberField({ label, hint, note, value, onChange, step, min, max
   </${Field}>`;
 }
 
-export function Segmented({ label, hint, options, value, onChange, small }) {
-  return html`<div class="field">
+export function Segmented({ label, hint, options, value, onChange, small, disabled, note }) {
+  return html`<div class=${"field" + (disabled ? " is-disabled" : "")}>
     ${label ? html`<span class="field-label">${label}${hint ? html` <${Hint} text=${hint} />` : null}</span>` : null}
     <div class=${"segmented" + (small ? " small" : "")} role="radiogroup">
       ${options.map((o) => html`<button type="button" role="radio" aria-checked=${o.value === value}
-          class=${o.value === value ? "on" : ""} onClick=${() => onChange(o.value)}>${o.label}</button>`)}
+          class=${o.value === value ? "on" : ""} disabled=${disabled} onClick=${() => onChange(o.value)}>${o.label}</button>`)}
     </div>
+    ${note ? html`<span class="field-note">${note}</span>` : null}
   </div>`;
 }
 

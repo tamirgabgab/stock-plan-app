@@ -47,10 +47,12 @@ the UI — it is not real market history).
   withdrawals (CPI-indexed by default), a fixed amount, or a percent of the current
   balance with floor/ceiling guardrails; one-time withdrawals; every withdrawal is a
   pro-rata sale with the tax grossed up. Solve for the final balance, the maximum
-  withdrawal rate or the minimum starting amount. Success-rate heat map (withdrawal
+  fixed monthly withdrawal, the maximum withdrawal rate (of the start amount or of
+  the balance) or the minimum starting amount. Success-rate heat map (withdrawal
   rate × horizon, survival or capital preservation), click a cell to load it.
-- **Realization detail** – open any start date (table, double-click or the pinned
-  path) for its full trade journal: every buy and sell with date, price (and the USD
+- **Realization detail** – click any start date in the table (or use the floating
+  bar of the pinned path): the account value against the same plan at a fixed annual
+  return p (same deposits or withdrawals, fees and tax), and the full trade journal: every buy and sell with date, price (and the USD
   quote in ILS mode), amount, units, tax, and each purchase's return to exit, total and
   annualized. Next to it, the weighted basket of raw prices (weights as fractions, per
   stage; optionally times the USD/ILS rate) with the buy dates marked in red.

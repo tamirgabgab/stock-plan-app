@@ -293,3 +293,22 @@ export function basketFigure({ basket, buys, sells, stages, useFx, highlight }) 
   });
   return { data, layout };
 }
+
+// One realization's account value against the same plan at a fixed annual return.
+export function accountFigure({ dates, account, bench, flow, flowLabel, benchLabel, sym }) {
+  const t = theme();
+  const hv = (name) => `${name}: ${sym}%{y:,.0f}<extra></extra>`;
+  const data = [
+    { x: dates, y: account, mode: "lines", line: { width: 2.4, color: t.blue }, name: "שווי החשבון", hovertemplate: hv("החשבון") },
+    { x: dates, y: bench || [], mode: "lines", line: { width: 2, color: t.orange, dash: "dash" }, name: benchLabel,
+      hovertemplate: hv("השוואה") },
+    { x: dates, y: flow, mode: "lines", line: { width: 1.3, color: t.neutral, dash: "dot" }, name: flowLabel, hovertemplate: hv(flowLabel) },
+  ];
+  const layout = baseLayout(t, {
+    hovermode: "x unified", dragmode: "zoom",
+    margin: { l: 64, r: 16, t: 8, b: 36 },
+    xaxis: axis(t, { type: "date" }),
+    yaxis: axis(t, { tickprefix: sym, tickformat: "~s", fixedrange: true, rangemode: "tozero" }),
+  });
+  return { data, layout };
+}

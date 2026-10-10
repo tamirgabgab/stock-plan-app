@@ -289,18 +289,20 @@ function WithdrawSection({ tplan, tres }) {
     <h3>הנעלם וההצלחה</h3>
     <p>כדי שהסולבר יעבוד גם אחרי שהתיק מתרוקן (שם היתרה הסופית קבועה על 0 ולא מבחינה בין אחוזים), פותרים על</p>
     ${D(S`\Phi(x) = N_T(x) - \sum_m \big(W_m - \text{paid}_m\big) = F^\star`)}
-    <p>כלומר היתרה הסופית פחות המשיכות שלא שולמו. ${T(S`\Phi`)} יורד ממש באחוז המשיכה ועולה ממש בסכום ההתחלתי, ולכן הפתרון יחיד.
-      ריאליזציה "מצליחה" כשכל המשיכות שולמו במלואן ובסוף ${T(S`N_T \ge F^\star`)}. אחוז ההצלחה הוא החלק היחסי של הריאליזציות המצליחות,
+    <p>כלומר היתרה הסופית פחות המשיכות שלא שולמו. ${T(S`\Phi`)} יורד ממש באחוז המשיכה ובסכום המשיכה החודשי, ועולה ממש בסכום ההתחלתי, ולכן הפתרון יחיד.
+      במצב יתרה סופית אין יעד (היתרה היא הנעלם), וריאליזציה "מצליחה" כשכל המשיכות שולמו במלואן, כלומר הכסף לא נגמר. במצבי הפתרון "הצלחה" פירושה שקיים פתרון. אחוז ההצלחה הוא החלק היחסי של הריאליזציות המצליחות,
       ומפת החום מחשבת אותו לכל צמד (אחוז, משך) עם שלב אחד, כשהתיק של השלב הראשון, בסימולציה וקטורית אחת לכל משך (הריאליזציות משוכפלות פעם לכל אחוז).
       "שמירה על הקרן" מחליפה את ${T(S`F^\star`)} בסכום ההתחלתי ${T(S`S_0`)} ביחידות ההצגה.</p>
     <h3>עם המספרים של התוכנית הנוכחית</h3>
     <table class="vals"><tbody>
       <tr><th>סכום התחלתי</th><td colspan="2">${tplan.solve_for === "start_amount" ? html`${T(S`S_0`)} הוא הנעלם` : html`${T(S`S_0 = ${n(tplan.start_amount)}`)} ${cur}`}</td></tr>
-      <tr><th>יעד (יתרה מינימלית בסוף)</th><td colspan="2">${T(S`F^\star = ${n(tplan.target_amount)}`)} ${cur}</td></tr>
+      ${tplan.solve_for === "final"
+        ? html`<tr><th>יתרה סופית</th><td colspan="2">${T(S`N_T`)}: הנעלם, מחושבת לכל ריאליזציה</td></tr>`
+        : html`<tr><th>יתרה סופית (יעד)</th><td colspan="2">${T(S`F^\star = ${n(tplan.target_amount)}`)} ${cur}</td></tr>`}
       <tr><th>משך</th><td colspan="2">${T(S`T = ${months}`)} חודשים (${monthsLabel(months)}), ${tplan.stages.length} ${tplan.stages.length > 1 ? "שלבים" : "שלב"}</td></tr>
-      <tr><th>שלב 1</th><td colspan="2">${tplan.solve_for === "rate" ? html`${T(S`\rho_1 = \rho`)} (הנעלם)` : st.rate_unit === "money" ? html`${T(S`A_1 = ${n(st.amount)}`)} ${cur} לחודש` : html`${T(S`\rho_1 = ${st.rate}\%`)} ${st.basis === "current" ? "מהיתרה הנוכחית" : "מהסכום ההתחלתי"}`}${st.basis === "current" && (st.floor > 0 || st.ceiling > 0) ? html`, ${T(S`L_1 = ${n(st.floor, 2)},\; U_1 = ${st.ceiling > 0 ? n(st.ceiling, 2) : "\infty"}`)} (${st.guard_unit === "pct" ? "% לשנה מההתחלתי" : cur + " לחודש"})` : ""}${st.one_time > 0 ? html`, חד-פעמי ${st.one_time_unit === "pct" ? T(S`o_1 = ${st.one_time}\%`) : html`${T(S`O_1 = ${n(st.one_time)}`)} ${cur}`}` : ""}</td></tr>
+      <tr><th>שלב 1</th><td colspan="2">${tplan.solve_for === "rate" ? html`${T(S`\rho_1 = \rho`)} (הנעלם) ${st.basis === "current" ? "מהיתרה הנוכחית" : "מהסכום ההתחלתי"}` : tplan.solve_for === "amount" ? html`${T(S`A_1 = A`)} (הנעלם, לחודש)` : st.rate_unit === "money" ? html`${T(S`A_1 = ${n(st.amount)}`)} ${cur} לחודש` : html`${T(S`\rho_1 = ${st.rate}\%`)} ${st.basis === "current" ? "מהיתרה הנוכחית" : "מהסכום ההתחלתי"}`}${st.basis === "current" && (st.floor > 0 || st.ceiling > 0) ? html`, ${T(S`L_1 = ${n(st.floor, 2)},\; U_1 = ${st.ceiling > 0 ? n(st.ceiling, 2) : "\infty"}`)} (${st.guard_unit === "pct" ? "% לשנה מההתחלתי" : cur + " לחודש"})` : ""}${st.one_time > 0 ? html`, חד-פעמי ${st.one_time_unit === "pct" ? T(S`o_1 = ${st.one_time}\%`) : html`${T(S`O_1 = ${n(st.one_time)}`)} ${cur}`}` : ""}</td></tr>
       <tr><th>הצמדה</th><td colspan="2">${tplan.index_withdrawals ? "המשיכות צמודות למדד" : "המשיכות נומינליות קבועות"}, ${tplan.real ? "הצגה ריאלית בכסף של היום" : "הצגה נומינלית"}</td></tr>
-      ${raw ? html`<tr><th>תוצאות</th><td class="num">${T(S`n = ${n(raw.n)}`)}</td><td>הצלחה ב-${okCount.toLocaleString("he-IL")} תקופות (${(100 * okCount / raw.n).toFixed(1)}%); יתרה סופית חציונית ${m(fin?.median)}${sol ? html`; ${tplan.solve_for === "rate" ? "אחוז משיכה חציוני" : "סכום התחלתי חציוני"} <span dir="ltr">${tplan.solve_for === "rate" ? sol.median.toFixed(2) + "%" : m(sol.median)}</span>` : ""}</td></tr>` : null}
+      ${raw ? html`<tr><th>תוצאות</th><td class="num">${T(S`n = ${n(raw.n)}`)}</td><td>הצלחה ב-${okCount.toLocaleString("he-IL")} תקופות (${(100 * okCount / raw.n).toFixed(1)}%); יתרה סופית חציונית ${m(fin?.median)}${sol ? html`; ${{ rate: "אחוז משיכה חציוני", amount: "משיכה חודשית חציונית", start_amount: "סכום התחלתי חציוני" }[tplan.solve_for]} <span dir="ltr">${tplan.solve_for === "rate" ? sol.median.toFixed(2) + "%" : m(sol.median)}</span>` : ""}</td></tr>` : null}
     </tbody></table>
   </section>`;
 }
@@ -320,7 +322,7 @@ function SolverSection({ plan, api, kind }) {
   const hasUnknown = plan.solve_for !== "final";
   const choices = kind === "deposits"
     ? [{ value: "monthly_deposit", label: "הפקדה חודשית" }, { value: "start_amount", label: "סכום התחלתי" }]
-    : [{ value: "rate", label: "אחוז משיכה" }, { value: "start_amount", label: "סכום התחלתי" }];
+    : [{ value: "amount", label: "סכום משיכה" }, { value: "rate", label: "אחוז משיכה" }, { value: "start_amount", label: "סכום התחלתי" }];
   const [demoSolve, setDemoSolve] = useState(choices[0].value);
   const solveFor = hasUnknown ? plan.solve_for : demoSolve;
   const payload = useMemo(() => ({ ...toPayload(plan), solve_for: solveFor,
@@ -346,7 +348,7 @@ function SolverSection({ plan, api, kind }) {
   }, [key]);
   const isRate = solveFor === "rate";
   const sym = CURRENCY_SYMBOL[plan.currency];
-  const xLabel = { monthly_deposit: "הפקדה חודשית", start_amount: "סכום התחלתי", rate: "אחוז משיכה שנתי" }[solveFor];
+  const xLabel = { monthly_deposit: "הפקדה חודשית", start_amount: "סכום התחלתי", rate: "אחוז משיכה שנתי", amount: "משיכה חודשית" }[solveFor];
   const yLabel = kind === "deposits" ? "סכום סופי נטו" : "יתרה סופית פחות משיכות שלא שולמו";
   useEffect(() => {
     if (!ref.current || !data) return;

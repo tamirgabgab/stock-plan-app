@@ -5,7 +5,7 @@ import numpy as np
 
 from ..data.base import DataError, MarketData
 from .market import Market, available_range, prepare_market
-from .models import (SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_START,
+from .models import (SOLVE_AMOUNT, SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_START,
                      TRINITY_SOLVE_MODES, Holding, PlanRequest, SimulationResult, Stage,
                      WithdrawRequest, WithdrawResult, WithdrawStage)
 from .simulate import simulate
@@ -138,6 +138,15 @@ def validate_withdraw(req: WithdrawRequest) -> None:
         raise ValueError("סכום התחלתי חייב להיות חיובי")
 
 
+def _trinity_guess(req: WithdrawRequest) -> float:
+    """Starting bracket for the withdrawal solvers: 4% a year, as a rate or as money a month."""
+    if req.solve_for == SOLVE_AMOUNT:
+        return max(req.start_amount * 0.04 / 12, 1.0)
+    if req.solve_for == SOLVE_RATE:
+        return 4.0
+    return max(req.start_amount, req.target_amount, 1.0)
+
+
 def run_trinity(req: WithdrawRequest, md: MarketData) -> WithdrawResult:
     validate_withdraw(req)
     market = prepare_market(req, md)
@@ -158,9 +167,9 @@ def run_trinity(req: WithdrawRequest, md: MarketData) -> WithdrawResult:
         return display(out.final_net - out.unpaid, rows)
 
     solved = None
-    if req.solve_for == SOLVE_RATE:
-        # The score falls as the rate rises: solve on the negated function.
-        solved = solve_monotone(lambda x, rows: -score(x, rows), -req.target_amount, R, 4.0)
+    if req.solve_for in (SOLVE_RATE, SOLVE_AMOUNT):
+        # The score falls as the withdrawal rises: solve on the negated function.
+        solved = solve_monotone(lambda x, rows: -score(x, rows), -req.target_amount, R, _trinity_guess(req))
     elif req.solve_for == SOLVE_START:
         solved = solve_monotone(score, req.target_amount, R, max(req.start_amount, req.target_amount, 1.0))
     if solved is not None:
@@ -176,10 +185,11 @@ def run_trinity(req: WithdrawRequest, md: MarketData) -> WithdrawResult:
     paid = out.withdrawals * D
     final = paths[:, T]
     if solved is None:
-        success = (out.shortfall_at < 0) & (final >= req.target_amount - 1e-6)
+        # The final balance is the unknown here, so success only means "the money lasted".
+        success = out.shortfall_at < 0
         n_fail = int((~success).sum())
         if n_fail:
-            warnings.append(f"ב-{n_fail} תקופות התוכנית נכשלה (הכסף נגמר או שנשאר פחות מהיעד)")
+            warnings.append(f"ב-{n_fail} תקופות הכסף נגמר לפני הסוף")
     else:
         # The solved plan sits exactly on the success boundary; "success" means a solution exists.
         success = ~np.isnan(solved)
@@ -256,9 +266,8 @@ def solve_trace(req, md: MarketData) -> dict:
             v = v * market.cpi_base / cpi_all[rows, T]
         return v
 
-    sign = -1.0 if (trinity and req.solve_for == SOLVE_RATE) else 1.0
-    guess = 4.0 if (trinity and req.solve_for == SOLVE_RATE) else (
-        max(req.start_amount, req.target_amount, 1.0) if trinity else _initial_guess(req))
+    sign = -1.0 if (trinity and req.solve_for in (SOLVE_RATE, SOLVE_AMOUNT)) else 1.0
+    guess = _trinity_guess(req) if trinity else _initial_guess(req)
     solved = solve_monotone(lambda x, rows: sign * value(x, rows), sign * req.target_amount, R, guess)
     finite = np.where(np.isfinite(solved))[0]
     if len(finite) == 0:
@@ -283,8 +292,8 @@ def solve_trace(req, md: MarketData) -> dict:
             "n": R, "solved_median": med}
 
 
-from .detail import realization_detail  # noqa: E402  (uses run_plan / run_trinity above)
+from .detail import benchmark_path, realization_detail  # noqa: E402  (uses run_plan / run_trinity above)
 
-__all__ = ["realization_detail", "Holding", "Stage", "PlanRequest", "SimulationResult", "run_plan", "available_range",
-           "SOLVE_FINAL", "SOLVE_MONTHLY", "SOLVE_START", "SOLVE_RATE",
+__all__ = ["benchmark_path", "realization_detail", "Holding", "Stage", "PlanRequest", "SimulationResult", "run_plan", "available_range",
+           "SOLVE_FINAL", "SOLVE_MONTHLY", "SOLVE_START", "SOLVE_RATE", "SOLVE_AMOUNT",
            "WithdrawStage", "WithdrawRequest", "WithdrawResult", "run_trinity", "trinity_heatmap", "solve_trace"]

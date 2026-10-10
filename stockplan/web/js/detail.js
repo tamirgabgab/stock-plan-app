@@ -1,10 +1,11 @@
 // Realization detail: a large modal with the trade journal of one start date on one side and
 // the weighted basket of raw prices (buy dates in red) on the other. Shared by both tabs.
 import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
-import { basketFigure, observeResize, PLOT_CONFIG } from "./charts.js";
+import { accountFigure, basketFigure, observeResize, PLOT_CONFIG } from "./charts.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
 import { toPayload } from "./inputs.js";
 import { Segmented, Toggle } from "./ui.js";
+import { addMonths } from "./results.js";
 
 const ACTION = {
   "buy:deposit": "קנייה · הפקדה", "buy:start": "קנייה · סכום התחלתי", "buy:switch": "קנייה · מעבר שלב",
@@ -65,11 +66,72 @@ function DetailBody({ data, res, themeKey }) {
   const [hl, setHl] = useState(null);
   return html`<div class="modal-body">
     <${DetailSummary} data=${data} res=${res} />
+    <${AccountChart} data=${data} res=${res} themeKey=${themeKey} />
     <div class="detail-grid">
       <${Journal} data=${data} res=${res} setHl=${setHl} />
       <${BasketChart} data=${data} themeKey=${themeKey} hl=${hl} />
     </div>
   </div>`;
+}
+
+// The account against the same plan at a fixed annual return p (same deposits or
+// withdrawals, fees and tax; computed on the server by swapping the market for one asset).
+const P_CHIPS = [0, 4, 7, 10];
+function AccountChart({ data, res, themeKey }) {
+  const ref = useRef(null);
+  const [p, setP] = useState(0);
+  const [bench, setBench] = useState(null);
+  const [error, setError] = useState(null);
+  const cur = data.currency;
+  const sym = CURRENCY_SYMBOL[cur];
+  useEffect(() => {
+    const c = new AbortController();
+    const id = setTimeout(() => {
+      postJSON(`${res.labels.detailApi}/benchmark`, { plan: toPayload(res.plan), start_date: data.start_date, rate: p,
+        x: data.summary.solved }, c.signal)
+        .then((b) => { setBench(b); setError(null); }).catch((e) => { if (e.name !== "AbortError") setError(e.message); });
+    }, 250);
+    return () => { clearTimeout(id); c.abort(); };
+  }, [data, p]);
+  const dates = useMemo(() => data.path.map((_, m) => addMonths(data.start_date, m)), [data]);
+  // Cumulative deposits (accumulation) or net withdrawals (Trinity), from the journal.
+  const flow = useMemo(() => {
+    const perMonth = new Array(data.path.length).fill(0);
+    for (const t of data.trades) {
+      if (!data.trinity && t.kind === "buy" && t.ctx === "deposit") perMonth[t.m] += t.amount;
+      if (data.trinity && t.kind === "sell" && (t.ctx === "withdraw" || t.ctx === "one_time")) perMonth[t.m] += t.amount - t.tax;
+    }
+    let acc = 0;
+    return perMonth.map((v) => (acc += v));
+  }, [data]);
+  const flowLabel = data.trinity ? "סך משיכות נטו" : "סך הפקדות";
+  const benchLabel = `השוואה: ${p}% ${res.plan.real ? "ריאלי " : ""}לשנה`;
+  useEffect(() => {
+    if (!ref.current) return;
+    const fig = accountFigure({ dates, account: data.path, bench: bench && bench.rate === p ? bench.path : null, flow, flowLabel, benchLabel, sym });
+    window.Plotly.react(ref.current, fig.data, fig.layout, PLOT_CONFIG);
+  }, [data, bench, themeKey]);
+  useEffect(() => {
+    const gd = ref.current;
+    const off = observeResize(gd);
+    return () => { off(); if (gd) window.Plotly.purge(gd); };
+  }, []);
+  const fin = data.path[data.path.length - 1];
+  const diff = bench ? fin - bench.final : null;
+  return html`<section class="account-chart" aria-label="שווי החשבון מול השוואה">
+    <div class="journal-head">
+      <h3>שווי החשבון מול תשואה קבועה</h3>
+      <div class="p-controls">
+        <label class="mini">תשואה שנתית להשוואה <input type="number" dir="ltr" step="0.5" min="-50" max="100" value=${p}
+          onInput=${(e) => Number.isFinite(e.currentTarget.valueAsNumber) && setP(e.currentTarget.valueAsNumber)} /> %</label>
+        <div class="segmented small">${P_CHIPS.map((v) => html`<button type="button" class=${p === v ? "on" : ""} onClick=${() => setP(v)}>${v}%</button>`)}</div>
+      </div>
+    </div>
+    <p class="muted small">הקו המקווקו הוא אותה תוכנית בדיוק (${data.trinity ? "אותן משיכות" : "אותן הפקדות"}, אותם דמי ניהול ואותו מס), אבל בנכס אחד שמניב ${p}% בשנה${res.plan.real ? " מעל האינפלציה" : ""}. ב-0% הוא מראה כמה היה נשאר בלי שום תשואה.
+      ${bench ? html` בסוף התקופה: החשבון <b dir="ltr">${money(fin, cur)}</b>, ההשוואה <b dir="ltr">${money(bench.final, cur)}</b>,${" "}<span class=${diff >= 0 ? "pos" : "neg"}>${diff >= 0 ? "החשבון הקדים ב-" : "החשבון פיגר ב-"}<b dir="ltr">${money(Math.abs(diff), cur)}</b></span>.` : ""}</p>
+    ${error ? html`<div class="callout error">${error}</div>` : null}
+    <div ref=${ref} class="plot plot-account"></div>
+  </section>`;
 }
 
 function DetailSummary({ data, res }) {
@@ -82,7 +144,9 @@ function DetailSummary({ data, res }) {
     ["יתרה סופית", m(s.final)],
     ["סך משיכות נטו", m(s.withdrawn_total)],
     ["יתרה מינימלית", m(s.min_balance)],
-    ["תוצאה", s.depleted_at === null ? "הכסף לא נגמר" : `הכסף נגמר אחרי ${monthsLabel(s.depleted_at)}`],
+    // In solve modes the plan sits exactly on the boundary, so "ran out" would be rounding noise.
+    ...(res.plan.solve_for === "final"
+      ? [["תוצאה", s.depleted_at === null ? "הכסף לא נגמר" : `הכסף נגמר אחרי ${monthsLabel(s.depleted_at)}`]] : []),
   ] : [
     ["סכום סופי נטו", m(s.final)],
     ["סך הפקדות", m(s.deposits_total)],

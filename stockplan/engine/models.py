@@ -80,7 +80,8 @@ class SimulationResult:
 # ------------------------------------------------------------------ withdrawal (Trinity)
 
 SOLVE_RATE = "rate"
-TRINITY_SOLVE_MODES = (SOLVE_FINAL, SOLVE_RATE, SOLVE_START)
+SOLVE_AMOUNT = "amount"           # the monthly withdrawal in money, the same for every stage
+TRINITY_SOLVE_MODES = (SOLVE_FINAL, SOLVE_AMOUNT, SOLVE_RATE, SOLVE_START)
 
 
 @dataclass
@@ -103,8 +104,8 @@ class WithdrawStage:
 class WithdrawRequest:
     stages: List[WithdrawStage]
     start_amount: float = 1_000_000.0
-    target_amount: float = 0.0        # balance that must remain at the end
-    solve_for: str = SOLVE_FINAL      # "final", "rate" or "start_amount"
+    target_amount: float = 0.0        # balance that must remain at the end (solve modes only)
+    solve_for: str = SOLVE_FINAL      # "final", "amount", "rate" or "start_amount"
     currency: str = "USD"
     real: bool = False
     index_withdrawals: bool = True    # fixed withdrawals keep their purchasing power (Trinity study)
@@ -139,7 +140,7 @@ class WithdrawResult:
     withdrawn_total: "object"     # (R,) total net withdrawals, display units
     min_balance: "object"         # (R,) lowest net value along the path
     depleted_at: "object"         # (R,) first month the withdrawal could not be paid in full, or -1
-    success: "object"             # (R,) bool: paid every withdrawal and ended >= target
+    success: "object"             # (R,) bool: paid every withdrawal (final mode); a solution exists (solve modes)
     paths: "object"               # (R, months+1) net liquidation value, display units
     withdrawals_path: "object"    # (R, months+1) cumulative net withdrawals, display units
     solved: "object" = None

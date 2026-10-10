@@ -109,3 +109,9 @@ def test_realization_detail_endpoint():
     sim = client.post("/api/trinity/simulate", json=tri).json()
     body = client.post("/api/trinity/realization", json={"plan": tri, "start_date": sim["start_dates"][0]}).json()
     assert body["trinity"] and body["summary"]["final"] == pytest.approx(sim["final"][0], rel=1e-4)
+
+
+def test_benchmark_endpoint():
+    sim = client.post("/api/simulate", json=PLAN).json()
+    body = client.post("/api/realization/benchmark", json={"plan": PLAN, "start_date": sim["start_dates"][0], "rate": 0}).json()
+    assert len(body["path"]) == 121 and body["final"] > 0

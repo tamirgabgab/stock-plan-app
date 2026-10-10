@@ -53,3 +53,41 @@ def test_withdrawals_appear_as_sales():
     assert len(sells) == 12 and all(t["amount"] == pytest.approx(50) for t in sells)
     assert d["summary"]["final"] == pytest.approx(400)
     assert d["trinity"] and len(d["sells"]["dates"]) == 12
+
+
+def test_benchmark_at_zero_return_is_the_deposits_and_taxes_the_gain_otherwise():
+    from stockplan.engine import benchmark_path
+    data = FakeData({"A": step_series({"2000-03-01": 3.0})})
+    req = PlanRequest(stages=[Stage(months=12, holdings=[Holding("A", 100)], monthly_deposit=100)], tax_rate=25, step="M")
+    flat = benchmark_path(req, data, START, 0.0)
+    assert flat["final"] == pytest.approx(1200)                 # the market's jump is ignored
+    assert flat["path"][6] == pytest.approx(700)                # recorded after the month's deposit
+    grown = benchmark_path(req, data, START, 10.0)
+    gross = sum(100 * 1.1 ** ((date_days(12) - date_days(m)) / 365.25) for m in range(12))
+    assert grown["final"] == pytest.approx(gross - 0.25 * (gross - 1200), rel=1e-9)
+
+
+def date_days(m: int) -> int:
+    import pandas as pd
+    return (pd.Timestamp(START) + pd.DateOffset(months=m) - pd.Timestamp(START)).days
+
+
+def test_benchmark_for_withdrawals_and_the_solved_amount():
+    from stockplan.engine import benchmark_path, run_trinity
+    data = FakeData({"A": step_series({})})
+    stage = WithdrawStage(months=12, holdings=[Holding("A", 100)], rate_unit="money", amount=50)
+    req = WithdrawRequest(stages=[stage], start_amount=1000, tax_rate=0, index_withdrawals=False, step="M")
+    assert benchmark_path(req, data, START, 0.0)["final"] == pytest.approx(400)
+    solve = WithdrawRequest(stages=[stage], start_amount=1200, target_amount=0, solve_for="amount", tax_rate=0,
+                            index_withdrawals=False, min_start=START, max_start=START, step="M")
+    res = run_trinity(solve, data)
+    assert res.solved[0] == pytest.approx(100, rel=1e-5)
+    assert benchmark_path(solve, data, START, 0.0, x=100)["final"] == pytest.approx(0, abs=1e-6)
+
+
+def test_final_mode_success_ignores_the_target():
+    from stockplan.engine import run_trinity
+    data = FakeData({"A": step_series({})})
+    req = WithdrawRequest(stages=[WithdrawStage(months=12, holdings=[Holding("A", 100)], rate=4)], start_amount=1000,
+                          target_amount=5000, tax_rate=0, index_withdrawals=False, min_start=START, max_start=START, step="M")
+    assert run_trinity(req, data).success[0]

@@ -9,7 +9,7 @@ from .models import (SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_
                      TRINITY_SOLVE_MODES, Holding, PlanRequest, SimulationResult, Stage,
                      WithdrawRequest, WithdrawResult, WithdrawStage)
 from .simulate import simulate
-from .solve import irr_annual, solve_monotone
+from .solve import irr_annual, solve_monotone, trace_illinois
 from .withdraw import simulate_withdraw
 
 
@@ -227,6 +227,62 @@ def trinity_heatmap(req: WithdrawRequest, md: MarketData, rates, years) -> dict:
             "survival": survival, "preservation": preserve, "counts": counts}
 
 
+def solve_trace(req, md: MarketData) -> dict:
+    """The solver's steps on one realization (the one whose solution is the median), plus
+    the function sampled on a grid, for the math tab's live chart.
+
+    Works for both request types. ``y`` is the display-currency final value (accumulation)
+    or the score "final minus unpaid withdrawals" (Trinity); the solver itself runs on
+    the negated score when solving for a withdrawal rate, since that one decreases in x.
+    """
+    trinity = isinstance(req, WithdrawRequest)
+    if req.solve_for == SOLVE_FINAL:
+        raise ValueError("במצב סכום סופי אין נעלם ואין מה לפתור")
+    if trinity:
+        validate_withdraw(req)
+    else:
+        validate(req)
+    market = prepare_market(req, md)
+    R, T = len(market.start_dates), req.total_months
+    cpi_all = market.cpi_daily[market.day_idx] if market.cpi_daily is not None else None
+
+    def value(x, rows):
+        if trinity:
+            out = simulate_withdraw(req, market, x=x, rows=rows)
+            v = out.final_net - out.unpaid
+        else:
+            v = simulate(req, market, x=x, rows=rows).final_net
+        if req.real and cpi_all is not None:
+            v = v * market.cpi_base / cpi_all[rows, T]
+        return v
+
+    sign = -1.0 if (trinity and req.solve_for == SOLVE_RATE) else 1.0
+    guess = 4.0 if (trinity and req.solve_for == SOLVE_RATE) else (
+        max(req.start_amount, req.target_amount, 1.0) if trinity else _initial_guess(req))
+    solved = solve_monotone(lambda x, rows: sign * value(x, rows), sign * req.target_amount, R, guess)
+    finite = np.where(np.isfinite(solved))[0]
+    if len(finite) == 0:
+        raise ValueError("אין פתרון באף תקופה")
+    med = float(np.median(solved[finite]))
+    r = int(finite[np.argmin(np.abs(solved[finite] - med))])
+    row = np.array([r])
+
+    def f(x):
+        return float(value(np.array([float(x)]), row)[0])
+
+    trace = trace_illinois(lambda x: sign * f(x), sign * req.target_amount, guess)
+    for st in trace["steps"]:
+        st["y"] = sign * st["y"]
+    x_star = trace["x"] if trace["x"] is not None else float(solved[r])
+    x_max = max(x_star * 1.6, max((s["x"] for s in trace["steps"]), default=1.0) * 1.05, 1e-6)
+    grid = np.linspace(0.0, x_max, 60)
+    ys = value(grid, np.full(len(grid), r))
+    return {"start_date": market.start_dates[r].strftime("%Y-%m-%d"), "x": trace["x"],
+            "converged": trace["converged"], "target": req.target_amount, "steps": trace["steps"],
+            "grid_x": [float(v) for v in grid], "grid_y": [None if not np.isfinite(v) else float(v) for v in ys],
+            "n": R, "solved_median": med}
+
+
 __all__ = ["Holding", "Stage", "PlanRequest", "SimulationResult", "run_plan", "available_range",
            "SOLVE_FINAL", "SOLVE_MONTHLY", "SOLVE_START", "SOLVE_RATE",
-           "WithdrawStage", "WithdrawRequest", "WithdrawResult", "run_trinity", "trinity_heatmap"]
+           "WithdrawStage", "WithdrawRequest", "WithdrawResult", "run_trinity", "trinity_heatmap", "solve_trace"]

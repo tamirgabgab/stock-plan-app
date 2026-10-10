@@ -1,7 +1,17 @@
 // Left-hand (right-hand in RTL) panel: global settings, test period and the stages editor.
 import { html } from "../vendor/preact-htm.module.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel } from "./format.js";
-import { Field, Hint, IconButton, NumberField, NumberInput, Segmented, Toggle } from "./ui.js";
+import { DatePicker, DualRange, Field, Hint, IconButton, NumberField, NumberInput, Segmented, SymbolPicker, Toggle } from "./ui.js";
+
+// Plan state -> API body: drop the UI ids and empty holdings (shared with the math tab).
+export function toPayload(plan) {
+  return {
+    ...plan,
+    stages: plan.stages.map(({ id, ...s }) => ({
+      ...s, holdings: s.holdings.filter((h) => h.ticker && h.weight > 0).map(({ name, ...h }) => h),
+    })),
+  };
+}
 
 export const SOLVE_OPTIONS = [
   { value: "final", label: "סכום סופי" },
@@ -15,7 +25,7 @@ export const newId = () => `s${Date.now().toString(36)}${nextId++}`;
 export function newStage(n) {
   return {
     id: newId(), name: `שלב ${n}`, months: 120, initial_deposit: 0, monthly_deposit: 1000,
-    holdings: [{ ticker: "^SP500TR", weight: 100, leverage: 1 }],
+    holdings: [{ ticker: "^SP500TR", name: "S&P 500 Total Return", weight: 100, leverage: 1 }],
   };
 }
 
@@ -57,6 +67,7 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
       </div>
       <${Toggle} label="הצמדת ההפקדות למדד" checked=${plan.index_deposits} onChange=${set("index_deposits")}
         hint="ההפקדות גדלות עם האינפלציה, כך שערכן הריאלי נשמר. כבוי: הסכום הנומינלי קבוע מתחילת התוכנית." />
+      <${RawPreset} plan=${plan} setPlan=${setPlan} indexKey="index_deposits" />
     </details>
 
     <${TaxSection} plan=${plan} set=${set} />
@@ -70,6 +81,16 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
           onChange=${(fn) => setStage(s.id, fn)} onMove=${(d) => moveStage(i, d)} onRemove=${() => removeStage(s.id)} />`)}
     </section>
   </aside>`;
+}
+
+// One click to look at the raw stock prices: dollars, nominal, nothing indexed to the CPI.
+export function RawPreset({ plan, setPlan, indexKey }) {
+  const on = plan.currency === "USD" && !plan.real && !plan[indexKey] && plan.tax_basis === "nominal";
+  const apply = () => setPlan((p) => ({ ...p, currency: "USD", real: false, [indexKey]: false, tax_basis: "nominal" }));
+  return html`<div class="preset">
+    <button type="button" class=${"chip" + (on ? " on" : "")} onClick=${apply} disabled=${on}>מחיר המניה בלבד</button>
+    <span class="muted">${on ? "פעיל: דולרים, נומינלי, בלי הצמדה ובלי מדד. רק תנועת המחירים." : "דולרים, נומינלי, בלי הצמדה למדד: רק תנועת המחירים, בלי שער דולר ובלי אינפלציה."}</span>
+  </div>`;
 }
 
 export function TaxSection({ plan, set }) {
@@ -105,18 +126,39 @@ export function PeriodSection({ plan, set, range, rangeError, totalMonths }) {
         : html`<p class="callout muted">בודק את טווח הנתונים...</p>`}
     <div class="grid-2">
       <${Field} label="התחלה מוקדמת ביותר">
-        <input type="date" value=${plan.min_start || ""} min=${range?.min_start} max=${range?.max_start}
-          onChange=${(e) => set("min_start")(e.currentTarget.value || null)} />
+        <${DatePicker} value=${plan.min_start} min=${range?.min_start} max=${plan.max_start || range?.max_start}
+          onChange=${set("min_start")} label="התחלה מוקדמת ביותר" placeholder=${range ? dateHe(range.min_start) : "ללא הגבלה"} />
       </${Field}>
       <${Field} label="התחלה מאוחרת ביותר">
-        <input type="date" value=${plan.max_start || ""} min=${range?.min_start} max=${range?.max_start}
-          onChange=${(e) => set("max_start")(e.currentTarget.value || null)} />
+        <${DatePicker} value=${plan.max_start} min=${plan.min_start || range?.min_start} max=${range?.max_start}
+          onChange=${set("max_start")} label="התחלה מאוחרת ביותר" placeholder=${range ? dateHe(range.max_start) : "ללא הגבלה"} />
       </${Field}>
     </div>
+    ${range ? html`<${DateRangeSlider} range=${range} plan=${plan} set=${set} />` : null}
     <${Segmented} label="מרווח בין תאריכי התחלה" options=${[{ value: "D", label: "יום" }, { value: "W", label: "שבוע" }, { value: "M", label: "חודש" }]}
       value=${plan.step} onChange=${set("step")}
       hint="כל תאריך התחלה הוא ריאליזציה אחת. יום נותן הכי הרבה דגימות, אבל הן חופפות מאוד זו לזו." />
   </details>`;
+}
+
+// Two-handle slider over the whole available history: a fast way to pick the start-date window.
+const DAY = 86400000;
+const toMs = (s) => Date.parse(s + "T00:00:00Z");
+const toIso = (ms) => new Date(Math.round(ms / DAY) * DAY).toISOString().slice(0, 10);
+function DateRangeSlider({ range, plan, set }) {
+  const lo = toMs(range.min_start), hi = toMs(range.max_start);
+  if (!(hi > lo)) return null;
+  const a = plan.min_start ? Math.max(lo, toMs(plan.min_start)) : lo;
+  const b = plan.max_start ? Math.min(hi, toMs(plan.max_start)) : hi;
+  const steps = Math.max(10, Math.min(2000, Math.round((hi - lo) / DAY)));
+  const onChange = ([x, y]) => {
+    const na = toIso(x), nb = toIso(y);
+    set("min_start")(na <= range.min_start ? null : na);
+    set("max_start")(nb >= range.max_start ? null : nb);
+  };
+  return html`<div class="date-slider">
+    <${DualRange} min=${lo} max=${hi} a=${a} b=${b} onChange=${onChange} steps=${steps} format=${(v) => dateHe(toIso(v))} />
+  </div>`;
 }
 
 // Stage header (number, name, move/remove) and the holdings table are shared by both tabs.
@@ -138,12 +180,14 @@ export function HoldingsTable({ stage, onChange }) {
   const addHolding = () => onChange((s) => ({ ...s, holdings: [...s.holdings, { ticker: "", weight: 0, leverage: 1 }] }));
   const removeHolding = (j) => onChange((s) => ({ ...s, holdings: s.holdings.filter((_, k) => k !== j) }));
   const totalWeight = stage.holdings.reduce((a, h) => a + (Number(h.weight) || 0), 0);
+  const setSymbol = (j, { ticker, name }) => onChange((s) => ({
+    ...s, holdings: s.holdings.map((h, k) => (k === j ? { ...h, ticker, name } : h)),
+  }));
   return html`<table class="holdings">
-      <thead><tr><th>נכס (טיקר) <${Hint} text="כל טיקר של Yahoo Finance. המחירים כוללים דיבידנדים, חוץ ממדדים שמתחילים ב-^ (למשל ^GSPC). למדד S&P 500 עם דיבידנדים השתמש ב-^SP500TR או SPY." /></th><th>משקל</th><th>מינוף</th><th></th></tr></thead>
+      <thead><tr><th>נכס: שם או טיקר <${Hint} text="הקלד שם (למשל S&P 500, אפל, נאסדק) ובחר מהרשימה, או הקלד טיקר של Yahoo Finance ישירות; השדה השני מתמלא לבד. המחירים כוללים דיבידנדים, חוץ ממדדים שמתחילים ב-^ (למשל ^GSPC). למדד S&P 500 עם דיבידנדים השתמש ב-^SP500TR או SPY." /></th><th>משקל</th><th>מינוף</th><th></th></tr></thead>
       <tbody>
         ${stage.holdings.map((h, j) => html`<tr key=${j}>
-          <td><input list="tickers" dir="ltr" value=${h.ticker} placeholder="SPY" aria-label="טיקר"
-            onChange=${(e) => setHolding(j, "ticker", e.currentTarget.value.trim().toUpperCase())} /></td>
+          <td><${SymbolPicker} ticker=${h.ticker} name=${h.name || ""} onChange=${(v) => setSymbol(j, v)} /></td>
           <td><${NumberInput} value=${h.weight} onChange=${(v) => setHolding(j, "weight", v)} step=${5} max=${100} suffix="%" /></td>
           <td><${NumberInput} value=${h.leverage} onChange=${(v) => setHolding(j, "leverage", v)} step=${0.5} max=${10} suffix="×" /></td>
           <td><${IconButton} title="הסר נכס" danger disabled=${stage.holdings.length === 1}
@@ -159,11 +203,7 @@ export function HoldingsTable({ stage, onChange }) {
     </div>`;
 }
 
-export function TickerList({ favorites }) {
-  return html`<datalist id="tickers">
-    ${favorites.flatMap((g) => g.items).map((i) => html`<option value=${i.ticker}>${i.label}</option>`)}
-  </datalist>`;
-}
+export function TickerList() { return null; }   // the symbol picker searches the server instead
 
 function StageCard({ stage, index, count, sym, currency, solveMonthly, onChange, onMove, onRemove }) {
   const set = (key) => (value) => onChange((s) => ({ ...s, [key]: value }));

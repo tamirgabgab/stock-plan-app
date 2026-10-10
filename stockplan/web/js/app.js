@@ -1,6 +1,6 @@
 // App shell: state, persistence, API calls and layout.
 import { html, render, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
-import { InputsPanel, newId, newStage } from "./inputs.js";
+import { InputsPanel, newId, newStage, toPayload } from "./inputs.js";
 import { MathPage } from "./math.js";
 import { ACCUMULATION_LABELS, Results } from "./results.js";
 import { columnStats, decodeMatrix } from "./stats.js";
@@ -9,6 +9,8 @@ import { DEFAULT_HEAT, DEFAULT_TPLAN, TrinityInputs, TrinityResults, newWithdraw
 const STORAGE_KEY = "stockplan.plan.v1";
 const TSTORAGE_KEY = "stockplan.trinity.v1";
 const THEME_KEY = "stockplan.theme";
+const PANEL_KEY = "stockplan.panelWidth";
+const PANEL_MIN = 300, PANEL_MAX = 760, PANEL_DEFAULT = 400;
 
 const DEFAULT_PLAN = {
   solve_for: "final",
@@ -52,15 +54,6 @@ function initialView() {
 }
 
 const withIds = (p) => ({ ...p, stages: p.stages.map((s) => ({ ...s, id: s.id || newId() })) });
-
-function toPayload(plan) {
-  return {
-    ...plan,
-    stages: plan.stages.map(({ id, ...s }) => ({
-      ...s, holdings: s.holdings.filter((h) => h.ticker && h.weight > 0),
-    })),
-  };
-}
 
 async function postJSON(url, body, signal) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
@@ -141,7 +134,11 @@ function App() {
   const [auto, setAuto] = useState(true);
   const [theme, setTheme] = useState(() => { try { return localStorage.getItem(THEME_KEY) || "auto"; } catch { return "auto"; } });
   const [themeKey, setThemeKey] = useState(0);
-  const [view, setView] = useState(initialView);
+  const [view, setViewRaw] = useState(initialView);
+  const prevView = useRef(initialView() === "trinity" ? "trinity" : "plan");   // which tab the math page explains first
+  const setView = (v) => { if (v !== "math") prevView.current = v; setViewRaw(v); };
+  const [panelW, setPanelW] = useState(() => { try { return Number(localStorage.getItem(PANEL_KEY)) || PANEL_DEFAULT; } catch { return PANEL_DEFAULT; } });
+  useEffect(() => { try { localStorage.setItem(PANEL_KEY, String(panelW)); } catch { /* ignore */ } }, [panelW]);
   const [heat, setHeat] = useState(DEFAULT_HEAT);
   const acc = usePlanRunner({ storageKey: STORAGE_KEY, hashKey: "plan", defaults: DEFAULT_PLAN, api: "/api",
                               prepare: prepareResult, auto, enabled: view !== "trinity" });
@@ -201,14 +198,16 @@ function App() {
       </div>
     </header>
     ${meta.demo ? html`<div class="demo-banner">מצב הדגמה: הנתונים סינתטיים ואינם היסטוריה אמיתית. להרצה עם נתונים אמיתיים הפעל <code dir="ltr">python run.py</code> בלי <code dir="ltr">--demo</code>.</div>` : null}
-    <main class="layout">
+    <main class="layout" style=${`--panel-w:${panelW}px`}>
       ${view === "trinity"
         ? html`<${TrinityInputs} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} />`
         : html`<${InputsPanel} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} />`}
+      <${PanelResizer} width=${panelW} setWidth=${setPanelW} />
       <div class=${"main" + (busy ? " is-busy" : "")}>
         ${error ? html`<div class="callout error" role="alert">${error}</div>` : null}
         ${busy ? html`<div class="busy" role="status"><span class="spinner"></span>מחשב...</div>` : null}
-        ${view === "math" ? html`<${MathPage} plan=${acc.plan} res=${acc.res} tplan=${tri.plan} tres=${tri.res} />`
+        ${view === "math" ? html`<${MathPage} plan=${acc.plan} res=${acc.res} tplan=${tri.plan} tres=${tri.res}
+                                      initial=${prevView.current === "trinity" ? "withdrawals" : "deposits"} />`
           : view === "trinity"
             ? (res ? html`<${TrinityResults} key=${res.id} res=${res} ui=${ui} setUi=${setUi} themeKey=${themeKey}
                         plan=${plan} setPlan=${setPlan} payload=${toPayload(plan)} heat=${heat} setHeat=${setHeat} />`
@@ -219,6 +218,29 @@ function App() {
     </main>
     <footer class="foot muted">לצורכי מחקר ולימוד בלבד. אין לראות בכך ייעוץ השקעות.
       ${meta.version ? html` · גרסה <span dir="ltr">${meta.version}</span>` : null}</footer>`;
+}
+
+// Drag handle between the settings panel and the results (double-click resets the width).
+function PanelResizer({ width, setWidth }) {
+  const onDown = (e) => {
+    e.preventDefault();
+    const startX = e.clientX, startW = width;
+    const rtl = getComputedStyle(document.documentElement).direction === "rtl";
+    document.body.classList.add("resizing");
+    const move = (ev) => {
+      const dx = (ev.clientX - startX) * (rtl ? -1 : 1);
+      setWidth(Math.max(PANEL_MIN, Math.min(PANEL_MAX, startW + dx)));
+    };
+    const up = () => {
+      document.body.classList.remove("resizing");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  return html`<div class="resizer" role="separator" aria-orientation="vertical" aria-label="שינוי רוחב הפאנל"
+    title="גרור כדי לשנות את רוחב הפאנל. לחיצה כפולה מאפסת." onPointerDown=${onDown} onDblClick=${() => setWidth(PANEL_DEFAULT)}></div>`;
 }
 
 function AutoRun({ auto, setAuto, busy, onRun }) {

@@ -99,3 +99,54 @@ def irr_annual(deposits: np.ndarray, final: np.ndarray) -> np.ndarray:
     out[total <= 0] = np.nan
     out[final <= 0] = -100.0
     return out
+
+
+def trace_illinois(f: Callable[[float], float], target: float, guess: float) -> dict:
+    """Scalar version of ``solve_monotone`` that records every step, for the math tab.
+
+    Returns ``{"steps": [{"x", "y", "phase"}], "x": solution, "converged": bool}`` where
+    ``phase`` is "start", "expand", "secant" or "bisect" and ``y`` is f(x) (not f - target).
+    """
+    tol = max(abs(target) * 1e-7, 1e-4)
+    steps = []
+
+    def ev(x, phase):
+        y = f(x)
+        steps.append({"x": float(x), "y": float(y), "phase": phase})
+        return y - target
+
+    lo, f_lo = 0.0, ev(0.0, "start")
+    if f_lo >= 0:
+        return {"steps": steps, "x": 0.0, "converged": True}
+    hi = float(max(guess, 1.0))
+    f_hi = ev(hi, "expand")
+    n = 0
+    while f_hi < 0 and n < MAX_EXPAND:
+        lo, f_lo = hi, f_hi
+        hi *= 4.0
+        f_hi = ev(hi, "expand")
+        n += 1
+    if f_hi < 0:
+        return {"steps": steps, "x": None, "converged": False}
+    side = 0
+    for _ in range(MAX_ITER):
+        xm = hi - f_hi * (hi - lo) / (f_hi - f_lo)
+        phase = "secant"
+        if not (lo < xm < hi) or not np.isfinite(xm):
+            xm, phase = 0.5 * (lo + hi), "bisect"
+        fm = ev(xm, phase)
+        if abs(fm) <= tol:
+            return {"steps": steps, "x": float(xm), "converged": True}
+        if fm > 0:
+            hi, f_hi = xm, fm
+            if side == 1:
+                f_lo *= 0.5
+            side = 1
+        else:
+            lo, f_lo = xm, fm
+            if side == -1:
+                f_hi *= 0.5
+            side = -1
+        if hi - lo <= 1e-9 * max(hi, 1.0):
+            return {"steps": steps, "x": float(0.5 * (lo + hi)), "converged": True}
+    return {"steps": steps, "x": float(0.5 * (lo + hi)), "converged": False}

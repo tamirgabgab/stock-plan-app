@@ -1,8 +1,11 @@
 // "Math" tab: the model behind every number in the app, as text plus LaTeX (KaTeX), with the
 // general equations next to a version that plugs in the current plan and its results.
-import { html, useEffect, useRef } from "../vendor/preact-htm.module.js";
-import { dateHe, money, monthsLabel, pct } from "./format.js";
+import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
+import { solverFigure, PLOT_CONFIG } from "./charts.js";
+import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
+import { toPayload } from "./inputs.js";
 import { summarize } from "./stats.js";
+import { Segmented } from "./ui.js";
 
 const S = String.raw;
 
@@ -23,7 +26,21 @@ const n = (v, digits = 0) => (Number.isFinite(v)
   ? v.toLocaleString("en-US", { maximumFractionDigits: digits }).replace(/,/g, "{,}") : "?");
 const fr = (v, digits = 4) => (Number.isFinite(v) ? v.toFixed(digits) : "?");
 
-export function MathPage({ plan, res, tplan, tres }) {
+export function MathPage({ plan, res, tplan, tres, initial }) {
+  const [sub, setSub] = useState(initial || "deposits");
+  return html`<div class="math" dir="rtl">
+    <div class="subtabs" role="tablist" aria-label="נושא">
+      <button type="button" role="tab" aria-selected=${sub === "deposits"} class=${sub === "deposits" ? "on" : ""} onClick=${() => setSub("deposits")}>הפקדות (צבירה)</button>
+      <button type="button" role="tab" aria-selected=${sub === "withdrawals"} class=${sub === "withdrawals" ? "on" : ""} onClick=${() => setSub("withdrawals")}>משיכות (טריניטי)</button>
+    </div>
+    ${sub === "deposits"
+      ? html`<${DepositsMath} plan=${plan} res=${res} />`
+      : html`<${WithdrawSection} tplan=${tplan} tres=${tres} />
+             <${SolverSection} plan=${tplan} api="/api/trinity/solve_trace" kind="withdrawals" />`}
+  </div>`;
+}
+
+function DepositsMath({ plan, res }) {
   const cur = plan.currency === "ILS" ? "שקל" : "דולר";
   const months = plan.stages.reduce((a, s) => a + (Number(s.months) || 0), 0);
   const tau = (Number(plan.tax_rate) || 0) / 100;
@@ -43,7 +60,7 @@ export function MathPage({ plan, res, tplan, tres }) {
   const sections = [
     ["data", "נתוני השוק והסימונים"], ["deposits", "ההפקדות"], ["recursion", "משוואת ההפרשים של השווי"],
     ["tax", "עלות, רווח ומס"], ["solve", "הנעלם: מה פותרים ואיך"], ["stats", "הסטטיסטיקה על הריאליזציות"],
-    ["withdraw", "משיכות (טריניטי)"],
+    ["solver", "האלגוריתם למשוואה סתומה"],
   ];
   const stageRows = plan.stages.map((s, k) => html`<tr>
     <th>שלב ${k + 1}${s.name ? ` (${s.name})` : ""}</th>
@@ -53,7 +70,7 @@ export function MathPage({ plan, res, tplan, tres }) {
     <td>${s.holdings.filter((h) => h.ticker).map((h) => html`<span dir="ltr" class="nowrap">${h.ticker} ${Number(h.weight)}%${Number(h.leverage) !== 1 ? ` ×${h.leverage}` : ""}</span> `)}</td>
   </tr>`);
 
-  return html`<div class="math" dir="rtl">
+  return html`<div class="math">
     <section class="card">
       <h2>איך האפליקציה מחשבת את מה שהיא מציגה</h2>
       <p>כל גרף בלשונית "צבירה" נובע מאותו מודל: לכל תאריך התחלה בהיסטוריה (ריאליזציה) מריצים את התוכנית על המחירים האמיתיים
@@ -189,11 +206,7 @@ export function MathPage({ plan, res, tplan, tres }) {
       <p>כשמעבר בין שלבים הוא אירוע מס, המס במעבר תלוי ב-${T(S`\max`)} על רווח שתלוי בעצמו ב-${T(S`M`)}, ומגן המס תלוי בסימן של הרווח. ${T(S`N_T(M)`)} עדיין רציף,
         עולה וליניארי למקוטעין, אבל עם כמה נקודות שבירה שלא ידועות מראש, ולכן המשוואה סתומה:</p>
       ${D(S`N_T(x) = F^\star`)}
-      <p>האפליקציה פותרת אותה נומרית, לכל הריאליזציות בבת אחת (וקטורית), בשיטת המיקום השגוי בגרסת Illinois: מרחיבים את הגבול העליון ${T(S`x_{\mathrm{hi}} \leftarrow 4x_{\mathrm{hi}}`)}
-        עד ש-${T(S`N_T(x_{\mathrm{hi}}) \ge F^\star`)}, ואז בכל צעד לוקחים את נקודת החיתוך של המיתר עם ${T(S`F^\star`)}:</p>
-      ${D(S`x_{\mathrm{new}} = x_{\mathrm{hi}} - \big(N_T(x_{\mathrm{hi}}) - F^\star\big)\,\frac{x_{\mathrm{hi}} - x_{\mathrm{lo}}}{N_T(x_{\mathrm{hi}}) - N_T(x_{\mathrm{lo}})}`)}
-      <p>ומחליפים את הקצה שבאותו צד. אם אותו קצה נשאר פעמיים ברציפות, הערך שלו מוכפל ב-½ (התיקון של Illinois), מה שמונע את ההתכנסות האיטית של מיקום שגוי רגיל.
-        הסבילות היא ${T(S`10^{-7}\,F^\star`)}, ובפועל נדרשות פחות מעשר סימולציות. מכיוון שהפונקציה ליניארית למקוטעין, השיטה מגיעה לפתרון המדויק, ולא לקירוב.</p>
+      <p>האפליקציה פותרת אותה נומרית, לכל הריאליזציות בבת אחת, בשיטת המיקום השגוי בגרסת Illinois. האלגוריתם מוסבר בפירוט, עם גרף חי, בסעיף 7 למטה.</p>
       <p class=${"note " + (closedForm ? "ok" : "warn")}>${plan.solve_for === "final"
         ? "במצב הנוכחי אין נעלם, ולכן הסולבר לא רץ בכלל."
         : closedForm
@@ -229,7 +242,7 @@ export function MathPage({ plan, res, tplan, tres }) {
       <p>"ירידת התיק" היא עם ${T(S`Y = U`)} (האסטרטגיה עצמה), ו"ירידת החשבון" עם ${T(S`Y = N`)} (השווי נטו, כולל ההפקדות שממשיכות להיכנס ולכן מרככות אותה). ההיסטוגרמה שלהן מציגה את ההתפלגות של ${T(S`\mathrm{DD}_r`)} על פני הריאליזציות.</p>
     </section>
 
-    ${tplan ? html`<${WithdrawSection} tplan=${tplan} tres=${tres} />` : null}
+    <${SolverSection} plan=${plan} api="/api/solve_trace" kind="deposits" />
   </div>`;
 }
 
@@ -287,5 +300,117 @@ function WithdrawSection({ tplan, tres }) {
       <tr><th>הצמדה</th><td colspan="2">${tplan.index_withdrawals ? "המשיכות צמודות למדד" : "המשיכות נומינליות קבועות"}, ${tplan.real ? "הצגה ריאלית בכסף של היום" : "הצגה נומינלית"}</td></tr>
       ${raw ? html`<tr><th>תוצאות</th><td class="num">${T(S`n = ${n(raw.n)}`)}</td><td>הצלחה ב-${okCount.toLocaleString("he-IL")} תקופות (${(100 * okCount / raw.n).toFixed(1)}%); יתרה סופית חציונית ${m(fin?.median)}${sol ? html`; ${tplan.solve_for === "rate" ? "אחוז משיכה חציוני" : "סכום התחלתי חציוני"} <span dir="ltr">${tplan.solve_for === "rate" ? sol.median.toFixed(2) + "%" : m(sol.median)}</span>` : ""}</td></tr>` : null}
     </tbody></table>
+  </section>`;
+}
+
+
+// ------------------------------------------------------------------ the solver
+
+const PHASE_HE = {
+  start: "נקודת ההתחלה: בודקים x = 0",
+  expand: "הרחבת הגבול העליון (פי 4) עד שהפונקציה חוצה את היעד",
+  secant: "חיתוך המיתר עם קו היעד (מיקום שגוי)",
+  bisect: "חצייה: המיתר יצא מהקטע, לוקחים את האמצע",
+};
+
+function SolverSection({ plan, api, kind }) {
+  const ref = useRef(null);
+  const hasUnknown = plan.solve_for !== "final";
+  const choices = kind === "deposits"
+    ? [{ value: "monthly_deposit", label: "הפקדה חודשית" }, { value: "start_amount", label: "סכום התחלתי" }]
+    : [{ value: "rate", label: "אחוז משיכה" }, { value: "start_amount", label: "סכום התחלתי" }];
+  const [demoSolve, setDemoSolve] = useState(choices[0].value);
+  const solveFor = hasUnknown ? plan.solve_for : demoSolve;
+  const payload = useMemo(() => ({ ...toPayload(plan), solve_for: solveFor,
+    target_amount: plan.target_amount > 0 ? plan.target_amount : (kind === "deposits" ? 1_000_000 : 0) }), [plan, solveFor]);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState(0);
+  const key = JSON.stringify(payload);
+  useEffect(() => {
+    const c = new AbortController();
+    const id = setTimeout(async () => {
+      setBusy(true); setError(null);
+      try {
+        const r = await fetch(api, { method: "POST", headers: { "Content-Type": "application/json" }, body: key, signal: c.signal });
+        const d = await r.json();
+        if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : `שגיאה ${r.status}`);
+        setData(d); setStep(d.steps.length - 1);
+      } catch (e) { if (e.name !== "AbortError") setError(e.message); }
+      finally { setBusy(false); }
+    }, 500);
+    return () => { clearTimeout(id); c.abort(); };
+  }, [key]);
+  const isRate = solveFor === "rate";
+  const sym = CURRENCY_SYMBOL[plan.currency];
+  const xLabel = { monthly_deposit: "הפקדה חודשית", start_amount: "סכום התחלתי", rate: "אחוז משיכה שנתי" }[solveFor];
+  const yLabel = kind === "deposits" ? "סכום סופי נטו" : "יתרה סופית פחות משיכות שלא שולמו";
+  useEffect(() => {
+    if (!ref.current || !data) return;
+    const fig = solverFigure({ gridX: data.grid_x, gridY: data.grid_y, target: data.target, steps: data.steps, upto: step,
+      xLabel, yPrefix: sym, ySuffix: "", xSuffix: isRate ? "%" : "" });
+    window.Plotly.react(ref.current, fig.data, fig.layout, PLOT_CONFIG);
+  }, [data, step]);
+  useEffect(() => () => { if (ref.current) window.Plotly.purge(ref.current); }, []);
+  const fx = (v) => (isRate ? `${v.toFixed(4)}%` : money(v, plan.currency));
+  const cur = data ? data.steps[step] : null;
+
+  return html`<section class="card" id="solver">
+    <h2>‏${kind === "deposits" ? "7" : "8"}. האלגוריתם למשוואה סתומה</h2>
+    <p>כשאי אפשר לבודד את הנעלם, מחפשים את ${T(S`x`)} שעבורו ${T(S`\Phi(x) = F^\star`)}. שני דברים ידועים על ${T(S`\Phi`)} ומנחים את כל האלגוריתם:
+      היא <b>מונוטונית</b> (${kind === "deposits" ? "עולה בהפקדה ובסכום ההתחלתי" : "יורדת באחוז המשיכה, עולה בסכום ההתחלתי"}), ולכן יש לכל היותר פתרון אחד,
+      והיא <b>ליניארית למקוטעין</b>, כי כל ההפקדות, המשיכות והמסים הם צירופים ליניאריים עם כמה נקודות ${T(S`\max`)}. לכן לא צריך נגזרות (ניוטון) ולא צריך לנחש:
+      מספיק לכלוא את הפתרון בקטע ולהצר אותו.</p>
+    <h3>שלב א: כליאה (bracketing)</h3>
+    <p>מתחילים ב-${T(S`x_{\mathrm{lo}} = 0`)}. אם כבר שם ${T(S`\Phi(0) \ge F^\star`)} (למשל היעד מושג בלי הפקדות), התשובה היא 0 ומסיימים.
+      אחרת לוקחים ניחוש ${T(S`x_{\mathrm{hi}}`)} (מנוסחת ריבית דריבית של 7% בצבירה, 4% במשיכות) ומכפילים אותו ב-4 שוב ושוב עד ש-${T(S`\Phi(x_{\mathrm{hi}})`)}
+      נמצא בצד השני של היעד. בסוף השלב ${T(S`\Phi(x_{\mathrm{lo}}) - F^\star`)} ו-${T(S`\Phi(x_{\mathrm{hi}}) - F^\star`)} בסימנים הפוכים, ולכן הפתרון בין ${T(S`x_{\mathrm{lo}}`)} ל-${T(S`x_{\mathrm{hi}}`)}.</p>
+    <h3>שלב ב: מיקום שגוי (regula falsi)</h3>
+    <p>במקום לחצות את הקטע באמצע, מותחים מיתר בין שתי הנקודות ולוקחים את החיתוך שלו עם קו היעד. על פונקציה ליניארית זה נותן את הפתרון המדויק בצעד אחד,
+      ועל פונקציה ליניארית למקוטעין בכמה צעדים בודדים:</p>
+    ${D(S`x_{\mathrm{new}} = x_{\mathrm{hi}} - \big(\Phi(x_{\mathrm{hi}}) - F^\star\big)\,\frac{x_{\mathrm{hi}} - x_{\mathrm{lo}}}{\Phi(x_{\mathrm{hi}}) - \Phi(x_{\mathrm{lo}})}`)}
+    <p>מחשבים ${T(S`\Phi(x_{\mathrm{new}})`)} ומחליפים את הקצה שנמצא באותו צד של היעד. אם המיתר יוצא מהקטע (אפשרי בגלל עיגול), נופלים לאמצע הקטע (חצייה).</p>
+    <h3>שלב ג: התיקון של Illinois</h3>
+    <p>למיקום שגוי רגיל יש חולשה: כשהפונקציה קמורה, אותו קצה נתקע במקום וההתכנסות הופכת ליניארית ואיטית. התיקון: אם אותו קצה נשאר פעמיים ברציפות,
+      מכפילים את ערך הפונקציה בקצה התקוע ב-½ (רק לצורך חישוב המיתר), מה שמטה את המיתר לכיוון הנכון ומאלץ את הקצה התקוע לזוז. כך מובטחת התכנסות סופר-ליניארית.</p>
+    <h3>עצירה</h3>
+    <p>מסיימים כש-${T(S`|\Phi(x) - F^\star| \le 10^{-7} F^\star`)} (או ${T(S`10^{-4}`)} כשהיעד 0), או כשהקטע התכווץ לרוחב יחסי של ${T(S`10^{-9}`)}. בכל צעד מריצים את הסימולציה
+      של סעיף 3 פעם אחת, לכל הריאליזציות שעדיין לא הסתיימו בבת אחת (וקטורית), ובפועל נדרשים 5 עד 10 צעדים.</p>
+    <pre>solve(Φ, F*):
+    lo ← 0;  if Φ(lo) ≥ F*: return 0
+    hi ← guess
+    while Φ(hi) ${"<"} F*:  lo ← hi;  hi ← 4·hi            # bracket
+    side ← 0
+    repeat:
+        x ← hi − (Φ(hi) − F*)·(hi − lo) / (Φ(hi) − Φ(lo))   # secant with the target line
+        if x ∉ (lo, hi): x ← (lo + hi) / 2               # bisection fallback
+        if |Φ(x) − F*| ≤ tol: return x
+        if Φ(x) > F*:  hi ← x;  if side = +1: Φ(lo) ← Φ(lo)/2;  side ← +1     # Illinois
+        else:          lo ← x;  if side = −1: Φ(hi) ← Φ(hi)/2;  side ← −1
+        if hi − lo ≤ 1e−9·hi: return (lo + hi) / 2</pre>
+    <p>ה-IRR (סעיף 6) נפתר בחצייה פשוטה על הריבית החודשית, 70 צעדים קבועים, כי שם הפונקציה חלקה והתחום ידוע מראש ${T(S`[-0.9999, 1]`)}; שבעים חציות מביאות את הדיוק ל-${T(S`2^{-70}`)}.</p>
+
+    <h3>הסולבר בפעולה על התוכנית הנוכחית</h3>
+    <p class="muted">${hasUnknown ? "הריאליזציה שמוצגת היא זו שהפתרון שלה הוא החציון." : "התוכנית במצב 'סכום סופי', אז אין נעלם; לצורך ההדגמה נפתור כאן:"}</p>
+    ${!hasUnknown ? html`<${Segmented} small options=${choices} value=${demoSolve} onChange=${setDemoSolve} />` : null}
+    ${error ? html`<p class="note warn">${error}</p>` : null}
+    ${data ? html`
+      <p>ריאליזציה שמתחילה ב-${dateHe(data.start_date)}, יעד ${T(S`F^\star = ${n(data.target)}`)}. הפתרון: <b dir="ltr">${data.x === null ? "—" : fx(data.x)}</b>
+        אחרי ${data.steps.length} הערכות של הפונקציה${data.converged ? "" : " (לא התכנס)"}. החציון על פני כל ${data.n.toLocaleString("he-IL")} הריאליזציות: <span dir="ltr">${fx(data.solved_median)}</span>.</p>
+      <div class="time-slider">
+        <div class="time-slider-label">צעד <b>${step}</b> מתוך ${data.steps.length - 1}: ${PHASE_HE[cur.phase]}.
+          ‏<span dir="ltr">x = ${fx(cur.x)}</span>, ‏<span dir="ltr">Φ(x) = ${money(cur.y, plan.currency)}</span>
+          ${" "}(${step === data.steps.length - 1 && data.converged ? "בתוך הסבילות: זה הפתרון"
+                 : cur.y >= data.target ? "מעל היעד, הופך לגבול העליון" : "מתחת ליעד, הופך לגבול התחתון"})</div>
+        <input type="range" dir="ltr" min="0" max=${data.steps.length - 1} value=${step} aria-label="צעד"
+          onInput=${(e) => setStep(Number(e.currentTarget.value))} />
+      </div>` : busy ? html`<p class="muted">מחשב...</p>` : null}
+    <div ref=${ref} class="plot plot-solver"></div>
+    ${data ? html`<details><summary class="muted">טבלת הצעדים</summary>
+      <table class="vals solver-steps"><thead><tr><th>#</th><th>שלב</th><th>x</th><th>Φ(x)</th><th>לעומת היעד</th></tr></thead>
+      <tbody>${data.steps.map((st, i) => html`<tr class=${i === step ? "cur" : ""}><td>${i}</td><td>${PHASE_HE[st.phase]}</td>
+        <td class="num">${fx(st.x)}</td><td class="num">${money(st.y, plan.currency)}</td>
+        <td class="num">${money(st.y - data.target, plan.currency)}</td></tr>`)}</tbody></table></details>` : null}
   </section>`;
 }

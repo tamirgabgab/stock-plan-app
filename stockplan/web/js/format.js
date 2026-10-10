@@ -8,6 +8,7 @@ const nf2 = new Intl.NumberFormat("he-IL", { maximumFractionDigits: 2, minimumFr
 export function money(v, currency, { compact = false } = {}) {
   if (v === null || v === undefined || !Number.isFinite(v)) return "—";
   const sym = CURRENCY_SYMBOL[currency] || "";
+  if (Math.abs(v) < 0.005) v = 0;              // no "-0"
   const sign = v < 0 ? "-" : "";
   const a = Math.abs(v);
   if (compact) {

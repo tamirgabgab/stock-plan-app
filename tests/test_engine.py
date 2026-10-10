@@ -284,3 +284,13 @@ def test_nominal_shekels_start_after_stabilization_plan():
     assert real.start_dates[0] < pd.Timestamp("1981-01-01")
     usd = run_plan(PlanRequest(stages=stages, currency="USD"), data)
     assert usd.start_dates[0] < pd.Timestamp("1981-01-01")
+
+
+def test_trace_illinois_matches_the_vectorized_solver():
+    from stockplan.engine.solve import solve_monotone, trace_illinois
+    f = lambda x: 3 * x - 20 + 0.1 * max(x - 5, 0)          # increasing, piecewise linear
+    tr = trace_illinois(f, 50.0, 4.0)
+    vec = solve_monotone(lambda x, rows: 3 * x - 20 + 0.1 * np.maximum(x - 5, 0), 50.0, 1, 4.0)
+    assert tr["converged"] and tr["x"] == pytest.approx(vec[0], rel=1e-6)
+    assert [s["phase"] for s in tr["steps"][:2]] == ["start", "expand"]
+    assert trace_illinois(f, -100.0, 4.0)["x"] == 0.0        # target already reached at 0

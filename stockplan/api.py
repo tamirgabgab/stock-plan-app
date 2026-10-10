@@ -17,8 +17,9 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .config import FAVORITES
 from .data import DataError, get_market_data
+from .data.search import lookup, search
 from .engine import (Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range, run_plan,
-                     run_trinity, trinity_heatmap)
+                     run_trinity, solve_trace, trinity_heatmap)
 
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -149,6 +150,34 @@ def meta():
         "favorites": [{"group": g, "items": [{"label": l, "ticker": t} for l, t in items]}
                       for g, items in FAVORITES.items()],
     }
+
+
+@app.get("/api/search")
+def search_symbols(q: str = "", limit: int = 8):
+    """Name/alias/symbol search: built-in dictionary, then Yahoo (skipped in demo mode)."""
+    return {"results": search(q, limit=max(1, min(limit, 20)), online=not get_market_data().is_demo)}
+
+
+@app.get("/api/lookup")
+def lookup_symbol(ticker: str = ""):
+    return {"ticker": ticker.strip().upper(), "name": lookup(ticker, online=not get_market_data().is_demo)}
+
+
+def _trace(req):
+    try:
+        return solve_trace(req, get_market_data())
+    except (DataError, ValueError) as exc:
+        raise _bad_request(exc)
+
+
+@app.post("/api/solve_trace")
+def plan_solve_trace(plan: PlanIn):
+    return _trace(plan.to_request())
+
+
+@app.post("/api/trinity/solve_trace")
+def trinity_solve_trace(plan: TrinityIn):
+    return _trace(plan.to_request())
 
 
 @app.post("/api/range")

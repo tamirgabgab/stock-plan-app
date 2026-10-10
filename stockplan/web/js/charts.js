@@ -210,3 +210,33 @@ export function heatmapFigure({ rates, years, survival, preservation, kind, curr
   });
   return { data, layout };
 }
+
+// The solver's function on one realization plus the steps taken so far (math tab).
+export function solverFigure({ gridX, gridY, target, steps, upto, xLabel, yPrefix, ySuffix, xSuffix }) {
+  const t = theme();
+  const shown = steps.slice(0, upto + 1);
+  const colors = { start: t.muted, expand: t.orange, secant: t.blue, violet: t.violet, bisect: t.violet };
+  const data = [
+    { x: gridX, y: gridY, mode: "lines", line: { width: 2, color: t.text2 }, name: "הפונקציה", hoverinfo: "skip" },
+    { x: shown.map((s) => s.x), y: shown.map((s) => s.y), mode: "markers+text", name: "צעדי הסולבר",
+      text: shown.map((_, i) => String(i)), textposition: "top center", textfont: { size: 10, color: t.text2 },
+      marker: { size: shown.map((_, i) => (i === shown.length - 1 ? 13 : 8)), color: shown.map((s) => colors[s.phase] || t.blue),
+                line: { width: 1, color: t.surface } },
+      hovertemplate: `%{text}: x=%{x:,.4f}${xSuffix}<br>y=${yPrefix}%{y:,.0f}${ySuffix}<extra></extra>` },
+  ];
+  // The secant through the current bracket (the last two points of opposite sign, if any).
+  const last = shown[shown.length - 1];
+  const opp = [...shown].reverse().find((s) => Math.sign(s.y - target) !== Math.sign(last.y - target));
+  if (last && opp && last.phase !== "start") {
+    data.push({ x: [opp.x, last.x], y: [opp.y, last.y], mode: "lines", line: { width: 1, color: t.violet, dash: "dot" },
+                name: "המיתר", hoverinfo: "skip" });
+  }
+  const shapes = [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: target, y1: target, line: { color: t.orange, width: 1.5, dash: "dash" } }];
+  const layout = baseLayout(t, {
+    shapes, hovermode: "closest", dragmode: false,
+    margin: { l: 64, r: 16, t: 8, b: 44 },
+    xaxis: axis(t, { title: { text: xLabel }, ticksuffix: xSuffix, fixedrange: true, rangemode: "tozero" }),
+    yaxis: axis(t, { tickprefix: yPrefix, ticksuffix: ySuffix, tickformat: "~s", fixedrange: true }),
+  });
+  return { data, layout };
+}

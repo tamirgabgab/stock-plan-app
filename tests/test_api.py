@@ -73,3 +73,25 @@ def test_ui_files_are_revalidated():
     r = client.get("/js/app.js")
     assert r.headers["cache-control"] == "no-cache"
     assert client.get("/api/meta").json()["version"]
+
+
+def test_search_and_lookup_use_the_builtin_dictionary():
+    r = client.get("/api/search", params={"q": "nasdaq"}).json()["results"]
+    assert r and r[0]["ticker"] in ("^NDX", "^IXIC", "QQQ")
+    assert client.get("/api/search", params={"q": "אפל"}).json()["results"][0]["ticker"] == "AAPL"
+    assert client.get("/api/search", params={"q": "spy"}).json()["results"][0]["ticker"] == "SPY"
+    assert client.get("/api/lookup", params={"ticker": "^gspc"}).json()["name"] == "S&P 500"
+    assert client.get("/api/lookup", params={"ticker": "ZZZZ9"}).json()["name"] is None
+
+
+def test_solve_trace_reaches_the_target():
+    body = client.post("/api/solve_trace", json={**PLAN, "solve_for": "monthly_deposit", "target_amount": 500_000}).json()
+    assert body["converged"] and body["x"] > 0
+    assert body["steps"][0]["phase"] == "start"
+    assert abs(body["steps"][-1]["y"] - 500_000) < 1
+    assert len(body["grid_x"]) == 60
+    tri = {"stages": [{"months": 240, "rate": 4, "holdings": [{"ticker": "SPY", "weight": 100}]}],
+           "start_amount": 1_000_000, "solve_for": "rate", "step": "M"}
+    body = client.post("/api/trinity/solve_trace", json=tri).json()
+    assert body["converged"] and 0 < body["x"] < 100
+    assert client.post("/api/solve_trace", json=PLAN).status_code == 400     # nothing to solve

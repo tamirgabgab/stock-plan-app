@@ -49,10 +49,15 @@ the UI — it is not real market history).
   pro-rata sale with the tax grossed up. Solve for the final balance, the maximum
   withdrawal rate or the minimum starting amount. Success-rate heat map (withdrawal
   rate × horizon, survival or capital preservation), click a cell to load it.
+- **Pleasant to use** – resizable settings panel, calendar date picker plus a
+  timeline range slider for the test window, a name ↔ ticker picker (built-in
+  dictionary with Hebrew aliases, Yahoo search for the rest), a one-click
+  "raw stock price" preset (USD, nominal, no CPI).
 - **Math tab** – every computation explained in text and LaTeX (KaTeX, offline): the
   difference equation of the portfolio, deposits, tax, the closed-form solution for the
   missing parameter where one exists and the numerical solver where it does not, plus
-  the same equations with the current plan's numbers plugged in.
+  the same equations with the current plan's numbers plugged in, and a live chart
+  of the Illinois solver's steps on the current plan.
 
 ## Data sources
 

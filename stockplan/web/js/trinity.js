@@ -3,7 +3,7 @@
 import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
 import { heatmapFigure, PLOT_CONFIG } from "./charts.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
-import { HoldingsTable, PeriodSection, StageHead, TaxSection, TickerList, newId } from "./inputs.js";
+import { HoldingsTable, PeriodSection, RawPreset, StageHead, TaxSection, TickerList, newId } from "./inputs.js";
 import { CrossSection, FanChart, OutcomeByStart, RealizationsTable, SOLVED_SOURCE, Tile, VALUE_SOURCE,
          dateColumns, solvedLabel, useActive } from "./results.js";
 import { columnStats, decodeMatrix, summarize } from "./stats.js";
@@ -19,7 +19,7 @@ export function newWithdrawStage(n) {
   return {
     id: newId(), name: `שלב ${n}`, months: 360, rate: 4, amount: 4000, rate_unit: "pct", basis: "initial",
     floor: 0, ceiling: 0, guard_unit: "pct", one_time: 0, one_time_unit: "money",
-    holdings: [{ ticker: "^SP500TR", weight: 100, leverage: 1 }],
+    holdings: [{ ticker: "^SP500TR", name: "S&P 500 Total Return", weight: 100, leverage: 1 }],
   };
 }
 
@@ -90,6 +90,7 @@ export function TrinityInputs({ plan, setPlan, range, rangeError, favorites }) {
       </div>
       <${Toggle} label="הצמדת המשיכות למדד" checked=${plan.index_withdrawals} onChange=${set("index_withdrawals")}
         hint="דלוק (כמו במחקר טריניטי): המשיכה הקבועה שומרת על כוח הקנייה שלה וגדלה עם האינפלציה. כבוי: הסכום הנומינלי קבוע." />
+      <${RawPreset} plan=${plan} setPlan=${setPlan} indexKey="index_withdrawals" />
     </details>
     <${TaxSection} plan=${plan} set=${set} />
     <${PeriodSection} plan=${plan} set=${set} range=${range} rangeError=${rangeError} totalMonths=${totalMonths} />

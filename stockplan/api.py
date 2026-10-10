@@ -17,7 +17,8 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .config import FAVORITES
 from .data import DataError, get_market_data
-from .engine import Holding, PlanRequest, Stage, available_range, run_plan
+from .engine import (Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range, run_plan,
+                     run_trinity, trinity_heatmap)
 
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -61,6 +62,55 @@ class PlanIn(BaseModel):
                         holdings=[Holding(h.ticker, h.weight, h.leverage) for h in s.holdings])
                   for s in self.stages]
         return PlanRequest(stages=stages, **self.model_dump(exclude={"stages"}))
+
+
+class WithdrawStageIn(BaseModel):
+    name: str = ""
+    months: int = Field(ge=1, le=1200)
+    rate: float = Field(4.0, ge=0, le=1200)
+    amount: float = Field(0.0, ge=0)
+    rate_unit: Literal["pct", "money"] = "pct"
+    basis: Literal["initial", "current"] = "initial"
+    floor: float = Field(0.0, ge=0)
+    ceiling: float = Field(0.0, ge=0)
+    guard_unit: Literal["pct", "money"] = "pct"
+    one_time: float = Field(0.0, ge=0)
+    one_time_unit: Literal["money", "pct"] = "money"
+    holdings: List[HoldingIn] = Field(min_length=1)
+
+
+class TrinityIn(BaseModel):
+    stages: List[WithdrawStageIn] = Field(min_length=1)
+    start_amount: float = Field(1_000_000.0, ge=0)
+    target_amount: float = Field(0.0, ge=0)
+    solve_for: Literal["final", "rate", "start_amount"] = "final"
+    currency: Literal["USD", "ILS"] = "USD"
+    real: bool = False
+    index_withdrawals: bool = True
+    tax_rate: float = Field(25.0, ge=0, lt=100)
+    tax_basis: Literal["nominal", "real"] = "nominal"
+    tax_on_switch: bool = False
+    annual_fee: float = Field(0.0, ge=0, le=20)
+    leverage_cost: float = Field(0.0, ge=0, le=30)
+    min_start: Optional[date] = None
+    max_start: Optional[date] = None
+    step: Literal["D", "W", "M"] = "M"
+
+    def to_request(self) -> WithdrawRequest:
+        stages = [WithdrawStage(holdings=[Holding(h.ticker, h.weight, h.leverage) for h in s.holdings],
+                                **s.model_dump(exclude={"holdings"}))
+                  for s in self.stages]
+        return WithdrawRequest(stages=stages, **self.model_dump(exclude={"stages"}))
+
+
+class HeatmapIn(BaseModel):
+    plan: TrinityIn
+    rate_from: float = Field(2.0, ge=0, le=100)
+    rate_to: float = Field(8.0, ge=0, le=100)
+    rate_step: float = Field(0.25, gt=0, le=50)
+    years_from: int = Field(10, ge=1, le=100)
+    years_to: int = Field(40, ge=1, le=100)
+    years_step: int = Field(5, ge=1, le=50)
 
 
 def _floats(a) -> list:
@@ -144,5 +194,65 @@ def simulate(plan: PlanIn):
         "demo": get_market_data().is_demo,
     }
 
+
+
+
+# ------------------------------------------------------------------ withdrawal (Trinity)
+
+@app.post("/api/trinity/range")
+def trinity_range(plan: TrinityIn):
+    try:
+        req = plan.to_request()
+        rng = available_range(req, get_market_data())
+    except (DataError, ValueError) as exc:
+        raise _bad_request(exc)
+    return {**rng, "total_months": req.total_months}
+
+
+@app.post("/api/trinity/simulate")
+def trinity_simulate(plan: TrinityIn):
+    req = plan.to_request()
+    try:
+        res = run_trinity(req, get_market_data())
+    except (DataError, ValueError) as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        log.exception("withdrawal simulation failed")
+        raise HTTPException(status_code=500, detail=f"שגיאה פנימית: {exc}")
+    R, T1 = res.paths.shape
+    if R * T1 > MAX_CELLS:
+        raise HTTPException(status_code=400,
+                            detail=f"יותר מדי נקודות ({R:,} תקופות × {T1:,} חודשים). בחר דגימה גסה יותר")
+    return {
+        "months": res.months,
+        "n": R,
+        "start_dates": [d.strftime("%Y-%m-%d") for d in res.start_dates],
+        "end_dates": [d.strftime("%Y-%m-%d") for d in res.end_dates],
+        "final": _floats(res.final),
+        "withdrawn_total": _floats(res.withdrawn_total),
+        "min_balance": _floats(res.min_balance),
+        "depleted_at": [None if v < 0 else int(v) for v in res.depleted_at],
+        "success": [bool(v) for v in res.success],
+        "solved": None if res.solved is None else _floats(res.solved),
+        "paths": _matrix_b64(res.paths),
+        "withdrawals_path": _matrix_b64(res.withdrawals_path),
+        "warnings": res.warnings,
+        "demo": get_market_data().is_demo,
+    }
+
+
+@app.post("/api/trinity/heatmap")
+def trinity_heat(body: HeatmapIn):
+    rates = np.arange(body.rate_from, body.rate_to + 1e-9, body.rate_step)
+    years = list(range(body.years_from, body.years_to + 1, body.years_step))
+    if len(rates) * len(years) > 1500:
+        raise HTTPException(status_code=400, detail="מפת החום גדולה מדי (עד 1,500 תאים)")
+    try:
+        return trinity_heatmap(body.plan.to_request(), get_market_data(), rates, years)
+    except (DataError, ValueError) as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        log.exception("heat map failed")
+        raise HTTPException(status_code=500, detail=f"שגיאה פנימית: {exc}")
 
 app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")

@@ -12,9 +12,8 @@ deferred to the end) or as a taxable sale of the holdings that shrink.
 Real mode: amounts entered by the user (deposits, target) are in today's money, i.e. the
 CPI of the last data month; see ``deposit_scale``.
 
-Tax: realized losses build a shield that offsets later gains. With ``tax_basis="real"``
-the cost basis is CPI-indexed; an inflationary gain is not taxed and cannot create a
-deductible loss (only a nominal loss can), as in Israeli capital-gains rules.
+The holdings and the tax state live in ``portfolio.Book`` (shared with the withdrawal
+simulator); see there for the tax model.
 """
 from __future__ import annotations
 
@@ -24,6 +23,7 @@ from typing import Optional
 import numpy as np
 
 from .market import Market
+from .portfolio import Book
 from .models import PlanRequest, SOLVE_MONTHLY, SOLVE_START
 
 
@@ -67,38 +67,10 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
 
     cpi = market.cpi_daily[idx] if market.cpi_daily is not None else None
     ones = np.ones(R)
-
-    V = np.zeros((R, A))       # market value per asset
-    Bn = np.zeros((R, A))      # nominal cost basis
-    Bc = np.zeros((R, A))      # sum of (amount / CPI at purchase): indexed basis = Bc * CPI_now
-    shield = np.zeros(R)       # accumulated realized losses
+    book = Book(R, A, rate, real_tax)
 
     paths = np.empty((R, T + 1)) if record else None
     deposits = np.zeros((R, T + 1)) if record else None
-
-    def gains(cpi_now):
-        if not real_tax:
-            return V - Bn
-        indexed = Bc * cpi_now[:, None]
-        return np.where(V >= indexed, V - indexed, -np.maximum(Bn - V, 0.0))
-
-    def tax_on(G):
-        nonlocal shield
-        taxable = np.maximum(G - shield, 0.0)
-        shield = np.where(G > 0, np.maximum(shield - G, 0.0), shield - G)
-        return rate * taxable
-
-    def liquidation_value(cpi_now):
-        G = gains(cpi_now).sum(axis=1)
-        return V.sum(axis=1) - rate * np.maximum(G - shield, 0.0)
-
-    def buy(amount, w, cpi_now):
-        nonlocal V, Bn, Bc
-        add = amount[:, None] * w
-        V += add
-        Bn += add
-        if real_tax:
-            Bc += add / cpi_now[:, None]
 
     def deposit_scale(m):
         """Nominal value of one input unit deposited at month m.
@@ -127,29 +99,7 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
         cpi0 = cpi[:, m0] if cpi is not None else None
 
         if s > 0:
-            V_tot = V.sum(axis=1)
-            target = V_tot[:, None] * w
-            if req.tax_on_switch and not unit_growth:
-                sell = np.maximum(V - target, 0.0)
-                frac = np.divide(sell, V, out=np.zeros_like(V), where=V > 0)
-                G = (gains(cpi0) * frac).sum(axis=1)
-                tax = tax_on(G)
-                V -= sell
-                Bn *= 1 - frac
-                Bc *= 1 - frac
-                cash = sell.sum(axis=1) - tax
-                deficit = np.maximum(target - V, 0.0)
-                dsum = deficit.sum(axis=1)
-                scale = np.divide(cash, dsum, out=np.zeros(R), where=dsum > 0)
-                add = deficit * scale[:, None]
-                V += add
-                Bn += add
-                if real_tax:
-                    Bc += add / cpi0[:, None]
-            else:
-                V = target
-                Bn = Bn.sum(axis=1)[:, None] * w
-                Bc = Bc.sum(axis=1)[:, None] * w
+            book.reallocate(w, cpi0, taxable=req.tax_on_switch and not unit_growth)
 
         if unit_growth:
             monthly = 0.0 * ones
@@ -167,18 +117,22 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
             amount = monthly + (initial if j == 0 else 0.0)
             if cpi is not None and not unit_growth:
                 amount = amount * deposit_scale(m)
-            buy(amount, w, cpi_m)
+            book.buy(amount, w, cpi_m)
             if record:
                 deposits[:, m] = amount
-                paths[:, m] = liquidation_value(cpi_m) if not unit_growth else V.sum(axis=1)
+                paths[:, m] = book.liquidation_value(cpi_m) if not unit_growth else book.total
 
-            p_now = market.prices[:, idx[:, m]].T          # (R, A)
-            p_next = market.prices[:, idx[:, m + 1]].T
-            growth = np.divide(p_next, p_now, out=np.zeros_like(p_now), where=p_now > 0)
-            V *= growth * fee
+            book.grow(month_growth(market, idx, m), fee)
 
     cpi_T = cpi[:, T] if cpi is not None else None
-    final = V.sum(axis=1) if unit_growth else liquidation_value(cpi_T)
+    final = book.total if unit_growth else book.liquidation_value(cpi_T)
     if record:
         paths[:, T] = final
     return SimOutput(final_net=final, paths_net=paths, deposits=deposits, cpi=cpi)
+
+
+def month_growth(market: Market, idx: np.ndarray, m: int) -> np.ndarray:
+    """(R, A) price growth factor of every asset from month m to m+1."""
+    p_now = market.prices[:, idx[:, m]].T
+    p_next = market.prices[:, idx[:, m + 1]].T
+    return np.divide(p_next, p_now, out=np.zeros_like(p_now), where=p_now > 0)

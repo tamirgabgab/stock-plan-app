@@ -188,11 +188,12 @@ input:disabled { background: var(--surface-2); }
   font-size: 12px; line-height: 1.4; white-space: normal; box-shadow: var(--shadow);
 }
 
-.segmented { display: flex; background: var(--surface-2); border-radius: 9px; padding: 3px; gap: 2px; }
+.segmented { display: flex; flex-wrap: wrap; background: var(--surface-2); border-radius: 9px; padding: 3px; gap: 2px; }
 .segmented button {
   flex: 1; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px;
-  padding: 5px 8px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+  padding: 5px 8px; border-radius: 7px; cursor: pointer; white-space: nowrap; min-width: 0;
 }
+@media (max-width: 640px) { .segmented button { white-space: normal; } }
 .segmented button.on { background: var(--surface-1); color: var(--text-primary); font-weight: 500; box-shadow: var(--shadow); }
 .segmented.small button { font-size: 12px; padding: 3px 8px; flex: 0 0 auto; }
 
@@ -256,6 +257,7 @@ table.holdings td:nth-child(4) { width: 30px; }
 .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; box-shadow: var(--shadow); }
 .tile-label { font-size: 12px; color: var(--text-secondary); }
 .tile-value { font-size: 22px; font-weight: 700; text-align: end; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.tile-value.text { font-size: 17px; line-height: 1.3; }
 .tile-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); min-width: 0; }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
@@ -399,3 +401,10 @@ table.data tbody tr.pinned { box-shadow: inset -3px 0 0 var(--series-7); }
 .math .toc { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .math .toc a { font-size: 12px; color: var(--accent); text-decoration: none; background: var(--surface-2); padding: 3px 9px; border-radius: 99px; }
 .math .toc a:hover { text-decoration: underline; }
+
+/* ---------------------------------------------------------------- trinity */
+.plot-heat { height: 420px; }
+.guard { border: 1px dashed var(--border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.busy.static { position: static; }
+.muted.small { font-size: 11px; margin-top: 4px; }
+.mini input[type="number"] { width: 64px; }

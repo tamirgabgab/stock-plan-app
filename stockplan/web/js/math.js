@@ -23,7 +23,7 @@ const n = (v, digits = 0) => (Number.isFinite(v)
   ? v.toLocaleString("en-US", { maximumFractionDigits: digits }).replace(/,/g, "{,}") : "?");
 const fr = (v, digits = 4) => (Number.isFinite(v) ? v.toFixed(digits) : "?");
 
-export function MathPage({ plan, res }) {
+export function MathPage({ plan, res, tplan, tres }) {
   const cur = plan.currency === "ILS" ? "שקל" : "דולר";
   const months = plan.stages.reduce((a, s) => a + (Number(s.months) || 0), 0);
   const tau = (Number(plan.tax_rate) || 0) / 100;
@@ -43,6 +43,7 @@ export function MathPage({ plan, res }) {
   const sections = [
     ["data", "נתוני השוק והסימונים"], ["deposits", "ההפקדות"], ["recursion", "משוואת ההפרשים של השווי"],
     ["tax", "עלות, רווח ומס"], ["solve", "הנעלם: מה פותרים ואיך"], ["stats", "הסטטיסטיקה על הריאליזציות"],
+    ["withdraw", "משיכות (טריניטי)"],
   ];
   const stageRows = plan.stages.map((s, k) => html`<tr>
     <th>שלב ${k + 1}${s.name ? ` (${s.name})` : ""}</th>
@@ -227,5 +228,64 @@ export function MathPage({ plan, res }) {
       ${D(S`\mathrm{DD} = \min_{m}\Big(\frac{Y_m}{\max_{k \le m} Y_k} - 1\Big)`)}
       <p>"ירידת התיק" היא עם ${T(S`Y = U`)} (האסטרטגיה עצמה), ו"ירידת החשבון" עם ${T(S`Y = N`)} (השווי נטו, כולל ההפקדות שממשיכות להיכנס ולכן מרככות אותה). ההיסטוגרמה שלהן מציגה את ההתפלגות של ${T(S`\mathrm{DD}_r`)} על פני הריאליזציות.</p>
     </section>
+
+    ${tplan ? html`<${WithdrawSection} tplan=${tplan} tres=${tres} />` : null}
   </div>`;
+}
+
+
+// ------------------------------------------------------------------ withdrawals (Trinity)
+
+function WithdrawSection({ tplan, tres }) {
+  const cur = tplan.currency === "ILS" ? "שקל" : "דולר";
+  const months = tplan.stages.reduce((a, s) => a + (Number(s.months) || 0), 0);
+  const tau = (Number(tplan.tax_rate) || 0) / 100;
+  const st = tplan.stages[0];
+  const raw = tres ? tres.raw : null;
+  const stale = tres && tres.plan !== tplan;
+  const m = (v) => money(v, tplan.currency);
+  const fin = raw ? summarize(raw.final) : null;
+  const sol = raw && raw.solved ? summarize(raw.solved) : null;
+  const okCount = raw ? raw.success.filter(Boolean).length : 0;
+  const sigma = tplan.real ? (tplan.index_withdrawals ? S`C_m / C^\star` : S`C_0 / C^\star`)
+                           : (tplan.index_withdrawals ? S`C_m / C_0` : "1");
+  return html`<section class="card" id="withdraw">
+    <h2>‏7. משיכות (לשונית טריניטי)</h2>
+    <p>אותה רשת, אותם מחירים ואותו מודל מס כמו בצבירה, רק שהכסף יוצא במקום להיכנס. התיק מתחיל מהסכום ההתחלתי ${T(S`S_0`)}
+      (בחודש 0, לפי משקלי השלב הראשון), ובכל חודש מוכרים חלק ממנו כדי לשלם את המשיכה. הסדר בכל חודש: מעבר שלב אם יש, משיכה חד-פעמית אם השלב מתחיל,
+      המשיכה החודשית, רישום היתרה, ואז צמיחה לחודש הבא.</p>
+    ${stale ? html`<p class="note warn">ההגדרות של לשונית הטריניטי השתנו מאז החישוב האחרון; המספרים כאן מתייחסים לחישוב הקודם.</p>` : null}
+    <h3>המשיכה המבוקשת</h3>
+    <p>המקדם ${T(S`\sigma_m`)} הוא אותו מקדם מסעיף 2 (כאן ${T(S`\sigma_m = ${sigma}`)}), והוא מתרגם סכום ביחידות הקלט לשקלים נומינליים של חודש ${T(S`m`)}.
+      המשיכה נטו שרוצים בחודש ${T(S`m`)} של שלב ${T(S`k`)} עם אחוז שנתי ${T(S`\rho_k`)}:</p>
+    ${D(S`W_m = \begin{cases} \sigma_m\,\dfrac{\rho_k}{1200}\,S_0 & \text{fixed: percent of the start amount} \\[10pt] \sigma_m\,A_k & \text{fixed: amount per month} \\[6pt] \operatorname{clip}\!\Big(\dfrac{\rho_k}{1200}\,V_m,\;\sigma_m L_k,\;\sigma_m U_k\Big) & \text{percent of the current balance, with floor } L_k \text{ and ceiling } U_k \end{cases}`)}
+    <p>ועוד ${T(S`\sigma_m O_k`)} או ${T(S`o_k V_m / 100`)} בחודש הראשון של השלב (משיכה חד-פעמית בכסף או באחוז מהיתרה). משיכה צמודה היא פשוט ${T(S`\sigma_m`)} שעוקב אחרי המדד: ${T(S`W_m`)} שומר על כוח הקנייה שלו.</p>
+    <h3>המכירה והמס</h3>
+    <p>כדי לקבל ${T(S`W_m`)} ביד מוכרים חלק ${T(S`f`)} מכל נכס באופן יחסי. התמורה היא ${T(S`f V_m`)}, הרווח הממומש ${T(S`f G_m`)} (עם ${T(S`G_m`)} מסעיף 4), והמס
+      ${T(S`\tau\max(fG_m - H_m, 0)`)}. דורשים שהנטו יהיה בדיוק המשיכה:</p>
+    ${D(S`f V_m - \tau\max\!\big(fG_m - H_m,\,0\big) = W_m \quad\Longrightarrow\quad f = \begin{cases} \dfrac{W_m}{V_m} & \dfrac{W_m}{V_m}\,G_m \le H_m \\[12pt] \dfrac{W_m - \tau H_m}{V_m - \tau G_m} & \text{otherwise} \end{cases}`)}
+    <p>כלומר מוכרים יותר מהמשיכה (gross-up) בדיוק בגובה המס. אם ${T(S`f`)} יוצא מעל 1 מוכרים הכול, המשיכה משולמת חלקית, והחודש הזה נרשם כחודש שבו הכסף נגמר.
+      מגן המס מתעדכן בכל מכירה כמו בסעיף 4. בתוכנית הנוכחית ${T(S`\tau = ${fr(tau, 3)}`)}${tau === 0 ? ", כלומר אין gross-up" : ""}.</p>
+    <h3>משוואת ההפרשים</h3>
+    ${D(S`V_{i,m+1} = \big(1 - f_m\big)\,V_{i,m}\; g_{i,m}\,\varphi, \qquad V_{i,0} = w_{1,i}\,\sigma_0 S_0`)}
+    <p>בניגוד לצבירה, כאן ${T(S`f_m`)} תלוי ביתרה ולכן הפתרון הוא מכפלה ולא סכום. במשיכה קבועה בלי מס הכול עדיין ליניארי ב-${T(S`S_0`)} וב-${T(S`\rho`)}:
+      ${T(S`V_T = S_0\,\Gamma_0 - \sum_m W_m\,\Gamma_m`)} עם אותם ${T(S`\Gamma_m`)} מסעיף 3, ולכן "אחוז המשיכה המקסימלי" הוא פשוט ${T(S`\rho = 1200\,(S_0\Gamma_0 - F^\star)\big/\big(S_0\sum_m \sigma_m\Gamma_m\big)`)}, כל עוד הכסף לא נגמר באמצע.
+      עם מס, מגן מס, או אחוז מהיתרה, המשוואה סתומה ונפתרת באותה שיטת Illinois.</p>
+    <h3>הנעלם וההצלחה</h3>
+    <p>כדי שהסולבר יעבוד גם אחרי שהתיק מתרוקן (שם היתרה הסופית קבועה על 0 ולא מבחינה בין אחוזים), פותרים על</p>
+    ${D(S`\Phi(x) = N_T(x) - \sum_m \big(W_m - \text{paid}_m\big) = F^\star`)}
+    <p>כלומר היתרה הסופית פחות המשיכות שלא שולמו. ${T(S`\Phi`)} יורד ממש באחוז המשיכה ועולה ממש בסכום ההתחלתי, ולכן הפתרון יחיד.
+      ריאליזציה "מצליחה" כשכל המשיכות שולמו במלואן ובסוף ${T(S`N_T \ge F^\star`)}. אחוז ההצלחה הוא החלק היחסי של הריאליזציות המצליחות,
+      ומפת החום מחשבת אותו לכל צמד (אחוז, משך) עם שלב אחד, כשהתיק של השלב הראשון, בסימולציה וקטורית אחת לכל משך (הריאליזציות משוכפלות פעם לכל אחוז).
+      "שמירה על הקרן" מחליפה את ${T(S`F^\star`)} בסכום ההתחלתי ${T(S`S_0`)} ביחידות ההצגה.</p>
+    <h3>עם המספרים של התוכנית הנוכחית</h3>
+    <table class="vals"><tbody>
+      <tr><th>סכום התחלתי</th><td colspan="2">${tplan.solve_for === "start_amount" ? html`${T(S`S_0`)} הוא הנעלם` : html`${T(S`S_0 = ${n(tplan.start_amount)}`)} ${cur}`}</td></tr>
+      <tr><th>יעד (יתרה מינימלית בסוף)</th><td colspan="2">${T(S`F^\star = ${n(tplan.target_amount)}`)} ${cur}</td></tr>
+      <tr><th>משך</th><td colspan="2">${T(S`T = ${months}`)} חודשים (${monthsLabel(months)}), ${tplan.stages.length} ${tplan.stages.length > 1 ? "שלבים" : "שלב"}</td></tr>
+      <tr><th>שלב 1</th><td colspan="2">${tplan.solve_for === "rate" ? html`${T(S`\rho_1 = \rho`)} (הנעלם)` : st.rate_unit === "money" ? html`${T(S`A_1 = ${n(st.amount)}`)} ${cur} לחודש` : html`${T(S`\rho_1 = ${st.rate}\%`)} ${st.basis === "current" ? "מהיתרה הנוכחית" : "מהסכום ההתחלתי"}`}${st.basis === "current" && (st.floor > 0 || st.ceiling > 0) ? html`, ${T(S`L_1 = ${n(st.floor, 2)},\; U_1 = ${st.ceiling > 0 ? n(st.ceiling, 2) : "\infty"}`)} (${st.guard_unit === "pct" ? "% לשנה מההתחלתי" : cur + " לחודש"})` : ""}${st.one_time > 0 ? html`, חד-פעמי ${st.one_time_unit === "pct" ? T(S`o_1 = ${st.one_time}\%`) : html`${T(S`O_1 = ${n(st.one_time)}`)} ${cur}`}` : ""}</td></tr>
+      <tr><th>הצמדה</th><td colspan="2">${tplan.index_withdrawals ? "המשיכות צמודות למדד" : "המשיכות נומינליות קבועות"}, ${tplan.real ? "הצגה ריאלית בכסף של היום" : "הצגה נומינלית"}</td></tr>
+      ${raw ? html`<tr><th>תוצאות</th><td class="num">${T(S`n = ${n(raw.n)}`)}</td><td>הצלחה ב-${okCount.toLocaleString("he-IL")} תקופות (${(100 * okCount / raw.n).toFixed(1)}%); יתרה סופית חציונית ${m(fin?.median)}${sol ? html`; ${tplan.solve_for === "rate" ? "אחוז משיכה חציוני" : "סכום התחלתי חציוני"} <span dir="ltr">${tplan.solve_for === "rate" ? sol.median.toFixed(2) + "%" : m(sol.median)}</span>` : ""}</td></tr>` : null}
+    </tbody></table>
+  </section>`;
 }

@@ -2,10 +2,12 @@
 import { html, render, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
 import { InputsPanel, newId, newStage } from "./inputs.js";
 import { MathPage } from "./math.js";
-import { Results } from "./results.js";
+import { ACCUMULATION_LABELS, Results } from "./results.js";
 import { columnStats, decodeMatrix } from "./stats.js";
+import { DEFAULT_HEAT, DEFAULT_TPLAN, TrinityInputs, TrinityResults, newWithdrawStage, prepareTrinityResult } from "./trinity.js";
 
 const STORAGE_KEY = "stockplan.plan.v1";
+const TSTORAGE_KEY = "stockplan.trinity.v1";
 const THEME_KEY = "stockplan.theme";
 
 const DEFAULT_PLAN = {
@@ -29,18 +31,24 @@ const DEFAULT_PLAN = {
 const DEFAULT_UI = { p1: 10, p2: 90, showDeposits: true, showTarget: true, logY: false, timeIdx: null,
                      bins: 50, histSource: "solved", showReps: false };
 
-function loadPlan() {
+function loadPlan(hashKey, storageKey, defaults) {
   try {
-    if (location.hash.startsWith("#plan=")) {
-      const json = decodeURIComponent(escape(atob(location.hash.slice(6))));
-      return withIds({ ...DEFAULT_PLAN, ...JSON.parse(json) });
+    if (location.hash.startsWith(`#${hashKey}=`)) {
+      const json = decodeURIComponent(escape(atob(location.hash.slice(hashKey.length + 2))));
+      return withIds({ ...defaults, ...JSON.parse(json) });
     }
   } catch (e) { console.warn("bad share link", e); }
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) return withIds({ ...DEFAULT_PLAN, ...JSON.parse(saved) });
+    const saved = localStorage.getItem(storageKey);
+    if (saved) return withIds({ ...defaults, ...JSON.parse(saved) });
   } catch (e) { /* storage unavailable */ }
-  return DEFAULT_PLAN;
+  return defaults;
+}
+
+function initialView() {
+  if (location.hash === "#math") return "math";
+  if (location.hash.startsWith("#trinity")) return "trinity";
+  return "plan";
 }
 
 const withIds = (p) => ({ ...p, stages: p.stages.map((s) => ({ ...s, id: s.id || newId() })) });
@@ -72,29 +80,77 @@ function prepareResult(raw, plan) {
   const deps = decodeMatrix(raw.deposits_path, raw.n, T1);
   const cs = columnStats(paths);
   const depMean = Array.from(columnStats(deps).mean);
-  return { raw, plan, paths, deps, cs, depMean, n: raw.n, T: raw.months, id: Math.random() };
+  return { raw, plan, paths, deps, cs, depMean, n: raw.n, T: raw.months, id: Math.random(), labels: ACCUMULATION_LABELS };
 }
 
-function App() {
-  const [plan, setPlan] = useState(loadPlan);
-  const [meta, setMeta] = useState({ favorites: [], demo: false });
+// One plan + its results, for the accumulation and the Trinity tabs alike.
+function usePlanRunner({ storageKey, hashKey, defaults, api, prepare, auto, enabled }) {
+  const [plan, setPlan] = useState(() => loadPlan(hashKey, storageKey, defaults));
   const [range, setRange] = useState(null);
   const [rangeError, setRangeError] = useState(null);
   const [res, setRes] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [auto, setAuto] = useState(true);
   const [ui, setUi] = useState(DEFAULT_UI);
-  const [theme, setTheme] = useState(() => { try { return localStorage.getItem(THEME_KEY) || "auto"; } catch { return "auto"; } });
-  const [themeKey, setThemeKey] = useState(0);
-  const [view, setView] = useState(() => (location.hash === "#math" ? "math" : "plan"));
   const ctrl = useRef(null);
-
-  useEffect(() => { fetch("/api/meta").then((r) => r.json()).then(setMeta).catch(() => {}); }, []);
+  const ran = useRef(null);   // the plan object the last run was started for
 
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(plan)); } catch { /* ignore */ }
+    try { localStorage.setItem(storageKey, JSON.stringify(plan)); } catch { /* ignore */ }
   }, [plan]);
+
+  const run = async (p = plan) => {
+    ctrl.current?.abort();
+    const c = new AbortController();
+    ctrl.current = c;
+    ran.current = p;
+    setBusy(true);
+    setError(null);
+    const payload = toPayload(p);
+    try {
+      try {
+        setRange(await postJSON(`${api}/range`, payload, c.signal));
+        setRangeError(null);
+      } catch (e) {
+        if (e.name === "AbortError") return;
+        setRangeError(e.message);
+        throw e;
+      }
+      const raw = await postJSON(`${api}/simulate`, payload, c.signal);
+      setRes(prepare(raw, p));
+      setUi((u) => ({ ...u, timeIdx: null }));
+    } catch (e) {
+      if (e.name !== "AbortError") setError(e.message);
+    } finally {
+      if (ctrl.current === c) setBusy(false);
+    }
+  };
+
+  // Auto-run on changes, but only while the tab is visible; a tab opened later runs then.
+  useEffect(() => {
+    if (!auto || !enabled || ran.current === plan) return;
+    const id = setTimeout(() => run(plan), 700);
+    return () => clearTimeout(id);
+  }, [plan, auto, enabled]);
+
+  return { plan, setPlan, range, rangeError, res, error, busy, ui, setUi, run };
+}
+
+function App() {
+  const [meta, setMeta] = useState({ favorites: [], demo: false });
+  const [auto, setAuto] = useState(true);
+  const [theme, setTheme] = useState(() => { try { return localStorage.getItem(THEME_KEY) || "auto"; } catch { return "auto"; } });
+  const [themeKey, setThemeKey] = useState(0);
+  const [view, setView] = useState(initialView);
+  const [heat, setHeat] = useState(DEFAULT_HEAT);
+  const acc = usePlanRunner({ storageKey: STORAGE_KEY, hashKey: "plan", defaults: DEFAULT_PLAN, api: "/api",
+                              prepare: prepareResult, auto, enabled: view !== "trinity" });
+  const tri = usePlanRunner({ storageKey: TSTORAGE_KEY, hashKey: "trinity", defaults: DEFAULT_TPLAN, api: "/api/trinity",
+                              prepare: prepareTrinityResult, auto, enabled: view === "trinity" });
+  const cur = view === "trinity" ? tri : acc;
+  const { plan, setPlan, range, rangeError, res, error, busy, ui, setUi, run } = cur;
+
+  useEffect(() => { fetch("/api/meta").then((r) => r.json()).then(setMeta).catch(() => {}); }, []);
 
   useEffect(() => {
     if (theme === "auto") document.documentElement.removeAttribute("data-theme");
@@ -109,46 +165,18 @@ function App() {
     return () => mq.removeEventListener("change", on);
   }, []);
 
-  const run = async (p = plan) => {
-    ctrl.current?.abort();
-    const c = new AbortController();
-    ctrl.current = c;
-    setBusy(true);
-    setError(null);
-    const payload = toPayload(p);
-    try {
-      try {
-        setRange(await postJSON("/api/range", payload, c.signal));
-        setRangeError(null);
-      } catch (e) {
-        if (e.name === "AbortError") return;
-        setRangeError(e.message);
-        throw e;
-      }
-      const raw = await postJSON("/api/simulate", payload, c.signal);
-      setRes(prepareResult(raw, p));
-      setUi((u) => ({ ...u, timeIdx: null }));
-    } catch (e) {
-      if (e.name !== "AbortError") setError(e.message);
-    } finally {
-      if (ctrl.current === c) setBusy(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!auto) return;
-    const id = setTimeout(() => run(plan), 700);
-    return () => clearTimeout(id);
-  }, [plan, auto]);
-
   const share = async () => {
     const { id, ...rest } = plan;
     const enc = btoa(unescape(encodeURIComponent(JSON.stringify(toPayload(rest)))));
-    const url = `${location.origin}${location.pathname}#plan=${enc}`;
+    const url = `${location.origin}${location.pathname}#${view === "trinity" ? "trinity" : "plan"}=${enc}`;
     history.replaceState(null, "", url);
     try { await navigator.clipboard.writeText(url); alert("הקישור הועתק"); } catch { prompt("העתק את הקישור:", url); }
   };
-  const reset = () => { if (confirm("לאפס את כל ההגדרות?")) { setPlan({ ...DEFAULT_PLAN, stages: [newStage(1)] }); } };
+  const reset = () => {
+    if (!confirm("לאפס את כל ההגדרות של הלשונית הזו?")) return;
+    if (view === "trinity") setPlan({ ...DEFAULT_TPLAN, stages: [newWithdrawStage(1)] });
+    else setPlan({ ...DEFAULT_PLAN, stages: [newStage(1)] });
+  };
   const nextTheme = { auto: "light", light: "dark", dark: "auto" }[theme];
   const themeLabel = { auto: "ערכת צבע: אוטומטית", light: "ערכת צבע: בהירה", dark: "ערכת צבע: כהה" }[theme];
 
@@ -159,9 +187,10 @@ function App() {
       <nav class="tabs" aria-label="מצבים">
         <button class=${"tab" + (view === "plan" ? " on" : "")} aria-current=${view === "plan" ? "page" : null}
           onClick=${() => setView("plan")}>צבירה</button>
+        <button class=${"tab" + (view === "trinity" ? " on" : "")} aria-current=${view === "trinity" ? "page" : null}
+          onClick=${() => setView("trinity")}>טריניטי (משיכות)</button>
         <button class=${"tab" + (view === "math" ? " on" : "")} aria-current=${view === "math" ? "page" : null}
           onClick=${() => setView("math")}>הסבר מתמטי</button>
-        <button class="tab" disabled title="יגיע בסבב הבא">טריניטי (בקרוב)</button>
       </nav>
       <div class="actions">
         <${AutoRun} auto=${auto} setAuto=${setAuto} busy=${busy} onRun=${() => run()} />
@@ -173,12 +202,17 @@ function App() {
     </header>
     ${meta.demo ? html`<div class="demo-banner">מצב הדגמה: הנתונים סינתטיים ואינם היסטוריה אמיתית. להרצה עם נתונים אמיתיים הפעל <code dir="ltr">python run.py</code> בלי <code dir="ltr">--demo</code>.</div>` : null}
     <main class="layout">
-      <${InputsPanel} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError}
-        favorites=${meta.favorites} />
+      ${view === "trinity"
+        ? html`<${TrinityInputs} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} />`
+        : html`<${InputsPanel} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} />`}
       <div class=${"main" + (busy ? " is-busy" : "")}>
         ${error ? html`<div class="callout error" role="alert">${error}</div>` : null}
         ${busy ? html`<div class="busy" role="status"><span class="spinner"></span>מחשב...</div>` : null}
-        ${view === "math" ? html`<${MathPage} plan=${plan} res=${res} />`
+        ${view === "math" ? html`<${MathPage} plan=${acc.plan} res=${acc.res} tplan=${tri.plan} tres=${tri.res} />`
+          : view === "trinity"
+            ? (res ? html`<${TrinityResults} key=${res.id} res=${res} ui=${ui} setUi=${setUi} themeKey=${themeKey}
+                        plan=${plan} setPlan=${setPlan} payload=${toPayload(plan)} heat=${heat} setHeat=${setHeat} />`
+                   : !error ? html`<div class="empty">${busy ? "מחשב..." : "הגדר תוכנית משיכה כדי לראות תוצאות"}</div>` : null)
           : res ? html`<${Results} key=${res.id} res=${res} ui=${ui} setUi=${setUi} themeKey=${themeKey} />`
           : !error ? html`<div class="empty">${busy ? "טוען נתונים (בפעם הראשונה ההורדה לוקחת כמה שניות)..." : "הגדר תוכנית כדי לראות תוצאות"}</div>` : null}
       </div>

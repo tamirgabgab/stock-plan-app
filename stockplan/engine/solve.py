@@ -30,7 +30,7 @@ def solve_monotone(F: Callable[[np.ndarray, np.ndarray], np.ndarray], target: fl
     x[f_lo >= 0] = 0.0
 
     # Expand the upper bracket until every row crosses the target.
-    hi = np.full(n, max(guess, 1.0))
+    hi = np.full(n, float(max(guess, 1.0)))
     f_hi = np.full(n, -np.inf)
     pending = np.where(f_lo < 0)[0]
     for _ in range(MAX_EXPAND):

@@ -75,3 +75,72 @@ class SimulationResult:
     deposits_path: "object"      # (R, months+1) cumulative deposits, display units
     solved: "object" = None      # (R,) solved variable, or None
     warnings: List[str] = field(default_factory=list)
+
+
+# ------------------------------------------------------------------ withdrawal (Trinity)
+
+SOLVE_RATE = "rate"
+TRINITY_SOLVE_MODES = (SOLVE_FINAL, SOLVE_RATE, SOLVE_START)
+
+
+@dataclass
+class WithdrawStage:
+    months: int
+    holdings: List[Holding]
+    rate: float = 4.0             # percent per year, withdrawn monthly (1/12)
+    amount: float = 0.0           # monthly withdrawal in money (input units) when rate_unit == "money"
+    rate_unit: str = "pct"        # "pct" or "money"
+    basis: str = "initial"        # "initial": of the start amount (fixed), "current": of the balance now
+    floor: float = 0.0            # guardrails for basis == "current" (0 = none)
+    ceiling: float = 0.0
+    guard_unit: str = "pct"       # "pct": percent per year of the start amount; "money": per month
+    one_time: float = 0.0         # withdrawal at the start of the stage
+    one_time_unit: str = "money"  # "money" or "pct" (of the balance at that moment)
+    name: str = ""
+
+
+@dataclass
+class WithdrawRequest:
+    stages: List[WithdrawStage]
+    start_amount: float = 1_000_000.0
+    target_amount: float = 0.0        # balance that must remain at the end
+    solve_for: str = SOLVE_FINAL      # "final", "rate" or "start_amount"
+    currency: str = "USD"
+    real: bool = False
+    index_withdrawals: bool = True    # fixed withdrawals keep their purchasing power (Trinity study)
+    tax_rate: float = 25.0
+    tax_basis: str = "nominal"
+    tax_on_switch: bool = False
+    annual_fee: float = 0.0
+    leverage_cost: float = 0.0
+    min_start: Optional[date] = None
+    max_start: Optional[date] = None
+    step: str = "M"
+
+    @property
+    def total_months(self) -> int:
+        return sum(s.months for s in self.stages)
+
+    @property
+    def needs_cpi(self) -> bool:
+        return self.real or self.index_withdrawals or self.tax_basis == "real"
+
+    @property
+    def index_deposits(self) -> bool:   # lets the shared market code treat both requests alike
+        return self.index_withdrawals
+
+
+@dataclass
+class WithdrawResult:
+    start_dates: list
+    end_dates: list
+    months: int
+    final: "object"               # (R,) final net value, display units
+    withdrawn_total: "object"     # (R,) total net withdrawals, display units
+    min_balance: "object"         # (R,) lowest net value along the path
+    depleted_at: "object"         # (R,) first month the withdrawal could not be paid in full, or -1
+    success: "object"             # (R,) bool: paid every withdrawal and ended >= target
+    paths: "object"               # (R, months+1) net liquidation value, display units
+    withdrawals_path: "object"    # (R, months+1) cumulative net withdrawals, display units
+    solved: "object" = None
+    warnings: List[str] = field(default_factory=list)

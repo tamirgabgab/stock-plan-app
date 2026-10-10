@@ -33,9 +33,7 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
   const totalMonths = plan.stages.reduce((a, s) => a + (s.months || 0), 0);
 
   return html`<aside class="panel inputs" aria-label="הגדרות">
-    <datalist id="tickers">
-      ${favorites.flatMap((g) => g.items).map((i) => html`<option value=${i.ticker}>${i.label}</option>`)}
-    </datalist>
+    <${TickerList} favorites=${favorites} />
 
     <details open class="section">
       <summary>מה לחשב</summary>
@@ -61,48 +59,8 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
         hint="ההפקדות גדלות עם האינפלציה, כך שערכן הריאלי נשמר. כבוי: הסכום הנומינלי קבוע מתחילת התוכנית." />
     </details>
 
-    <details open class="section">
-      <summary>מס ועמלות</summary>
-      <div class="grid-2">
-        <${NumberField} label="מס רווחי הון" value=${plan.tax_rate} onChange=${set("tax_rate")} step=${0.5}
-          max=${99} suffix="%" />
-        <${Segmented} label="המס מחושב על רווח" options=${[{ value: "nominal", label: "נומינלי" }, { value: "real", label: "ריאלי" }]}
-          value=${plan.tax_basis} onChange=${set("tax_basis")}
-          hint="ריאלי: רק הרווח שמעל האינפלציה ממוסה, ורווח אינפלציוני לא יוצר הפסד לקיזוז (כמו בחוק בישראל)." />
-      </div>
-      <${Toggle} label="מעבר בין שלבים הוא אירוע מס" checked=${plan.tax_on_switch} onChange=${set("tax_on_switch")}
-        hint="כבוי: המעבר בין שלבים פטור ממס והמס נדחה לסוף (כמו בהחלפת מסלול). דלוק: מה שנמכר במעבר ממוסה מיד, והפסדים נצברים כמגן מס." />
-      <div class="grid-2">
-        <${NumberField} label="דמי ניהול שנתיים" value=${plan.annual_fee} onChange=${set("annual_fee")} step=${0.05}
-          max=${20} suffix="%" />
-        <${NumberField} label="עלות מינוף שנתית" value=${plan.leverage_cost} onChange=${set("leverage_cost")}
-          step=${0.25} max=${30} suffix="%" hint="ריבית שנתית על החלק הממונף (מינוף פחות 1), כמו בקרנות ממונפות." />
-      </div>
-    </details>
-
-    <details open class="section">
-      <summary>תקופת הבדיקה</summary>
-      ${rangeError
-        ? html`<p class="callout error">${rangeError}</p>`
-        : range
-          ? html`<p class="callout">תאריכי התחלה אפשריים: <b>${dateHe(range.min_start)}</b> עד <b>${dateHe(range.max_start)}</b>
-              <br /><span class="muted">משך התוכנית: ${monthsLabel(totalMonths)}</span></p>
-              ${(range.notes || []).map((n) => html`<p class="callout warn">${n}</p>`)}`
-          : html`<p class="callout muted">בודק את טווח הנתונים...</p>`}
-      <div class="grid-2">
-        <${Field} label="התחלה מוקדמת ביותר">
-          <input type="date" value=${plan.min_start || ""} min=${range?.min_start} max=${range?.max_start}
-            onChange=${(e) => set("min_start")(e.currentTarget.value || null)} />
-        </${Field}>
-        <${Field} label="התחלה מאוחרת ביותר">
-          <input type="date" value=${plan.max_start || ""} min=${range?.min_start} max=${range?.max_start}
-            onChange=${(e) => set("max_start")(e.currentTarget.value || null)} />
-        </${Field}>
-      </div>
-      <${Segmented} label="מרווח בין תאריכי התחלה" options=${[{ value: "D", label: "יום" }, { value: "W", label: "שבוע" }, { value: "M", label: "חודש" }]}
-        value=${plan.step} onChange=${set("step")}
-        hint="כל תאריך התחלה הוא ריאליזציה אחת. יום נותן הכי הרבה דגימות, אבל הן חופפות מאוד זו לזו." />
-    </details>
+    <${TaxSection} plan=${plan} set=${set} />
+    <${PeriodSection} plan=${plan} set=${set} range=${range} rangeError=${rangeError} totalMonths=${totalMonths} />
 
     <section class="section stages" aria-label="שלבי ההשקעה">
       <div class="section-head"><h2>שלבי ההשקעה</h2>
@@ -114,33 +72,73 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
   </aside>`;
 }
 
-function StageCard({ stage, index, count, sym, currency, solveMonthly, onChange, onMove, onRemove }) {
-  const set = (key) => (value) => onChange((s) => ({ ...s, [key]: value }));
+export function TaxSection({ plan, set }) {
+  return html`<details open class="section">
+    <summary>מס ועמלות</summary>
+    <div class="grid-2">
+      <${NumberField} label="מס רווחי הון" value=${plan.tax_rate} onChange=${set("tax_rate")} step=${0.5}
+        max=${99} suffix="%" />
+      <${Segmented} label="המס מחושב על רווח" options=${[{ value: "nominal", label: "נומינלי" }, { value: "real", label: "ריאלי" }]}
+        value=${plan.tax_basis} onChange=${set("tax_basis")}
+        hint="ריאלי: רק הרווח שמעל האינפלציה ממוסה, ורווח אינפלציוני לא יוצר הפסד לקיזוז (כמו בחוק בישראל)." />
+    </div>
+    <${Toggle} label="מעבר בין שלבים הוא אירוע מס" checked=${plan.tax_on_switch} onChange=${set("tax_on_switch")}
+      hint="כבוי: המעבר בין שלבים פטור ממס והמס נדחה לסוף (כמו בהחלפת מסלול). דלוק: מה שנמכר במעבר ממוסה מיד, והפסדים נצברים כמגן מס." />
+    <div class="grid-2">
+      <${NumberField} label="דמי ניהול שנתיים" value=${plan.annual_fee} onChange=${set("annual_fee")} step=${0.05}
+        max=${20} suffix="%" />
+      <${NumberField} label="עלות מינוף שנתית" value=${plan.leverage_cost} onChange=${set("leverage_cost")}
+        step=${0.25} max=${30} suffix="%" hint="ריבית שנתית על החלק הממונף (מינוף פחות 1), כמו בקרנות ממונפות." />
+    </div>
+  </details>`;
+}
+
+export function PeriodSection({ plan, set, range, rangeError, totalMonths }) {
+  return html`<details open class="section">
+    <summary>תקופת הבדיקה</summary>
+    ${rangeError
+      ? html`<p class="callout error">${rangeError}</p>`
+      : range
+        ? html`<p class="callout">תאריכי התחלה אפשריים: <b>${dateHe(range.min_start)}</b> עד <b>${dateHe(range.max_start)}</b>
+            <br /><span class="muted">משך התוכנית: ${monthsLabel(totalMonths)}</span></p>
+            ${(range.notes || []).map((n) => html`<p class="callout warn">${n}</p>`)}`
+        : html`<p class="callout muted">בודק את טווח הנתונים...</p>`}
+    <div class="grid-2">
+      <${Field} label="התחלה מוקדמת ביותר">
+        <input type="date" value=${plan.min_start || ""} min=${range?.min_start} max=${range?.max_start}
+          onChange=${(e) => set("min_start")(e.currentTarget.value || null)} />
+      </${Field}>
+      <${Field} label="התחלה מאוחרת ביותר">
+        <input type="date" value=${plan.max_start || ""} min=${range?.min_start} max=${range?.max_start}
+          onChange=${(e) => set("max_start")(e.currentTarget.value || null)} />
+      </${Field}>
+    </div>
+    <${Segmented} label="מרווח בין תאריכי התחלה" options=${[{ value: "D", label: "יום" }, { value: "W", label: "שבוע" }, { value: "M", label: "חודש" }]}
+      value=${plan.step} onChange=${set("step")}
+      hint="כל תאריך התחלה הוא ריאליזציה אחת. יום נותן הכי הרבה דגימות, אבל הן חופפות מאוד זו לזו." />
+  </details>`;
+}
+
+// Stage header (number, name, move/remove) and the holdings table are shared by both tabs.
+export function StageHead({ stage, index, count, set, onMove, onRemove }) {
+  return html`<div class="stage-head">
+    <span class="stage-num">${index + 1}</span>
+    <input class="stage-name" value=${stage.name} aria-label="שם השלב"
+      onInput=${(e) => set("name")(e.currentTarget.value)} />
+    <${IconButton} title="הזז למעלה" disabled=${index === 0} onClick=${() => onMove(-1)}>↑</${IconButton}>
+    <${IconButton} title="הזז למטה" disabled=${index === count - 1} onClick=${() => onMove(1)}>↓</${IconButton}>
+    <${IconButton} title="מחק שלב" danger disabled=${count === 1} onClick=${onRemove}>✕</${IconButton}>
+  </div>`;
+}
+
+export function HoldingsTable({ stage, onChange }) {
   const setHolding = (j, key, value) => onChange((s) => ({
     ...s, holdings: s.holdings.map((h, k) => (k === j ? { ...h, [key]: value } : h)),
   }));
   const addHolding = () => onChange((s) => ({ ...s, holdings: [...s.holdings, { ticker: "", weight: 0, leverage: 1 }] }));
   const removeHolding = (j) => onChange((s) => ({ ...s, holdings: s.holdings.filter((_, k) => k !== j) }));
   const totalWeight = stage.holdings.reduce((a, h) => a + (Number(h.weight) || 0), 0);
-
-  return html`<div class="stage-card">
-    <div class="stage-head">
-      <span class="stage-num">${index + 1}</span>
-      <input class="stage-name" value=${stage.name} aria-label="שם השלב"
-        onInput=${(e) => set("name")(e.currentTarget.value)} />
-      <${IconButton} title="הזז למעלה" disabled=${index === 0} onClick=${() => onMove(-1)}>↑</${IconButton}>
-      <${IconButton} title="הזז למטה" disabled=${index === count - 1} onClick=${() => onMove(1)}>↓</${IconButton}>
-      <${IconButton} title="מחק שלב" danger disabled=${count === 1} onClick=${onRemove}>✕</${IconButton}>
-    </div>
-    <div class="grid-3">
-      <${NumberField} label="חודשים" value=${stage.months} onChange=${set("months")} min=${1} max=${1200}
-        note=${monthsLabel(stage.months || 0)} />
-      <${NumberField} label="הפקדה בתחילת השלב" value=${stage.initial_deposit} onChange=${set("initial_deposit")}
-        step=${1000} suffix=${sym} />
-      <${NumberField} label="הפקדה חודשית" value=${stage.monthly_deposit} onChange=${set("monthly_deposit")}
-        step=${100} suffix=${sym} disabled=${solveMonthly} note=${solveMonthly ? "מחושב" : null} />
-    </div>
-    <table class="holdings">
+  return html`<table class="holdings">
       <thead><tr><th>נכס (טיקר) <${Hint} text="כל טיקר של Yahoo Finance. המחירים כוללים דיבידנדים, חוץ ממדדים שמתחילים ב-^ (למשל ^GSPC). למדד S&P 500 עם דיבידנדים השתמש ב-^SP500TR או SPY." /></th><th>משקל</th><th>מינוף</th><th></th></tr></thead>
       <tbody>
         ${stage.holdings.map((h, j) => html`<tr key=${j}>
@@ -158,6 +156,28 @@ function StageCard({ stage, index, count, sym, currency, solveMonthly, onChange,
       <span class=${"weight-sum" + (Math.abs(totalWeight - 100) > 0.01 ? " warn" : "")}>
         סה"כ משקל ${totalWeight.toFixed(0)}%${Math.abs(totalWeight - 100) > 0.01 ? " (יתנרמל ל-100%)" : ""}
       </span>
+    </div>`;
+}
+
+export function TickerList({ favorites }) {
+  return html`<datalist id="tickers">
+    ${favorites.flatMap((g) => g.items).map((i) => html`<option value=${i.ticker}>${i.label}</option>`)}
+  </datalist>`;
+}
+
+function StageCard({ stage, index, count, sym, currency, solveMonthly, onChange, onMove, onRemove }) {
+  const set = (key) => (value) => onChange((s) => ({ ...s, [key]: value }));
+
+  return html`<div class="stage-card">
+    <${StageHead} stage=${stage} index=${index} count=${count} set=${set} onMove=${onMove} onRemove=${onRemove} />
+    <div class="grid-3">
+      <${NumberField} label="חודשים" value=${stage.months} onChange=${set("months")} min=${1} max=${1200}
+        note=${monthsLabel(stage.months || 0)} />
+      <${NumberField} label="הפקדה בתחילת השלב" value=${stage.initial_deposit} onChange=${set("initial_deposit")}
+        step=${1000} suffix=${sym} />
+      <${NumberField} label="הפקדה חודשית" value=${stage.monthly_deposit} onChange=${set("monthly_deposit")}
+        step=${100} suffix=${sym} disabled=${solveMonthly} note=${solveMonthly ? "מחושב" : null} />
     </div>
+    <${HoldingsTable} stage=${stage} onChange=${onChange} />
   </div>`;
 }

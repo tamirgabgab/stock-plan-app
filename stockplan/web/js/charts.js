@@ -52,7 +52,7 @@ function axis(t, extra = {}) {
 
 // Fan chart: percentile band, bold median, dashed mean, optional deposits, highlighted path.
 export function fanFigure({ cols, mean, deposits, p1, p2, target, showDeposits, showTarget, logY,
-                            currencySymbol, timeIdx, highlight, reps = [] }) {
+                            currencySymbol, timeIdx, highlight, reps = [], flowLabel = "סך הפקדות" }) {
   const t = theme();
   const n = cols.length;
   const x = Array.from({ length: n }, (_, i) => i / 12);
@@ -69,7 +69,7 @@ export function fanFigure({ cols, mean, deposits, p1, p2, target, showDeposits, 
     { x, y: Array.from(mean), mode: "lines", line: { width: 2, color: t.orange, dash: "dash" },
       hoverinfo: "skip", name: "ממוצע" },
     { x, y: deposits || [], mode: "lines", line: { width: 1.5, color: t.neutral, dash: "dot" },
-      hoverinfo: "skip", name: "סך הפקדות", visible: showDeposits && deposits ? true : false },
+      hoverinfo: "skip", name: flowLabel, visible: showDeposits && deposits ? true : false },
     ...reps.map((rep, i) => ({
       x, y: rep.y, mode: "lines", line: { width: 1.5, color: t.reps[i] || t.violet },
       hoverinfo: "skip", name: rep.label, opacity: 0.9,
@@ -133,7 +133,7 @@ export function highlightTrace(t, x, highlight) {
 }
 
 // Histogram with the selected [a, b] range in the accent colour.
-export function histFigure({ hist, a, b, median, mean, prefix, suffix, xTitle }) {
+export function histFigure({ hist, a, b, median, mean, prefix, suffix, xTitle, months = false }) {
   const t = theme();
   const lo = Math.min(a, b), hi = Math.max(a, b);
   const colors = hist.centers.map((c) => (c >= lo - hist.width / 2 && c <= hi + hist.width / 2 ? t.blue : t.rangeOut));
@@ -141,7 +141,8 @@ export function histFigure({ hist, a, b, median, mean, prefix, suffix, xTitle })
     type: "bar", x: hist.centers, y: hist.counts, width: hist.width * 0.92,
     marker: { color: colors, line: { width: 0 } }, name: "מספר תקופות",
     selected: { marker: { opacity: 1 } }, unselected: { marker: { opacity: 1 } },
-    hovertemplate: `${prefix}%{x:,.0f}${suffix}<br>%{y} תקופות<extra></extra>`, showlegend: false,
+    hovertemplate: months ? "%{x:.0f} חודשים<br>%{y} תקופות<extra></extra>"
+                          : `${prefix}%{x:,.0f}${suffix}<br>%{y} תקופות<extra></extra>`, showlegend: false,
   }];
   const shapes = [
     { type: "line", yref: "paper", y0: 0, y1: 1, x0: median, x1: median, line: { color: t.text, width: 2 } },
@@ -180,6 +181,32 @@ export function outcomeFigure({ dates, values, highlightIdx, prefix, suffix, yTi
     margin: { l: 64, r: 16, t: 8, b: 40 },
     xaxis: axis(t, { type: "date", fixedrange: true }),
     yaxis: axis(t, { tickprefix: prefix, ticksuffix: suffix, tickformat: "~s", fixedrange: true }),
+  });
+  return { data, layout };
+}
+
+// Trinity table: success rate (percent) per withdrawal rate (rows) and horizon in years (columns).
+export function heatmapFigure({ rates, years, survival, preservation, kind, current }) {
+  const t = theme();
+  const src = kind === "preservation" ? preservation : survival;
+  const z = rates.map((_, i) => years.map((_, j) => src[j][i]));      // [rate][year]
+  const text = z.map((row) => row.map((v) => (v === null ? "" : `${Math.round(v)}%`)));
+  const data = [{
+    type: "heatmap", x: years, y: rates, z, text, texttemplate: "%{text}", textfont: { size: 10 },
+    hovertemplate: "משיכה %{y}% · %{x} שנים<br>הצלחה %{z:.1f}%<extra></extra>",
+    zmin: 0, zmax: 100, xgap: 2, ygap: 2, hoverongaps: false,
+    colorscale: [[0, "#c2412f"], [0.5, "#e07b39"], [0.8, "#e6c35a"], [0.95, "#8fc47a"], [1, "#2f8f3a"]],
+    colorbar: { title: { text: "%" }, thickness: 10, len: 0.9, tickfont: { color: t.muted } },
+  }];
+  if (current && rates.includes(current.rate) && years.includes(current.years)) {
+    data.push({ type: "scatter", mode: "markers", x: [current.years], y: [current.rate], hoverinfo: "skip",
+                marker: { symbol: "square-open", size: 22, color: t.text, line: { width: 3 } }, showlegend: false });
+  }
+  const layout = baseLayout(t, {
+    showlegend: false, dragmode: false, hovermode: "closest",
+    margin: { l: 72, r: 16, t: 8, b: 44 },
+    xaxis: axis(t, { title: { text: "משך בשנים" }, type: "category", fixedrange: true }),
+    yaxis: axis(t, { title: { text: "אחוז משיכה שנתי" }, type: "category", fixedrange: true, ticksuffix: "%" }),
   });
   return { data, layout };
 }

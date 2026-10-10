@@ -43,6 +43,12 @@ the UI — it is not real market history).
   cross-section histogram with drag-to-select range probability, for the portfolio
   value, the solved variable or the max drawdown (of the strategy and of the account);
   IRR, portfolio CAGR; CSV export; share-by-link; light/dark theme.
+- **Trinity (withdrawal) tab** – retirement plans with the same engine: fixed
+  withdrawals (CPI-indexed by default), a fixed amount, or a percent of the current
+  balance with floor/ceiling guardrails; one-time withdrawals; every withdrawal is a
+  pro-rata sale with the tax grossed up. Solve for the final balance, the maximum
+  withdrawal rate or the minimum starting amount. Success-rate heat map (withdrawal
+  rate × horizon, survival or capital preservation), click a cell to load it.
 - **Math tab** – every computation explained in text and LaTeX (KaTeX, offline): the
   difference equation of the portfolio, deposits, tax, the closed-form solution for the
   missing parameter where one exists and the numerical solver where it does not, plus
@@ -70,7 +76,7 @@ stockplan/
   api.py               # FastAPI endpoints, serves the web UI
   web/                 # static UI: Preact + htm + Plotly + KaTeX (vendored, no build step)
 tests/                 # pytest: engine and API
-legacy/                # the previous Streamlit app (still has the Trinity tab)
+legacy/                # the previous Streamlit app (kept for reference)
 ```
 
 ## Development
@@ -80,8 +86,8 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-The previous Streamlit version still runs with `streamlit run legacy/main.py`
-(requirements in `legacy/requirements.txt`).
+The previous Streamlit version is kept in `legacy/` for reference (`streamlit run
+legacy/main.py`, requirements in `legacy/requirements.txt`); it is no longer maintained.
 
 See [HANDOFF.md](HANDOFF.md) for design notes, the engine model and the roadmap.
 

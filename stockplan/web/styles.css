@@ -353,3 +353,9 @@ table.data tbody tr.pinned { box-shadow: inset -3px 0 0 var(--series-7); }
 .dual input[type="range"]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dual input[type="range"]:disabled::-webkit-slider-thumb { border-color: var(--axis); cursor: default; }
 .fan-tip.small { min-width: 0; }
+
+.version-badge {
+  display: inline-block; vertical-align: middle; margin-inline-start: 6px; padding: 1px 7px; border-radius: 99px;
+  font-size: 11px; font-weight: 500; color: var(--text-secondary); background: var(--surface-2);
+  border: 1px solid var(--border); font-variant-numeric: tabular-nums;
+}

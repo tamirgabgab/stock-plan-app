@@ -1,103 +1,83 @@
 # 📈 Stock Plan App
 
-**An interactive tool for planning and simulating investment portfolios**
+**Historical back-testing of long-term investment plans, with an interactive web UI.**
 
-[![Python](https://img.shields.io/badge/Python-3.9+-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-App-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+Every historical start date is one *realization*: the plan is replayed from that date
+and the app shows the distribution of outcomes — a fan chart over time, a histogram at
+any point in time with "probability to land between A and B", the outcome by start
+date, and every realization in a table. Hover any of them to see that path.
 
----
-
-## 🧠 What is this?
-
-**Stock Plan App** is an interactive web application built with Streamlit that allows users to plan investment portfolios, run historical simulations, and analyze retirement strategies — all through a clean and intuitive interface.
-
-The app fetches real-time stock data via `yfinance` and computes complex financial scenarios including leverage, taxation, and monthly withdrawals.
+> ⚠️ For research and education only. Not investment advice.
 
 ---
 
-## ✨ Key Features
-
-### 📊 Tab 1 — Investment Statistics
-- Build a custom portfolio with stocks, weights, and leverage factors
-- Run historical simulations across different time periods
-- Calculate equivalent annual return, total deposits, and final balance
-- Support for capital gains tax and tax-shield carry-over between portfolio stages
-
-### 🏖️ Tab 2 — Trinity Study Research
-- Retirement simulation inspired by the **4% Rule** (Trinity Study)
-- Simulate monthly/annual withdrawal rates over real historical data
-- Automatically solve for initial amount / withdrawal rate / final balance
-- Support for multi-stage portfolios and flexible withdrawal strategies
-
----
-
-## 📦 Supported Assets
-
-Over **80 assets** organized by category:
-
-| Category | Examples |
-|---|---|
-| 🇺🇸 Indices & ETFs | S&P 500, Nasdaq 100, Russell 2000 |
-| 💻 Tech & AI | Apple, Nvidia, Microsoft, Meta |
-| 🇮🇱 Israel | TA-35, Leumi, Hapoalim, Check Point |
-| 🏦 Finance | Visa, JPMorgan, Goldman Sachs |
-| 💊 Healthcare | Eli Lilly, Pfizer, Moderna |
-| ₿ Crypto | Bitcoin, Ethereum, Solana |
-| 🏗️ Bonds | TLT, BND, IEF |
-| 🛢️ Commodities | Gold, Silver, Oil, Uranium |
-
----
-
-## 🚀 Installation & Usage
+## Quick start
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/tamirgabgab/stock-plan-app.git
-cd stock-plan-app
-
-# 2. Install dependencies
 pip install -r requirements.txt
-
-# 3. Run the app
-python main.py
+python run.py            # opens http://127.0.0.1:8000 in your browser
 ```
 
-The app will open automatically in your browser at `http://localhost:8501`
+On Windows you can double-click `start.bat` (macOS/Linux: `./start.sh`).
+
+No internet? `python run.py --demo` runs the UI on synthetic data (clearly marked in
+the UI — it is not real market history).
 
 ---
 
-## 🛠️ Tech Stack
+## Features
 
-| Library | Purpose |
-|---|---|
-| `streamlit` | Web UI framework |
-| `yfinance` | Real-time market data |
-| `pandas` / `numpy` | Data processing & calculations |
-| `plotly` | Interactive charts |
-| `scipy` | Mathematical optimization |
-| `python-dateutil` | Date range management |
+- **Multi-stage plans** – each stage has its own duration, deposits and portfolio
+  (any Yahoo ticker, weights, daily-rebalanced leverage).
+- **Solve for the missing parameter** – final balance, required monthly deposit or
+  required starting amount, for every start date.
+- **Nominal or real** – values in money of the start date (CPI-deflated); optional
+  CPI-indexed deposits.
+- **Currency** – USD or ILS. Assets are assumed to trade in USD; ILS converts every
+  deposit and valuation at that day's USD/ILS rate.
+- **Taxes** – capital-gains rate on nominal or real gains, tax-deferred or taxable
+  stage switches, loss carry-forward (tax shield). Management fee and leverage cost.
+- **Statistics** – median (bold), mean (dashed) and a p1–p2 percentile band over time;
+  cross-section histogram with drag-to-select range probability; IRR, portfolio CAGR,
+  max drawdown; CSV export; share-by-link; light/dark theme.
 
----
+## Data sources
 
-## 📁 Project Structure
+| Data | Source | Notes |
+|---|---|---|
+| Prices | Yahoo Finance (`yfinance`) | Dividend-adjusted closes, cached as Parquet in `data_cache/`, refreshed incrementally |
+| USD/ILS | Bank of Israel, Yahoo `ILS=X`, FRED monthly | First available source wins; FRED extends older history |
+| US CPI | FRED `CPIAUCSL` | |
+| Israel CPI | CBS API, FRED `ISRCPIALLMINMEI` | |
+
+Put a CSV with columns `date,value` in `data_cache/manual/` (`fx_usd_ils.csv`,
+`cpi_us.csv`, `cpi_il.csv`) to override any series.
+
+## Project structure
 
 ```
-stock-plan-app/
-├── main.py              # App entry point
-├── params.py            # Configuration, assets & styling
-├── stock_statistics.py  # Investment statistics tab
-├── stock_trinity.py     # Trinity study tab
-├── utils.py             # Simulation & calculation logic
-└── requirements.txt     # Project dependencies
+run.py                 # launcher (FastAPI + browser)
+stockplan/
+  data/                # market data providers + disk cache (Yahoo, demo)
+  engine/              # pure numpy simulation engine and solvers
+  api.py               # FastAPI endpoints, serves the web UI
+  web/                 # static UI: Preact + htm + Plotly (vendored, no build step)
+tests/                 # pytest: engine and API
+legacy/                # the previous Streamlit app (still has the Trinity tab)
 ```
 
----
+## Development
 
-## 👤 Author
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+The previous Streamlit version still runs with `streamlit run legacy/main.py`
+(requirements in `legacy/requirements.txt`).
+
+See [HANDOFF.md](HANDOFF.md) for design notes, the engine model and the roadmap.
+
+## Author
 
 **Tamir Gabgab** — [GitHub](https://github.com/tamirgabgab)
-
----
-
-> ⚠️ **Disclaimer:** This app is intended for research and educational purposes only. It does not constitute financial advice or investment recommendations.

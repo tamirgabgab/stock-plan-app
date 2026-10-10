@@ -1,165 +1,111 @@
-# HANDOFF — Stock Plan App
+# מסמך העברה (HANDOFF) — Stock Plan App
 
-_Last reviewed: 2026-10-10_
+> עודכן לאחרונה: 10/10/2026. המסמך נכתב כדי שכל מי שממשיך את הפרויקט (אדם או סשן חדש) יבין מה קיים היום ולאן מתכננים להתקדם.
 
-This document is a technical handoff: what the app does today, how the code is
-organized, known issues found during review, and a proposed upgrade path away
-from Streamlit toward a more interactive web platform.
+המסמך מסביר מה האפליקציה עושה, איך הקוד בנוי, אילו תקלות נמצאו בסקירה, ומה תוכנית השדרוג ממעבר מ-Streamlit לפלטפורמת ווב אינטראקטיבית יותר.
 
 ---
 
-## 1. What the app does
+## 1. מה האפליקציה עושה
 
-A Hebrew (RTL) Streamlit web app for **historical back-testing of long-term
-investment plans**. Instead of assuming a fixed annual return, it replays a plan
-over *every* historical start date in a chosen range (sampled every `N` days) and
-shows the **distribution** of outcomes.
+אפליקציית Streamlit בעברית לבדיקה היסטורית (back-testing) של תוכניות השקעה ארוכות טווח. במקום להניח תשואה שנתית קבועה, היא מריצה את התוכנית מ**כל** תאריך התחלה היסטורי בטווח שנבחר (דגימה כל `N` ימים) ומציגה את **התפלגות** התוצאות.
 
-It has two tabs:
+יש בה שתי לשוניות.
 
-### Tab 1 — "סטטיקה של השקעות" (accumulation / savings plan)
+### לשונית 1 — "סטטיקה של השקעות" (צבירה וחיסכון)
 
-- The user builds one or more **stages** ("plans"), executed back to back. Each
-  stage has: initial deposit, monthly deposit, number of months, and a portfolio
-  table (asset, weight %, leverage factor).
-- Global inputs: starting balance, target balance, capital-gains tax %, and
-  whether switching between stages triggers a tax event.
-- **Solve-for mode** — the user picks one unknown:
-  - `סכום סופי` final balance (direct simulation),
-  - `הפקדה חודשית` required monthly deposit to hit the target,
-  - `סכום התחלתי` required starting balance to hit the target.
-  The unknown is solved per start date with `scipy.optimize.fsolve`.
-- For each start date it also solves the **equivalent annual return** (the
-  constant yearly rate that would produce the same final balance — an IRR).
-- Output: summary metrics (avg deposits, avg return, mean, median, min/max with
-  their date ranges), a histogram with mean/median lines, a range slider that
-  highlights a band and reports how many samples fall in it plus the matching
-  return range, and a table of every historical window.
+- המשתמש בונה **שלב** אחד או יותר ("תוכניות") שרצים ברצף. לכל שלב יש הפקדה התחלתית, הפקדה חודשית, מספר חודשים וטבלת תיק (נכס, משקל באחוזים ומקדם מינוף).
+- קלטים כלליים: יתרה התחלתית, יעד סופי, מס רווחי הון באחוזים, והאם מעבר בין שלבים יוצר אירוע מס.
+- **מצב "חשב"** — המשתמש בוחר נעלם אחד:
+  - סכום סופי (`סכום סופי`) — סימולציה ישירה.
+  - הפקדה חודשית נדרשת (`הפקדה חודשית`) כדי להגיע ליעד.
+  - סכום התחלתי נדרש (`סכום התחלתי`) כדי להגיע ליעד.
+- הנעלם נפתר לכל תאריך התחלה בעזרת `scipy.optimize.fsolve`.
+- לכל תאריך מחושבת גם **התשואה השנתית השקולה**, כלומר הריבית השנתית הקבועה שהייתה מביאה לאותה יתרה סופית (בדומה ל-IRR).
+- פלט: מדדים מסכמים (ממוצע הפקדות, תשואה ממוצעת, ממוצע, חציון, מינימום ומקסימום עם טווחי התאריכים שלהם), היסטוגרמה עם קווי ממוצע וחציון, סליידר טווח שמדגיש רצועה ומציג כמה דגימות נמצאות בה ואת טווח התשואה המתאים, וטבלה של כל החלונות ההיסטוריים.
 
-### Tab 2 — "מחקר טריניטי" (decumulation / retirement withdrawals)
+### לשונית 2 — "מחקר טריניטי" (משיכה בפרישה)
 
-- Inspired by the Trinity Study / 4% rule.
-- Each stage has: initial withdrawal %, annual withdrawal %, number of months,
-  withdrawal base (`התחלתי` = % of the original amount, i.e. fixed nominal
-  withdrawal; `נוכחי` = % of current balance), and a portfolio table.
-- Solve-for mode: final balance, sustainable withdrawal %, or required starting
-  amount.
-- Output: same histogram / metrics / table layout as Tab 1.
+- מבוססת על מחקר טריניטי וכלל ה-4%.
+- לכל שלב יש אחוז משיכה התחלתי, אחוז משיכה שנתי, מספר חודשים, בסיס משיכה ותיק. בסיס המשיכה הוא `התחלתי` (אחוז מהסכום המקורי, כלומר משיכה נומינלית קבועה) או `נוכחי` (אחוז מהיתרה הנוכחית).
+- מצב "חשב": סכום סופי, אחוז משיכה בר-קיימא, או סכום התחלתי נדרש.
+- הפלט זהה במבנה ללשונית 1: היסטוגרמה, מדדים וטבלה.
 
-### Data
+### נתונים
 
-- ~110 hard-coded tickers in `params.py` (US indices, mega-caps, semis, Israeli
-  stocks/indices, crypto, bonds, commodities).
-- Daily `Close` prices are pulled from Yahoo Finance via `yfinance`
-  (`history(period="max")`), forward-filled to a calendar-day grid.
-- Leverage is simulated by multiplying **daily** returns by the factor
-  (floored at −100%), i.e. a daily-rebalanced leveraged product.
+- כ-110 נכסים קבועים מראש בקובץ `params.py`: מדדי ארה"ב, מניות ענק, שבבים, מניות ומדדים ישראליים, קריפטו, אג"ח וסחורות.
+- מחירי סגירה (`Close`) יומיים נמשכים מ-Yahoo Finance דרך `yfinance` עם `history(period="max")`, ומושלמים לרשת של ימים קלנדריים.
+- המינוף מחושב על ידי הכפלת התשואה **היומית** במקדם (עם רצפה של מינוס 100%), כלומר מוצר ממונף שמאוזן מחדש כל יום.
 
 ---
 
-## 2. Code map
+## 2. מפת הקוד
 
-| File | Lines | Role |
+| קובץ | שורות | תפקיד |
 |---|---|---|
-| `main.py` | 34 | Entry point. Self-launches `streamlit run` when executed with `python main.py`; sets page config, injects CSS, renders the two tabs. |
-| `params.py` | 442 | Ticker list, ~350 lines of CSS overrides for Streamlit internals, Hebrew labels, `st.column_config` table schemas, defaults. |
-| `utils.py` | 569 | Simulation engine: data download, date-grid construction, leverage, the two simulators, initial guesses for the solver, return-range solver. |
-| `stock_statistics.py` | 376 | UI for Tab 1 (inputs, stage editor, results). |
-| `stock_trinity.py` | 377 | UI for Tab 2. Largely a copy of Tab 1 with `trin_` prefixes. |
-| `.devcontainer/` | | Codespaces config; auto-runs Streamlit on port 8501. |
+| ‏`main.py` | 34 | נקודת הכניסה. מפעיל את עצמו דרך `streamlit run` כשמריצים `python main.py`, מגדיר את הדף, מזריק CSS ומציג את שתי הלשוניות |
+| ‏`params.py` | 442 | רשימת הנכסים, כ-350 שורות CSS שדורסות רכיבים פנימיים של Streamlit, תוויות בעברית, סכמות טבלה של `st.column_config` וברירות מחדל |
+| ‏`utils.py` | 569 | מנוע הסימולציה: הורדת נתונים, בניית רשת תאריכים, מינוף, שני הסימולטורים, ניחוש התחלתי לפותר, ופתרון טווח התשואה |
+| ‏`stock_statistics.py` | 376 | ממשק לשונית 1: קלטים, עורך שלבים ותוצאות |
+| ‏`stock_trinity.py` | 377 | ממשק לשונית 2. ברובו העתק של לשונית 1 עם קידומת `trin_` |
+| ‏`.devcontainer/` | | הגדרות Codespaces. מריץ את Streamlit אוטומטית על פורט 8501 |
 
-### Engine flow (`utils.py`)
+### זרימת המנוע (`utils.py`)
 
-1. `calculate_date_range()` downloads every ticker, builds a daily index,
-   generates the array of start dates (`pd.date_range(..., freq=f'{res}D')`),
-   and precomputes a matrix `all_dates_map[start_idx, month_offset]` of price
-   indices for each monthly step. It also builds `lev_np_dict` — leveraged price
-   series keyed by `"{asset}_{leverage}"`.
-2. `calculate_portfolot_stats()` / `calculate_trinity_withdraw_stats()` loop over
-   start dates; per date they call an inner simulator, wrapped in `fsolve` when
-   solving for an unknown, and again to get the equivalent annual return.
-3. `calculate_ann_gain_limits()` maps the slider band back to a return range.
+1. הפונקציה `calculate_date_range()` מורידה את כל הנכסים, בונה אינדקס יומי, מייצרת את מערך תאריכי ההתחלה (`pd.date_range(..., freq=f'{res}D')`) ומחשבת מראש מטריצה `all_dates_map[start_idx, month_offset]` של אינדקסי מחיר לכל צעד חודשי. היא גם בונה את `lev_np_dict`, מילון של סדרות מחיר ממונפות לפי המפתח `"{asset}_{leverage}"`.
+2. הפונקציות `calculate_portfolot_stats()` ו-`calculate_trinity_withdraw_stats()` עוברות בלולאה על תאריכי ההתחלה. לכל תאריך הן מריצות סימולטור פנימי, עטוף ב-`fsolve` כשפותרים נעלם, ופעם נוספת כדי למצוא את התשואה השנתית השקולה.
+3. הפונקציה `calculate_ann_gain_limits()` ממפה את רצועת הסליידר בחזרה לטווח תשואה.
 
-All heavy functions are wrapped in `@st.cache_data`.
+כל הפונקציות הכבדות עטופות ב-`@st.cache_data`.
 
 ---
 
-## 3. Known issues found during review
+## 3. תקלות שנמצאו בסקירה
 
-Ordered by impact. Line numbers refer to the current `main` state.
+מסודרות לפי חומרה. מספרי השורות מתייחסים למצב הנוכחי של `main`.
 
-### Correctness
+### נכונות החישוב
 
-1. **Multi-stage accumulation uses the wrong prices.** In
-   `calculate_portfolot_stats.sim_one_date` (`utils.py:58`) `month_offset` is
-   never advanced after a stage, so every stage after the first is priced on
-   the first stage's months. Results for any plan with 2+ stages are wrong.
-   (The Trinity simulator does advance it, `utils.py:414`.)
-2. **Tax shield never accumulates.** `sheild_tax` starts at 0 and is only ever
-   decreased (`utils.py:59,99-103`, same in `calculate_ann_gain_limits`).
-   Losses are never carried forward, so the "tax shield carry-over" feature in
-   the README does not work.
-3. **Deferred gains escape tax.** When a stage rolls into the next without a
-   tax event, the rolled balance becomes the new cost basis
-   (`start_deposit = final_money + ...`), so gains from earlier stages are never
-   taxed — not even at the final sale.
-4. **Trinity ignores tax.** `gain_tax` is accepted by
-   `calculate_trinity_withdraw_stats` but never used.
-5. **Trinity over-counts withdrawals.** `tot_withdraw += relative_withdraw`
-   adds the requested amount even when the balance was too small to pay it.
-6. **Trinity index mismatch on solver failure.** On a failed `fsolve` the loop
-   `continue`s, so `x_opt_list` becomes shorter than `start_date_arr` and the
-   min/max date ranges point to the wrong windows.
-7. **Wrong unit selector key in Trinity.** `stock_trinity.py:285` reads
-   `"unit_selector"` (Tab 1's key) instead of `"trin_unit_selector"`.
-8. **Price index, not total return.** `^GSPC`, `^NDX`, etc. exclude dividends,
-   and `Close` is used rather than adjusted close. This understates long-run
-   returns by roughly 1.5–2% per year for US indices.
-9. **Currency mix.** Everything is displayed in ₪, but US assets are priced in
-   USD and `.TA` tickers in agorot; there is no FX conversion.
-10. **Inconsistent rebalancing model.** Tab 1 is buy-and-hold per deposit
-    within a stage; Tab 2 rebalances monthly (`np.dot(weights, gains)`).
-11. **Leverage has no cost.** No borrowing cost / expense ratio, so leveraged
-    results are optimistic.
+1. **תוכנית צבירה עם כמה שלבים משתמשת במחירים הלא נכונים.** בפונקציה `calculate_portfolot_stats.sim_one_date` (‏`utils.py:58`) המשתנה `month_offset` לא מתקדם אחרי שלב, ולכן כל שלב אחרי הראשון מתומחר לפי החודשים של השלב הראשון. התוצאות של כל תוכנית עם שני שלבים ומעלה שגויות. בסימולטור הטריניטי הוא כן מתקדם (‏`utils.py:414`).
+2. **מגן המס לא נצבר.** המשתנה `sheild_tax` מתחיל מאפס ורק יורד (‏`utils.py:59,99-103`, וכך גם ב-`calculate_ann_gain_limits`). הפסדים לא מועברים קדימה, ולכן קיזוז ההפסדים שמתואר ב-README לא עובד.
+3. **רווחים נדחים לא ממוסים.** כששלב עובר לשלב הבא בלי אירוע מס, היתרה שעוברת הופכת לבסיס העלות החדש (`start_deposit = final_money + ...`). לכן רווחים משלבים קודמים לא ממוסים אף פעם, גם לא במכירה הסופית.
+4. **בטריניטי אין מס.** הפרמטר `gain_tax` מתקבל ב-`calculate_trinity_withdraw_stats` אבל לא בשימוש.
+5. **בטריניטי סך המשיכות נספר ביתר.** הקוד `tot_withdraw += relative_withdraw` מוסיף את הסכום המבוקש גם כשהיתרה קטנה מכדי לשלם אותו.
+6. **בטריניטי יש אי-התאמה באינדקסים כשהפותר נכשל.** כש-`fsolve` נכשל הלולאה מבצעת `continue`, ואז `x_opt_list` קצר יותר מ-`start_date_arr`, וטווחי התאריכים של המינימום והמקסימום מצביעים על חלונות לא נכונים.
+7. **בטריניטי בורר היחידות קורא מפתח לא נכון.** בשורה `stock_trinity.py:285` נקרא `"unit_selector"` (המפתח של לשונית 1) במקום `"trin_unit_selector"`.
+8. **מדד מחיר ולא תשואה כוללת.** המדדים `^GSPC`, `^NDX` וכדומה לא כוללים דיבידנדים, והקוד משתמש ב-`Close` ולא במחיר מתואם. זה מקטין את התשואה ארוכת הטווח בכ-1.5% עד 2% בשנה במדדי ארה"ב.
+9. **ערבוב מטבעות.** הכל מוצג בשקלים, אבל נכסי ארה"ב מתומחרים בדולרים ונכסי `.TA` באגורות, ואין המרת מטבע.
+10. **מודל איזון לא עקבי.** בלשונית 1 כל הפקדה מוחזקת בלי איזון בתוך השלב, ובלשונית 2 יש איזון חודשי (`np.dot(weights, gains)`).
+11. **למינוף אין עלות.** אין עלות מימון ואין דמי ניהול, ולכן התוצאות הממונפות אופטימיות מדי.
 
-### Robustness / UX
+### יציבות וחוויית משתמש
 
-- `min_start_date` is undefined if the date range is invalid, so pressing
-  "run" raises `NameError` (`stock_statistics.py:146-155`).
-- With 2+ invalid stages (0 months) the error is shown but `st.stop()` is not
-  called, so the simulation still runs.
-- Zero total weight in a stage → division by zero.
-- `calculate_ann_gain_limits` divides by `max_val - min_val` (zero when all
-  outcomes are equal).
-- `st.progress` is called inside `@st.cache_data` functions (side effects in
-  cached code; Streamlit warns about it).
-- `get_stock_dates_bounds` triggers `st.rerun()` whenever the bounds change,
-  causing double renders.
-- Every run re-downloads full price history from Yahoo; no persistent cache.
-- Run time scales as `start_dates × fsolve iterations × stages`, all in Python
-  loops — slow at fine resolutions.
-- The devcontainer disables CORS and XSRF protection.
-- ~350 lines of CSS target Streamlit's private `data-testid` selectors; these
-  break on Streamlit upgrades. The CSS also contains duplicated rules.
+- המשתנה `min_start_date` לא מוגדר כשטווח התאריכים לא תקין, ולכן לחיצה על "בצע סימולציה" זורקת `NameError` (‏`stock_statistics.py:146-155`).
+- כשיש שני שלבים לא תקינים ומעלה (0 חודשים) מוצגת שגיאה, אבל `st.stop()` לא נקרא והסימולציה רצה בכל זאת.
+- סכום משקלים אפס בשלב גורם לחלוקה באפס.
+- הפונקציה `calculate_ann_gain_limits` מחלקת ב-`max_val - min_val`, שהוא אפס כשכל התוצאות שוות.
+- הקריאה `st.progress` נמצאת בתוך פונקציות עם `@st.cache_data`, כלומר תופעות לוואי בקוד שנשמר במטמון, ו-Streamlit מזהיר על כך.
+- הפונקציה `get_stock_dates_bounds` מפעילה `st.rerun()` בכל שינוי בגבולות, וזה גורם לרינדור כפול.
+- כל ריצה מורידה מחדש את כל היסטוריית המחירים מ-Yahoo, ואין מטמון קבוע.
+- זמן הריצה גדל כמכפלה של תאריכי התחלה, איטרציות של `fsolve` ושלבים, והכל בלולאות פייתון. לכן הוא איטי ברזולוציה גבוהה.
+- קובץ ה-devcontainer מבטל הגנות CORS ו-XSRF.
+- כ-350 שורות CSS מכוונות לסלקטורים פנימיים של Streamlit (`data-testid`), ונשברות בעדכוני גרסה. יש בהן גם כללים כפולים.
 
-### Maintainability
+### תחזוקה
 
-- Tabs 1 and 2 duplicate ~70% of their code (plan CRUD, editor sync,
-  histogram, metrics).
-- Data is passed as dicts keyed by Hebrew strings (`'הרכב התיק'`,
-  `'מספר חודשים'`), mixing UI labels with domain logic.
-- Engine imports `streamlit`, so it cannot be reused or unit-tested outside
-  Streamlit.
-- No tests, no linting, no type checks, no pinned dependency versions.
-- Commit history is all "Update X.py"; no branches/PRs.
+- לשוניות 1 ו-2 משכפלות כ-70% מהקוד: ניהול שלבים, סנכרון העורך, ההיסטוגרמה והמדדים.
+- הנתונים עוברים כמילונים עם מפתחות בעברית (`'הרכב התיק'`, `'מספר חודשים'`), וזה מערבב תוויות ממשק עם לוגיקה.
+- המנוע מייבא את `streamlit`, ולכן אי אפשר להשתמש בו או לבדוק אותו מחוץ ל-Streamlit.
+- אין בדיקות, אין linting, אין בדיקת טיפוסים, וגרסאות התלויות לא נעולות.
+- כל הודעות הקומיט הן "Update X.py", בלי ענפים ובלי PR.
 
 ---
 
-## 4. Upgrade proposal
+## 4. הצעת שדרוג
 
-### 4.1 Recommended architecture
+### 4.1 ארכיטקטורה מומלצת
 
-Split the app into a **pure Python engine + API** and a **modern web frontend**.
+לפצל את האפליקציה ל**מנוע פייתון נקי עם API** ול**ממשק ווב מודרני**.
 
 ```
 ┌──────────────────────────┐        ┌───────────────────────────────┐
@@ -171,97 +117,74 @@ Split the app into a **pure Python engine + API** and a **modern web frontend**.
         Vercel                          Render / Fly.io / Railway
 ```
 
-Why this split:
+למה דווקא החלוקה הזו:
 
-- The numeric engine stays in Python (numpy/pandas are the right tools and the
-  existing logic is reused), but becomes UI-free and testable.
-- The UI moves to React, which gives real interactivity: instant recompute on
-  input change, drag-and-drop, brushing on charts, URL-shareable state, proper
-  RTL, dark mode, mobile layout — none of which Streamlit does well.
+- מנוע החישוב נשאר בפייתון, כי numpy ו-pandas הם הכלים הנכונים והלוגיקה הקיימת נשמרת. הוא רק מתנתק מהממשק והופך לבדיק.
+- הממשק עובר ל-React, שמאפשר אינטראקטיביות אמיתית: חישוב מחדש מיידי בכל שינוי, גרירה ושחרור, סימון טווחים על גרפים, שיתוף מצב בקישור, RTL תקין, מצב כהה ומובייל. בכל אלה Streamlit חלש.
 
-**Alternatives considered**
+**חלופות שנבדקו**
 
-| Option | Pros | Cons |
+| אפשרות | יתרונות | חסרונות |
 |---|---|---|
-| **FastAPI + Next.js** (recommended) | Full UI freedom, fast, scalable, deploys well | Two codebases, needs some TypeScript |
-| Port engine to TypeScript, run in browser (Web Worker) + thin data proxy | Zero-latency sliders, cheap hosting | Rewriting/validating the math in TS |
-| NiceGUI / Reflex (Python-only) | Single language, quick migration | Smaller ecosystems, still framework-bound UI |
-| Plotly Dash | Mature, Python, good charts | Callback model gets heavy; UI still limited |
+| ‏**FastAPI + Next.js** (מומלץ) | חופש מלא בממשק, מהיר, ניתן להרחבה, נפרס בקלות | שני בסיסי קוד, דורש קצת TypeScript |
+| העברת המנוע ל-TypeScript והרצה בדפדפן (Web Worker) עם שרת נתונים דק | סליידרים בלי השהיה, אירוח זול | צריך לכתוב מחדש ולאמת את המתמטיקה |
+| ‏NiceGUI / Reflex (פייתון בלבד) | שפה אחת, מעבר מהיר | אקוסיסטם קטן, הממשק עדיין כבול למסגרת |
+| ‏Plotly Dash | בשל, פייתון, גרפים טובים | מודל ה-callbacks מסתבך, הממשק עדיין מוגבל |
 
-A good middle path: keep the engine in Python, and once results are returned,
-do the cheap interactive parts (histogram binning, range selection,
-percentiles) in the browser so sliders feel instant.
+דרך ביניים טובה: המנוע נשאר בפייתון, ואחרי שהתוצאות חוזרות, החלקים הזולים (חלוקה לעמודות בהיסטוגרמה, בחירת טווח, אחוזונים) מחושבים בדפדפן, כך שהסליידרים מגיבים מיד.
 
-### 4.2 Engine improvements (do first — they are independent of the UI)
+### 4.2 שיפורי מנוע (קודם כל — לא תלויים בממשק)
 
-1. Extract `engine/` with typed dataclasses (`Stage`, `Holding`, `Plan`,
-   `SimulationResult`) and English field names; no Streamlit imports.
-2. Fix the correctness issues in §3 and add regression tests (pytest) with
-   small synthetic price series where the answer is known analytically.
-3. **Vectorize across start dates**: simulate all windows at once as a numpy
-   matrix instead of a Python loop.
-4. **Replace `fsolve`**: final balance is linear in starting amount and monthly
-   deposit (piecewise-linear once tax is included), so those unknowns can be
-   solved in closed form or with a bracketed root finder (`brentq`), which is
-   faster and never "fails to converge". Same for the IRR.
-5. Use **total-return data** (adjusted close / dividends) and add **FX
-   conversion** to ILS (`USDILS=X`) as an option.
-6. Add **inflation (CPI) adjustment** — real vs nominal results; Israeli
-   capital-gains tax is on *real* gains.
-7. Add **management fees** and **leverage borrowing cost**.
-8. Unify the rebalancing model and make it a user option (none / monthly /
-   yearly / threshold).
-9. Persistent **price cache** (Parquet files or Postgres/Supabase table),
-   refreshed daily, instead of downloading full history on every run.
+1. לחלץ תיקייה `engine/` עם מחלקות נתונים מוגדרות טיפוס (`Stage`, `Holding`, `Plan`, `SimulationResult`) ושמות שדות באנגלית, בלי שום ייבוא של Streamlit.
+2. לתקן את תקלות הנכונות מסעיף 3 ולהוסיף בדיקות רגרסיה ב-pytest עם סדרות מחיר סינתטיות קטנות שהתשובה שלהן ידועה אנליטית.
+3. **חישוב וקטורי על כל תאריכי ההתחלה**: להריץ את כל החלונות בבת אחת כמטריצת numpy, במקום לולאת פייתון.
+4. **להחליף את `fsolve`**: היתרה הסופית לינארית בסכום ההתחלתי ובהפקדה החודשית (לינארית למקוטעין כשיש מס), כך שאפשר לפתור את הנעלמים האלה בנוסחה סגורה או עם פותר שורשים תחום (`brentq`). זה מהיר יותר ולעולם לא "נכשל להתכנס". אותו דבר לגבי ה-IRR.
+5. להשתמש בנתוני **תשואה כוללת** (מחיר מתואם או דיבידנדים) ולהוסיף **המרת מטבע** לשקלים (`USDILS=X`) כאפשרות.
+6. להוסיף **התאמה לאינפלציה** (מדד המחירים לצרכן), עם תוצאות ריאליות ונומינליות. מס רווחי הון בישראל מוטל על הרווח **הריאלי**.
+7. להוסיף **דמי ניהול** ו**עלות מימון למינוף**.
+8. לאחד את מודל האיזון ולהפוך אותו לבחירה של המשתמש: בלי איזון, חודשי, שנתי, או לפי סף.
+9. **מטמון מחירים קבוע** (קבצי Parquet או טבלה ב-Postgres או Supabase) שמתעדכן פעם ביום, במקום הורדה מלאה בכל ריצה.
 
-### 4.3 New interactive features
+### 4.3 יכולות אינטראקטיביות חדשות
 
-- **Live recompute** — no "run" button; results update as inputs change
-  (debounced), with a skeleton loader.
-- **Timeline stage builder** — stages shown as blocks on a time axis; drag to
-  reorder, resize to change duration.
-- **Asset search** — any Yahoo ticker with autocomplete, not only the
-  hard-coded list; weight sliders that auto-normalize to 100%; pie preview.
-- **Fan chart** — balance over time with 10/25/50/75/90 percentile bands.
-- **Success-rate heatmap** (Trinity) — withdrawal rate × duration → % of
-  windows that did not run out of money.
-- **Histogram with brushing** — drag to select a band; linked table and
-  metrics update.
-- **Click a historical window** to see its full path, drawdowns and the
-  market events in that period.
-- **Scenario comparison** — save scenarios and overlay them side by side.
-- **Share via URL** and **export** (CSV / PDF report).
-- **Monte Carlo / bootstrap** mode alongside pure historical replay.
-- Dark mode, mobile layout, Hebrew RTL done properly (with an English toggle).
+- **חישוב חי** — בלי כפתור "בצע סימולציה". התוצאות מתעדכנות תוך כדי הקלדה (עם השהיה קצרה) ומוצג שלד טעינה.
+- **בונה שלבים על ציר זמן** — כל שלב הוא בלוק על ציר הזמן. גוררים כדי לשנות סדר ומותחים כדי לשנות משך.
+- **חיפוש נכסים** — כל טיקר של Yahoo עם השלמה אוטומטית, ולא רק הרשימה הקבועה. סליידרי משקל שמתנרמלים אוטומטית ל-100%, ותצוגת עוגה.
+- **גרף מניפה** — היתרה לאורך זמן עם רצועות של אחוזון 10, 25, 50, 75 ו-90.
+- **מפת חום של אחוז הצלחה** (טריניטי) — אחוז משיכה מול משך, ובכל תא אחוז החלונות שבהם הכסף לא נגמר.
+- **היסטוגרמה עם סימון** — גוררים כדי לבחור רצועה, והטבלה והמדדים המקושרים מתעדכנים.
+- **לחיצה על חלון היסטורי** מציגה את המסלול המלא שלו, את הירידות בו ואת אירועי השוק באותה תקופה.
+- **השוואת תרחישים** — שומרים תרחישים ומציגים אותם זה לצד זה.
+- **שיתוף בקישור** ו**ייצוא** ל-CSV או לדוח PDF.
+- **מצב מונטה קרלו או bootstrap** לצד הרצה היסטורית טהורה.
+- מצב כהה, התאמה למובייל, ו-RTL עברי תקין (עם אפשרות מעבר לאנגלית).
 
-### 4.4 Suggested phased plan
+### 4.4 תוכנית עבודה בשלבים
 
-| Phase | Scope | Outcome |
+| שלב | היקף | תוצאה |
 |---|---|---|
-| 0 | Pin deps, add ruff + pytest + CI | Safety net |
-| 1 | Extract engine, fix §3 bugs, tests, vectorize | Correct, fast core (still usable from Streamlit) |
-| 2 | FastAPI endpoints + price cache | Backend ready |
-| 3 | Next.js frontend: Tab 1 parity, then Tab 2 | New UI replaces Streamlit |
-| 4 | New features (fan chart, heatmap, scenarios, sharing, inflation, FX) | Upgrade |
-| 5 | Deploy (Vercel + Render/Fly), optional auth to save scenarios | Production |
+| 0 | נעילת גרסאות תלויות, הוספת ruff, pytest ו-CI | רשת ביטחון |
+| 1 | חילוץ המנוע, תיקון התקלות מסעיף 3, בדיקות, חישוב וקטורי | ליבה נכונה ומהירה (עדיין שמישה מ-Streamlit) |
+| 2 | נקודות קצה ב-FastAPI ומטמון מחירים | השרת מוכן |
+| 3 | ממשק Next.js: השוואה מלאה ללשונית 1, ואחר כך ללשונית 2 | הממשק החדש מחליף את Streamlit |
+| 4 | יכולות חדשות: גרף מניפה, מפת חום, תרחישים, שיתוף, אינפלציה, מטבע | השדרוג עצמו |
+| 5 | פריסה (Vercel עם Render או Fly), ואפשרות להתחברות לשמירת תרחישים | סביבת ייצור |
 
 ---
 
-## 5. Running the current app
+## 5. הרצת האפליקציה הנוכחית
 
 ```bash
 pip install -r requirements.txt
 python main.py          # or: streamlit run main.py
 ```
 
-Opens at `http://localhost:8501`. Requires internet access to Yahoo Finance.
+האפליקציה נפתחת בכתובת `http://localhost:8501`. נדרשת גישה לאינטרנט כדי להגיע ל-Yahoo Finance.
 
-## 6. Open questions for the owner
+## 6. שאלות פתוחות לבעלים
 
-- Should results be in ILS (with FX conversion) or in each asset's native
-  currency?
-- Nominal or inflation-adjusted (real) results by default?
-- Is a Python backend acceptable to host (Render/Fly), or should everything run
-  client-side + serverless?
-- Any need for user accounts / saved scenarios, or is URL sharing enough?
-- Should the hard-coded ticker list remain as "favorites" alongside free search?
+- האם להציג תוצאות בשקלים (עם המרת מטבע) או במטבע המקורי של כל נכס?
+- האם ברירת המחדל היא תוצאות נומינליות או מותאמות לאינפלציה (ריאליות)?
+- האם מקובל לארח שרת פייתון (Render או Fly), או שהכל צריך לרוץ בדפדפן ובפונקציות serverless?
+- האם צריך חשבונות משתמש ושמירת תרחישים, או ששיתוף בקישור מספיק?
+- האם רשימת הנכסים הקבועה נשארת כ"מועדפים" לצד חיפוש חופשי?

@@ -66,3 +66,9 @@ def test_index_page_served():
     r = client.get("/")
     assert r.status_code == 200
     assert "<html" in r.text.lower()
+
+
+def test_ui_files_are_revalidated():
+    r = client.get("/js/app.js")
+    assert r.headers["cache-control"] == "no-cache"
+    assert client.get("/api/meta").json()["version"]

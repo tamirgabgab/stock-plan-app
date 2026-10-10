@@ -14,6 +14,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import __version__
 from .config import FAVORITES
 from .data import DataError, get_market_data
 from .engine import Holding, PlanRequest, Stage, available_range, run_plan
@@ -71,8 +72,18 @@ def _matrix_b64(a: np.ndarray) -> str:
     return base64.b64encode(np.ascontiguousarray(a, dtype="<f4").tobytes()).decode("ascii")
 
 
-app = FastAPI(title="Stock Plan App")
+app = FastAPI(title="Stock Plan App", version=__version__)
 app.add_middleware(GZipMiddleware, minimum_size=2048)
+
+
+@app.middleware("http")
+async def no_stale_assets(request, call_next):
+    # Make the browser revalidate the UI files on every load (cheap: ETag -> 304), so a new
+    # version is picked up without a hard refresh.
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 def _bad_request(exc: Exception) -> HTTPException:
@@ -84,6 +95,7 @@ def meta():
     md = get_market_data()
     return {
         "demo": md.is_demo,
+        "version": __version__,
         "favorites": [{"group": g, "items": [{"label": l, "ticker": t} for l, t in items]}
                       for g, items in FAVORITES.items()],
     }

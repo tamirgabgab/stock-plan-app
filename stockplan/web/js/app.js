@@ -177,7 +177,8 @@ function App() {
               : !error ? html`<div class="empty">${busy ? "טוען נתונים (בפעם הראשונה ההורדה לוקחת כמה שניות)..." : "הגדר תוכנית כדי לראות תוצאות"}</div>` : null}
       </div>
     </main>
-    <footer class="foot muted">לצורכי מחקר ולימוד בלבד. אין לראות בכך ייעוץ השקעות.</footer>`;
+    <footer class="foot muted">לצורכי מחקר ולימוד בלבד. אין לראות בכך ייעוץ השקעות.
+      ${meta.version ? html` · גרסה <span dir="ltr">${meta.version}</span>` : null}</footer>`;
 }
 
 function AutoRun({ auto, setAuto, busy, onRun }) {

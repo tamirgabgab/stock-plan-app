@@ -5,7 +5,7 @@ export const CURRENCY_SYMBOL = { USD: "$", ILS: "₪" };
 const nf0 = new Intl.NumberFormat("he-IL", { maximumFractionDigits: 0 });
 const nf2 = new Intl.NumberFormat("he-IL", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
-export function money(v, currency, { compact = false } = {}) {
+export function money(v, currency, { compact = false, decimals = 0 } = {}) {
   if (v === null || v === undefined || !Number.isFinite(v)) return "—";
   const sym = CURRENCY_SYMBOL[currency] || "";
   if (Math.abs(v) < 0.005) v = 0;              // no "-0"
@@ -16,6 +16,7 @@ export function money(v, currency, { compact = false } = {}) {
     if (a >= 1e6) return `${sign}${sym}${(a / 1e6).toFixed(2)}M`;
     if (a >= 1e4) return `${sign}${sym}${(a / 1e3).toFixed(1)}K`;
   }
+  if (decimals) return `${sign}${sym}${a.toLocaleString("he-IL", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
   return `${sign}${sym}${nf0.format(a)}`;
 }
 

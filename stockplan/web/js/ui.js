@@ -234,6 +234,7 @@ export function SymbolPicker({ ticker, name, onChange }) {
   };
   return html`<div class="sym" ref=${wrap}>
     <div class="sym-name">
+      <span class="sym-label">שם</span>
       <input type="text" value=${q} placeholder="שם (למשל S&P 500, אפל)" aria-label="שם הנכס"
         onInput=${onName} onFocus=${() => q && !list && runSearch(q)} onKeyDown=${onKey}
         onBlur=${() => { if (!list) setQ(name || ""); }} />
@@ -245,8 +246,9 @@ export function SymbolPicker({ ticker, name, onChange }) {
           : html`<li class="sym-empty">לא נמצא. אפשר להקליד את הטיקר ישירות.</li>`}
       </ul>` : null}
     </div>
+    <label class="sym-tk"><span class="sym-label">טיקר</span>
     <input class="sym-ticker" type="text" dir="ltr" value=${t} placeholder="טיקר" aria-label="טיקר"
       onInput=${(e) => setT(e.currentTarget.value)} onBlur=${commitTicker}
-      onKeyDown=${(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
+      onKeyDown=${(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} /></label>
   </div>`;
 }

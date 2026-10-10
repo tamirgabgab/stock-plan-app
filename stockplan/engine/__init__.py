@@ -32,7 +32,7 @@ def validate(req: PlanRequest) -> None:
     if not 0 <= req.tax_rate < 100:
         raise ValueError("שיעור המס חייב להיות בין 0 ל-100")
     if req.solve_for != SOLVE_FINAL and req.target_amount <= 0:
-        raise ValueError("יעד סופי חייב להיות חיובי")
+        raise ValueError("סכום סופי (היעד) חייב להיות חיובי")
 
 
 def _deflator(req, market: Market, cpi) -> np.ndarray:
@@ -283,6 +283,8 @@ def solve_trace(req, md: MarketData) -> dict:
             "n": R, "solved_median": med}
 
 
-__all__ = ["Holding", "Stage", "PlanRequest", "SimulationResult", "run_plan", "available_range",
+from .detail import realization_detail  # noqa: E402  (uses run_plan / run_trinity above)
+
+__all__ = ["realization_detail", "Holding", "Stage", "PlanRequest", "SimulationResult", "run_plan", "available_range",
            "SOLVE_FINAL", "SOLVE_MONTHLY", "SOLVE_START", "SOLVE_RATE",
            "WithdrawStage", "WithdrawRequest", "WithdrawResult", "run_trinity", "trinity_heatmap", "solve_trace"]

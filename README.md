@@ -49,7 +49,12 @@ the UI — it is not real market history).
   pro-rata sale with the tax grossed up. Solve for the final balance, the maximum
   withdrawal rate or the minimum starting amount. Success-rate heat map (withdrawal
   rate × horizon, survival or capital preservation), click a cell to load it.
-- **Pleasant to use** – resizable settings panel, calendar date picker plus a
+- **Realization detail** – open any start date (table, double-click or the pinned
+  path) for its full trade journal: every buy and sell with date, price (and the USD
+  quote in ILS mode), amount, units, tax, and each purchase's return to exit, total and
+  annualized. Next to it, the weighted basket of raw prices (weights as fractions, per
+  stage; optionally times the USD/ILS rate) with the buy dates marked in red.
+- **Pleasant to use** – resizable settings panel (charts follow its width), calendar date picker plus a
   timeline range slider for the test window, a name ↔ ticker picker (built-in
   dictionary with Hebrew aliases, Yahoo search for the rest), a one-click
   "raw stock price" preset (USD, nominal, no CPI).

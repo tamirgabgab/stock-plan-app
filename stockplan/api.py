@@ -18,8 +18,8 @@ from . import __version__
 from .config import FAVORITES
 from .data import DataError, get_market_data
 from .data.search import lookup, search
-from .engine import (Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range, run_plan,
-                     run_trinity, solve_trace, trinity_heatmap)
+from .engine import (Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range,
+                     realization_detail, run_plan, run_trinity, solve_trace, trinity_heatmap)
 
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -114,6 +114,16 @@ class HeatmapIn(BaseModel):
     years_step: int = Field(5, ge=1, le=50)
 
 
+class RealizationIn(BaseModel):
+    plan: PlanIn
+    start_date: date
+
+
+class TrinityRealizationIn(BaseModel):
+    plan: TrinityIn
+    start_date: date
+
+
 def _floats(a) -> list:
     """JSON-safe list: NaN/inf become null, values rounded to cents."""
     return [None if not math.isfinite(v) else round(float(v), 4) for v in np.asarray(a, dtype=float)]
@@ -178,6 +188,26 @@ def plan_solve_trace(plan: PlanIn):
 @app.post("/api/trinity/solve_trace")
 def trinity_solve_trace(plan: TrinityIn):
     return _trace(plan.to_request())
+
+
+def _detail(req, start):
+    try:
+        return realization_detail(req, get_market_data(), start)
+    except (DataError, ValueError) as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        log.exception("realization detail failed")
+        raise HTTPException(status_code=500, detail=f"שגיאה פנימית: {exc}")
+
+
+@app.post("/api/realization")
+def plan_realization(body: RealizationIn):
+    return _detail(body.plan.to_request(), body.start_date)
+
+
+@app.post("/api/trinity/realization")
+def trinity_realization(body: TrinityRealizationIn):
+    return _detail(body.plan.to_request(), body.start_date)
 
 
 @app.post("/api/range")

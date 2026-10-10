@@ -45,7 +45,8 @@ def _weights(req: WithdrawRequest, market: Market) -> np.ndarray:
 
 
 def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarray] = None,
-                      rows: Optional[np.ndarray] = None, record: bool = False) -> WithdrawOutput:
+                      rows: Optional[np.ndarray] = None, record: bool = False,
+                      journal: Optional[list] = None) -> WithdrawOutput:
     """Run the plan for the selected realizations (``rows`` may repeat a realization, which
     is how the heat map runs many withdrawal rates in one pass).
 
@@ -61,6 +62,7 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
     cpi = market.cpi_daily[idx] if market.cpi_daily is not None else None
     ones = np.ones(R)
     book = Book(R, A, req.tax_rate / 100, real_tax)
+    book.journal = journal
 
     paths = np.empty((R, T + 1)) if record else None
     paid = np.zeros((R, T + 1)) if record else None
@@ -79,12 +81,14 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
     stage_starts = np.cumsum([0] + [s.months for s in req.stages])
 
     cpi0 = cpi[:, 0] if cpi is not None else None
+    book.m, book.ctx = 0, "start"
     book.buy(start_amount * scale(0), W[0], cpi0)
 
     for s, stage in enumerate(req.stages):
         w = W[s]
         m0 = stage_starts[s]
         if s > 0:
+            book.m, book.ctx = m0, "switch"
             book.reallocate(w, cpi[:, m0] if cpi is not None else None, taxable=req.tax_on_switch)
 
         rate = rate_override if rate_override is not None else ones * stage.rate
@@ -117,6 +121,7 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
                 monthly = fixed * sc
             want += monthly
 
+            book.m, book.ctx = m, ("one_time" if j == 0 and stage.one_time > 0 else "withdraw")
             got = book.withdraw_net(want, cpi_m)
             short = (got < want - 1e-6) & (shortfall_at < 0)
             shortfall_at[short] = m

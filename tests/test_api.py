@@ -95,3 +95,17 @@ def test_solve_trace_reaches_the_target():
     body = client.post("/api/trinity/solve_trace", json=tri).json()
     assert body["converged"] and 0 < body["x"] < 100
     assert client.post("/api/solve_trace", json=PLAN).status_code == 400     # nothing to solve
+
+
+def test_realization_detail_endpoint():
+    sim = client.post("/api/simulate", json=PLAN).json()
+    start = sim["start_dates"][3]
+    body = client.post("/api/realization", json={"plan": PLAN, "start_date": start}).json()
+    assert body["start_date"] == start
+    assert body["summary"]["final"] == pytest.approx(sim["final"][3], rel=1e-4)
+    assert len([t for t in body["trades"] if t["kind"] == "buy"]) == 120 * 2
+    assert body["has_fx"] and len(body["basket"]["dates"]) == len(body["basket"]["fx"])
+    tri = {"stages": [{"months": 240, "rate": 4, "holdings": [{"ticker": "SPY", "weight": 100}]}], "currency": "USD"}
+    sim = client.post("/api/trinity/simulate", json=tri).json()
+    body = client.post("/api/trinity/realization", json={"plan": tri, "start_date": sim["start_dates"][0]}).json()
+    assert body["trinity"] and body["summary"]["final"] == pytest.approx(sim["final"][0], rel=1e-4)

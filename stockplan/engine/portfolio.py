@@ -20,6 +20,22 @@ class Book:
         self.Bn = np.zeros((R, A))           # nominal cost basis
         self.Bc = np.zeros((R, A))           # sum of (amount / CPI at purchase): indexed basis = Bc * CPI_now
         self.shield = np.zeros(R)            # accumulated realized losses
+        # Optional trade journal for a single-realization run (row 0 only). The simulators
+        # set ``m`` (month) and ``ctx`` (why the trade happens) before each operation.
+        self.journal: list | None = None
+        self.m = 0
+        self.ctx = ""
+
+    def _log(self, kind: str, amounts: np.ndarray, tax: float = 0.0, gains: np.ndarray | None = None) -> None:
+        if self.journal is None:
+            return
+        pos = np.maximum(gains, 0.0) if gains is not None else None
+        pos_sum = float(pos.sum()) if pos is not None else 0.0
+        for a, amt in enumerate(amounts):
+            if amt > 1e-9:
+                share = tax * (pos[a] / pos_sum if pos_sum > 0 else amt / amounts.sum())
+                self.journal.append({"m": int(self.m), "ctx": self.ctx, "kind": kind, "asset": a,
+                                     "amount": float(amt), "tax": float(share)})
 
     @property
     def total(self) -> np.ndarray:
@@ -45,6 +61,7 @@ class Book:
 
     def buy(self, amount: np.ndarray, w: np.ndarray, cpi_now) -> None:
         add = amount[:, None] * w
+        self._log("buy", add[0])
         self.V += add
         self.Bn += add
         if self.real_tax:
@@ -52,9 +69,11 @@ class Book:
 
     def sell_fraction(self, frac: np.ndarray, cpi_now) -> tuple[np.ndarray, np.ndarray]:
         """Sell ``frac`` (R, A) of each holding. Returns (gross proceeds, tax) per realization."""
-        G = (self.gains(cpi_now) * frac).sum(axis=1)
+        Ga = self.gains(cpi_now) * frac
+        G = Ga.sum(axis=1)
         gross = (self.V * frac).sum(axis=1)
         tax = self.tax_on(G)
+        self._log("sell", (self.V * frac)[0], float(tax[0]), Ga[0])
         self.V *= 1 - frac
         self.Bn *= 1 - frac
         self.Bc *= 1 - frac
@@ -87,6 +106,9 @@ class Book:
         """
         target = self.total[:, None] * w
         if not taxable:
+            delta = (target - self.V)[0]
+            self._log("sell", np.maximum(-delta, 0.0))
+            self._log("buy", np.maximum(delta, 0.0))
             self.V = target
             self.Bn = self.Bn.sum(axis=1)[:, None] * w
             self.Bc = self.Bc.sum(axis=1)[:, None] * w
@@ -99,6 +121,7 @@ class Book:
         dsum = deficit.sum(axis=1)
         scale = np.divide(cash, dsum, out=np.zeros_like(cash), where=dsum > 0)
         add = deficit * scale[:, None]
+        self._log("buy", add[0])
         self.V += add
         self.Bn += add
         if self.real_tax:

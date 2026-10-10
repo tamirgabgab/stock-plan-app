@@ -50,12 +50,13 @@ def _stage_weights(req: PlanRequest, market: Market) -> np.ndarray:
 
 def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
              rows: Optional[np.ndarray] = None, record: bool = False,
-             unit_growth: bool = False) -> SimOutput:
+             unit_growth: bool = False, journal: Optional[list] = None) -> SimOutput:
     """Run the plan for the selected realizations.
 
     ``x`` overrides the solved variable per realization (start amount or the monthly
     deposit of every stage). ``unit_growth`` simulates 1 unit invested at the start with no
     deposits, fees only, no tax: used for the time-weighted return and drawdown.
+    ``journal`` (a list) collects the trades of row 0, for the realization detail view.
     """
     idx = market.day_idx if rows is None else market.day_idx[rows]
     R, T = idx.shape[0], idx.shape[1] - 1
@@ -68,6 +69,7 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
     cpi = market.cpi_daily[idx] if market.cpi_daily is not None else None
     ones = np.ones(R)
     book = Book(R, A, rate, real_tax)
+    book.journal = journal
 
     paths = np.empty((R, T + 1)) if record else None
     deposits = np.zeros((R, T + 1)) if record else None
@@ -99,6 +101,7 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
         cpi0 = cpi[:, m0] if cpi is not None else None
 
         if s > 0:
+            book.m, book.ctx = m0, "switch"
             book.reallocate(w, cpi0, taxable=req.tax_on_switch and not unit_growth)
 
         if unit_growth:
@@ -117,6 +120,7 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
             amount = monthly + (initial if j == 0 else 0.0)
             if cpi is not None and not unit_growth:
                 amount = amount * deposit_scale(m)
+            book.m, book.ctx = m, "deposit"
             book.buy(amount, w, cpi_m)
             if record:
                 deposits[:, m] = amount

@@ -48,14 +48,15 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
     <details open class="section">
       <summary>מה לחשב</summary>
       <${Segmented} options=${SOLVE_OPTIONS} value=${plan.solve_for} onChange=${set("solve_for")}
-        hint="סכום סופי: מריצים את התוכנית כמו שהיא. הפקדה חודשית או סכום התחלתי: מחשבים לכל תקופה היסטורית כמה צריך כדי להגיע ליעד." />
+        hint="השדה שנבחר כאן הוא הנעלם, ולכן הוא נעול ומחושב. סכום סופי: מריצים את התוכנית כמו שהיא. הפקדה חודשית או סכום התחלתי: מחשבים לכל תקופה היסטורית כמה צריך כדי להגיע לסכום הסופי." />
       <div class="grid-2">
         <${NumberField} label="סכום התחלתי" value=${plan.start_amount} onChange=${set("start_amount")}
           step=${1000} suffix=${sym} disabled=${plan.solve_for === "start_amount"}
           note=${plan.solve_for === "start_amount" ? "מחושב" : money(plan.start_amount, plan.currency)} />
-        <${NumberField} label="יעד סופי" value=${plan.target_amount} onChange=${set("target_amount")}
-          step=${10000} suffix=${sym} note=${money(plan.target_amount, plan.currency)}
-          hint="משמש לחישוב הסיכוי להגיע ליעד, ובמצבי הפתרון זה הסכום שצריך להגיע אליו." />
+        <${NumberField} label="סכום סופי" value=${plan.target_amount} onChange=${set("target_amount")}
+          step=${10000} suffix=${sym} disabled=${plan.solve_for === "final"}
+          note=${plan.solve_for === "final" ? "מחושב" : money(plan.target_amount, plan.currency)}
+          hint="במצב סכום סופי זה מה שמחושב, ולכן השדה נעול. בהפקדה חודשית או בסכום התחלתי זה הסכום שצריך להגיע אליו בסוף." />
       </div>
       <div class="grid-2">
         <${Segmented} label="מטבע" options=${[{ value: "ILS", label: "₪ שקל" }, { value: "USD", label: "$ דולר" }]}
@@ -63,7 +64,7 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
           hint="המניות נסחרות בדולר. בשקלים כל הפקדה מומרת לפי השער היציג של אותו יום, והשווי מוצג לפי השער העדכני." />
         <${Segmented} label="הצגת ערכים" options=${[{ value: false, label: "נומינלי" }, { value: true, label: "ריאלי" }]}
           value=${plan.real} onChange=${set("real")}
-          hint="ריאלי: כל הסכומים, גם ההפקדות והיעד שאתה מזין, הם בכסף של היום. הפקדה בעבר מוקטנת לפי מדד המחירים של המטבע שנבחר, והתוצאות מוצגות בכוח הקנייה של היום." />
+          hint="ריאלי: כל הסכומים, גם ההפקדות והסכום הסופי שאתה מזין, הם בכסף של היום. הפקדה בעבר מוקטנת לפי מדד המחירים של המטבע שנבחר, והתוצאות מוצגות בכוח הקנייה של היום." />
       </div>
       <${Toggle} label="הצמדת ההפקדות למדד" checked=${plan.index_deposits} onChange=${set("index_deposits")}
         hint="ההפקדות גדלות עם האינפלציה, כך שערכן הריאלי נשמר. כבוי: הסכום הנומינלי קבוע מתחילת התוכנית." />
@@ -183,18 +184,22 @@ export function HoldingsTable({ stage, onChange }) {
   const setSymbol = (j, { ticker, name }) => onChange((s) => ({
     ...s, holdings: s.holdings.map((h, k) => (k === j ? { ...h, ticker, name } : h)),
   }));
-  return html`<table class="holdings">
-      <thead><tr><th>נכס: שם או טיקר <${Hint} text="הקלד שם (למשל S&P 500, אפל, נאסדק) ובחר מהרשימה, או הקלד טיקר של Yahoo Finance ישירות; השדה השני מתמלא לבד. המחירים כוללים דיבידנדים, חוץ ממדדים שמתחילים ב-^ (למשל ^GSPC). למדד S&P 500 עם דיבידנדים השתמש ב-^SP500TR או SPY." /></th><th>משקל</th><th>מינוף</th><th></th></tr></thead>
-      <tbody>
-        ${stage.holdings.map((h, j) => html`<tr key=${j}>
-          <td><${SymbolPicker} ticker=${h.ticker} name=${h.name || ""} onChange=${(v) => setSymbol(j, v)} /></td>
-          <td><${NumberInput} value=${h.weight} onChange=${(v) => setHolding(j, "weight", v)} step=${5} max=${100} suffix="%" /></td>
-          <td><${NumberInput} value=${h.leverage} onChange=${(v) => setHolding(j, "leverage", v)} step=${0.5} max=${10} suffix="×" /></td>
-          <td><${IconButton} title="הסר נכס" danger disabled=${stage.holdings.length === 1}
-            onClick=${() => removeHolding(j)}>✕</${IconButton}></td>
-        </tr>`)}
-      </tbody>
-    </table>
+  return html`<div class="holdings">
+      <div class="holdings-title">נכסים <${Hint} text="הקלד שם (למשל S&P 500, אפל, נאסדק) ובחר מהרשימה, או הקלד טיקר של Yahoo Finance ישירות; השדה השני מתמלא לבד. המחירים כוללים דיבידנדים, חוץ ממדדים שמתחילים ב-^ (למשל ^GSPC). למדד S&P 500 עם דיבידנדים השתמש ב-^SP500TR או SPY." /></div>
+      ${stage.holdings.map((h, j) => html`<div class="holding" key=${j}>
+        <div class="holding-top">
+          <${SymbolPicker} ticker=${h.ticker} name=${h.name || ""} onChange=${(v) => setSymbol(j, v)} />
+          <${IconButton} title="הסר נכס" danger disabled=${stage.holdings.length === 1}
+            onClick=${() => removeHolding(j)}>✕</${IconButton}>
+        </div>
+        <div class="holding-bottom">
+          <label class="mini-field"><span>משקל</span>
+            <${NumberInput} value=${h.weight} onChange=${(v) => setHolding(j, "weight", v)} step=${5} max=${100} suffix="%" /></label>
+          <label class="mini-field"><span>מינוף</span>
+            <${NumberInput} value=${h.leverage} onChange=${(v) => setHolding(j, "leverage", v)} step=${0.5} max=${10} suffix="×" /></label>
+        </div>
+      </div>`)}
+    </div>
     <div class="stage-foot">
       <button type="button" class="btn link" onClick=${addHolding}>+ הוסף נכס</button>
       <span class=${"weight-sum" + (Math.abs(totalWeight - 100) > 0.01 ? " warn" : "")}>

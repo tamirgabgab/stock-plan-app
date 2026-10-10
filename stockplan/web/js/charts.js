@@ -240,3 +240,56 @@ export function solverFigure({ gridX, gridY, target, steps, upto, xLabel, yPrefi
   });
   return { data, layout };
 }
+
+// Keep a plot the width of its container. Plotly's own "responsive" only listens to window
+// resizes, so dragging the settings panel (or a modal opening) would leave stale widths.
+export function observeResize(gd) {
+  if (!gd || typeof ResizeObserver === "undefined") return () => {};
+  let frame = 0, lastW = gd.clientWidth, lastH = gd.clientHeight;
+  const ro = new ResizeObserver(() => {
+    const w = gd.clientWidth, h = gd.clientHeight;
+    if (w === lastW && h === lastH) return;
+    lastW = w; lastH = h;
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => { if (gd._fullLayout) window.Plotly.Plots.resize(gd); });
+  });
+  ro.observe(gd);
+  return () => { cancelAnimationFrame(frame); ro.disconnect(); };
+}
+
+// One realization: the weighted basket of raw prices, buy dates in red, sell dates in orange,
+// stage starts as dashed lines. ``fx`` multiplies by the USD/ILS rate (shekel view).
+export function basketFigure({ basket, buys, sells, stages, useFx, highlight }) {
+  const t = theme();
+  const red = "#d63c3c";
+  const val = (s) => s.basket_usd.map((v, i) => (useFx && s.fx ? v * s.fx[i] : v));
+  const pre = useFx ? "₪" : "$";
+  const data = [
+    { x: basket.dates, y: val(basket), mode: "lines", line: { width: 1.6, color: t.blue }, name: "מחיר הסל",
+      hovertemplate: `%{x|%d/%m/%Y}<br>${pre}%{y:,.2f}<extra></extra>` },
+    { x: buys.dates, y: val(buys), mode: "markers", name: "קנייה",
+      marker: { size: 6, color: red, line: { width: 1, color: t.surface } },
+      hovertemplate: `קנייה %{x|%d/%m/%Y}<br>${pre}%{y:,.2f}<extra></extra>` },
+  ];
+  if (sells.dates.length) {
+    data.push({ x: sells.dates, y: val(sells), mode: "markers", name: "מכירה",
+      marker: { size: 6, color: t.orange, symbol: "diamond", line: { width: 1, color: t.surface } },
+      hovertemplate: `מכירה %{x|%d/%m/%Y}<br>${pre}%{y:,.2f}<extra></extra>` });
+  }
+  if (highlight) {
+    data.push({ x: [highlight.date], y: [useFx && highlight.fx ? highlight.usd * highlight.fx : highlight.usd], mode: "markers",
+      hoverinfo: "skip", showlegend: false,
+      marker: { size: 16, color: "rgba(0,0,0,0)", line: { width: 3, color: t.violet } } });
+  }
+  const shapes = stages.slice(1).map((s) => ({ type: "line", yref: "paper", y0: 0, y1: 1, x0: s.start_date, x1: s.start_date,
+    line: { color: t.muted, width: 1, dash: "dash" } }));
+  const annotations = stages.length > 1 ? stages.map((s) => ({ x: s.start_date, xanchor: "left", yref: "paper", y: 1,
+    yanchor: "top", text: s.name, showarrow: false, font: { size: 11, color: t.text2 } })) : [];
+  const layout = baseLayout(t, {
+    shapes, annotations, hovermode: "closest", dragmode: "zoom",
+    margin: { l: 64, r: 16, t: 10, b: 40 },
+    xaxis: axis(t, { type: "date" }),
+    yaxis: axis(t, { tickprefix: pre, tickformat: "~s", fixedrange: true }),
+  });
+  return { data, layout };
+}

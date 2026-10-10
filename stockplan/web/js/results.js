@@ -1,18 +1,19 @@
 // Results area: KPI tiles, fan chart over time, cross-section histogram, outcome by start date
 // and the realizations table. All panels share one "active realization" (hovered or pinned).
 import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
-import { fanFigure, histFigure, outcomeFigure, rankFigure, PLOT_CONFIG, theme } from "./charts.js";
+import { fanFigure, histFigure, observeResize, outcomeFigure, rankFigure, PLOT_CONFIG, theme } from "./charts.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
 import { column, fractionBetween, histogram, nearestRow, nearestToQuantile, quantileSorted, rankSeries, row,
          sortedFinite, summarize } from "./stats.js";
 import { DualRange, Segmented, Toggle } from "./ui.js";
+import { RealizationDetail } from "./detail.js";
 
 const SOLVED_LABEL = { monthly_deposit: "הפקדה חודשית נדרשת", start_amount: "סכום התחלתי נדרש" };
 
 // Wording that differs between the accumulation and the withdrawal (Trinity) results.
 // ``res.labels`` carries one of these; the shared panels below read it.
 export const ACCUMULATION_LABELS = {
-  solved: SOLVED_LABEL, outcome: "סכום סופי", flow: "סך הפקדות", flowVerb: "הופקד",
+  solved: SOLVED_LABEL, outcome: "סכום סופי", flow: "סך הפקדות", flowVerb: "הופקד", detailApi: "/api/realization",
   outcomeSub: (res, i) => `תשואה שנתית (IRR): ${pct(res.raw.irr[i])}`,
 };
 export const solvedLabel = (res) => res.labels.solved[res.plan.solve_for] || res.labels.outcome;
@@ -37,7 +38,11 @@ function usePlot(ref, build, deps, bind) {
     const off = bind(gd);
     return () => { off && off(); };
   }, [deps[0]]);
-  useEffect(() => () => { if (ref.current) window.Plotly.purge(ref.current); }, []);
+  useEffect(() => {
+    const gd = ref.current;
+    const off = observeResize(gd);
+    return () => { off(); if (gd) window.Plotly.purge(gd); };
+  }, []);
 }
 
 // Realizations that actually ended at the p1, median and p2 percentiles of the outcome
@@ -57,9 +62,22 @@ export function representative(res, p1, p2) {
 export function useActive(res, ui) {
   const [hover, setHover] = useState(null);
   const [pinned, setPinned] = useState(null);
+  const [detail, setDetail] = useState(null);
+  useEffect(() => setDetail(null), [res]);
   const active = hover ?? pinned;
   const reps = useMemo(() => (ui.showReps ? representative(res, ui.p1, ui.p2) : []), [res, ui.showReps, ui.p1, ui.p2]);
-  return { active, setHover, pinned, setPinned, reps };
+  const openDetail = (i) => { setPinned(i); setDetail(i); };
+  return { active, setHover, pinned, setPinned, reps, detail, openDetail, closeDetail: () => setDetail(null) };
+}
+
+// In accumulation the target is meaningless in "final" mode (the final value is the unknown);
+// in Trinity it is the balance that must remain, so it is shown in every mode.
+const targetShown = (res) => res.plan.solve_for !== "final" || res.labels.targetInFinal;
+
+// The detail modal for the open realization (if any); prev/next keep the pinned path in sync.
+export function DetailModal({ res, detail, openDetail, closeDetail, themeKey }) {
+  if (detail === null || detail === undefined) return null;
+  return html`<${RealizationDetail} res=${res} index=${detail} onClose=${closeDetail} onNav=${openDetail} themeKey=${themeKey} />`;
 }
 
 export function Results({ res, ui, setUi, themeKey }) {
@@ -73,6 +91,7 @@ export function Results({ res, ui, setUi, themeKey }) {
       <${OutcomeByStart} ...${shared} />
     </div>
     <${RealizationsTable} ...${shared} columns=${accumulationColumns(res)} />
+    <${DetailModal} ...${shared} />
   </div>`;
 }
 
@@ -94,11 +113,11 @@ function Kpis({ res }) {
   const tiles = [];
   if (plan.solve_for === "final") {
     const fin = summarize(raw.final);
-    const reach = fractionBetween(fin.sorted, plan.target_amount, Infinity).frac * 100;
+    const losses = raw.final.filter((v, i) => v < raw.deposits_total[i]).length;
     const worst = raw.final.indexOf(fin.min), best = raw.final.indexOf(fin.max);
     tiles.push(
       html`<${Tile} label="סכום סופי חציוני" value=${m(fin.median)} sub=${`ממוצע ${m(fin.mean)}`} />`,
-      html`<${Tile} label="סיכוי להגיע ליעד" value=${pct(reach, 1)} sub=${`יעד ${m(plan.target_amount)}`} />`,
+      html`<${Tile} label="סיכוי להפסד" value=${pct((100 * losses) / raw.n, 1)} sub="סכום סופי נמוך מסך ההפקדות" />`,
       html`<${Tile} label="תשואה שנתית (IRR) חציונית" value=${pct(irr?.median)} sub=${`10%–90%: ${pct(irr?.p10, 1)} עד ${pct(irr?.p90, 1)}`} />`,
       html`<${Tile} label="סך הפקדות (חציון)" value=${m(dep?.median)} sub=${`רווח חציוני ${m(fin.median - (dep?.median || 0))}`} />`,
       html`<${Tile} label="התקופה הגרועה" value=${m(fin.min)} sub=${`התחלה ${dateHe(raw.start_dates[worst])}`} />`,
@@ -127,7 +146,7 @@ function Kpis({ res }) {
 
 // -------------------------------------------------------------------------- Fan chart
 
-export function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, themeKey, reps }) {
+export function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, themeKey, reps, openDetail }) {
   const ref = useRef(null);
   const [tip, setTip] = useState(null);
   const sym = CURRENCY_SYMBOL[res.plan.currency];
@@ -139,7 +158,7 @@ export function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, 
 
   usePlot(ref, () => fanFigure({
     cols: res.cs.sorted, mean: res.cs.mean, deposits: res.depMean, p1: ui.p1, p2: ui.p2,
-    target: res.plan.target_amount, showDeposits: ui.showDeposits, showTarget: ui.showTarget,
+    target: targetShown(res) ? res.plan.target_amount : 0, showDeposits: ui.showDeposits, showTarget: ui.showTarget,
     logY: ui.logY, currencySymbol: sym, timeIdx, highlight, reps: repTraces, flowLabel: res.labels.flow,
   }), [res, ui.p1, ui.p2, ui.showDeposits, ui.showTarget, ui.logY, timeIdx, active, themeKey, repTraces], (gd) => {
     let frame = 0, last = null, curRow = null, side = "right";
@@ -200,8 +219,9 @@ export function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, 
     <div class="card-head">
       <div><h2>שווי התיק לאורך זמן</h2>
         <p class="muted">קו מודגש: חציון. מקווקו: ממוצע. רקע: טווח האחוזונים. ריחוף מציג את המסלול הקרוב לסמן, ולחיצה נועצת אותו.</p></div>
-      ${pinned !== null ? html`<button class="chip" onClick=${() => setPinned(null)}>
-        מסלול נעוץ: ${dateHe(res.raw.start_dates[pinned])} ✕</button>` : null}
+      ${pinned !== null ? html`<div class="pin-actions">
+        <button class="btn primary small" onClick=${() => openDetail(pinned)}>פירוט מלא</button>
+        <button class="chip" onClick=${() => setPinned(null)}>מסלול נעוץ: ${dateHe(res.raw.start_dates[pinned])} ✕</button></div>` : null}
     </div>
     <div class="controls">
       <label class="mini">מאחוזון <input type="number" dir="ltr" min="0" max="100" step="1" value=${ui.p1}
@@ -211,7 +231,7 @@ export function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, 
       <div class="segmented small">${presets.map(([a, b]) => html`<button type="button"
         class=${ui.p1 === a && ui.p2 === b ? "on" : ""} onClick=${() => setUi((u) => ({ ...u, p1: a, p2: b }))}>${a}–${b}</button>`)}</div>
       <${Toggle} label=${res.labels.flow} checked=${ui.showDeposits} onChange=${(v) => setUi((u) => ({ ...u, showDeposits: v }))} />
-      ${res.plan.target_amount > 0 ? html`<${Toggle} label="יעד" checked=${ui.showTarget} onChange=${(v) => setUi((u) => ({ ...u, showTarget: v }))} />` : null}
+      ${targetShown(res) && res.plan.target_amount > 0 ? html`<${Toggle} label=${res.labels.targetLabel || "סכום סופי (היעד)"} checked=${ui.showTarget} onChange=${(v) => setUi((u) => ({ ...u, showTarget: v }))} />` : null}
       <${Toggle} label="סקאלה לוגריתמית" checked=${ui.logY} onChange=${(v) => setUi((u) => ({ ...u, logY: v }))} />
       <${Toggle} label="מסלולים מייצגים" checked=${ui.showReps} onChange=${(v) => setUi((u) => ({ ...u, showReps: v }))}
         hint="שלוש ריאליזציות אמיתיות: אלה שסיימו קרוב לאחוזון התחתון, לחציון ולאחוזון העליון של התוצאה. בשונה מהקרן, אלה מסלולים שבאמת קרו, עם כל הירידות והקפיצות." />
@@ -299,8 +319,9 @@ export const ACCUMULATION_SOURCES = [
         if (v < res.deps.at(r, t)) loss++;
         if (v >= res.plan.target_amount) reach++;
       }
-      return [{ label: "סיכוי להפסד (שווי מתחת להפקדות)", value: pct((100 * loss) / res.n, 1) },
-              { label: "סיכוי להיות מעל היעד", value: pct((100 * reach) / res.n, 1) }];
+      const out = [{ label: "סיכוי להפסד (שווי מתחת להפקדות)", value: pct((100 * loss) / res.n, 1) }];
+      if (res.plan.solve_for !== "final") out.push({ label: "סיכוי להיות מעל הסכום הסופי (היעד)", value: pct((100 * reach) / res.n, 1) });
+      return out;
     } },
   SOLVED_SOURCE,
   { key: "dd", kind: "pct", label: "ירידה מהשיא: התיק", title: () => "התפלגות הירידה המקסימלית מהשיא: תשואת התיק",
@@ -488,7 +509,7 @@ function accumulationColumns(res) {
   ];
 }
 
-export function RealizationsTable({ res, active, setHover, pinned, setPinned, columns }) {
+export function RealizationsTable({ res, active, setHover, pinned, setPinned, columns, openDetail }) {
   const { raw } = res;
   const [sort, setSort] = useState({ key: "start", dir: 1 });
   const [page, setPage] = useState(0);
@@ -522,15 +543,17 @@ export function RealizationsTable({ res, active, setHover, pinned, setPinned, co
 
   return html`<section class="card" aria-label="כל הריאליזציות">
     <div class="card-head"><div><h2>כל הריאליזציות</h2>
-      <p class="muted">ריחוף על שורה מציג את המסלול שלה בגרף, ולחיצה נועצת אותו. לחיצה על כותרת ממיינת.</p></div>
+      <p class="muted">ריחוף על שורה מציג את המסלול שלה בגרף, ולחיצה נועצת אותו. "פירוט" (או לחיצה כפולה) פותח את כל פעולות המסחר של אותה ריאליזציה. לחיצה על כותרת ממיינת.</p></div>
       <button class="btn ghost" onClick=${toCsv}>הורד CSV</button></div>
     <div class="table-wrap"><table class="data">
       <thead><tr>${cols.map((c) => html`<th><button type="button" onClick=${() => clickSort(c.key)}>
-        ${c.label}${sort.key === c.key ? (sort.dir > 0 ? " ▲" : " ▼") : ""}</button></th>`)}</tr></thead>
+        ${c.label}${sort.key === c.key ? (sort.dir > 0 ? " ▲" : " ▼") : ""}</button></th>`)}<th></th></tr></thead>
       <tbody onMouseLeave=${() => setHover(null)}>
         ${shown.map((i) => html`<tr key=${i} class=${(i === active ? "active" : "") + (i === pinned ? " pinned" : "")}
-            onMouseEnter=${() => setHover(i)} onClick=${() => setPinned(i === pinned ? null : i)}>
+            onMouseEnter=${() => setHover(i)} onClick=${() => setPinned(i === pinned ? null : i)}
+            onDblClick=${() => openDetail(i)}>
           ${cols.map((c) => html`<td dir=${c.key === "start" || c.key === "end" || c.rtl ? "rtl" : "ltr"}>${c.fmt(c.get(i))}</td>`)}
+          <td><button type="button" class="btn link small" onClick=${(e) => { e.stopPropagation(); openDetail(i); }}>פירוט ›</button></td>
         </tr>`)}
       </tbody>
     </table></div>

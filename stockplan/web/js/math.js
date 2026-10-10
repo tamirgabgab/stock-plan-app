@@ -1,7 +1,7 @@
 // "Math" tab: the model behind every number in the app, as text plus LaTeX (KaTeX), with the
 // general equations next to a version that plugs in the current plan and its results.
 import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
-import { solverFigure, PLOT_CONFIG } from "./charts.js";
+import { observeResize, solverFigure, PLOT_CONFIG } from "./charts.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
 import { toPayload } from "./inputs.js";
 import { summarize } from "./stats.js";
@@ -82,7 +82,9 @@ function DepositsMath({ plan, res }) {
       <div class="table-wrap"><table class="vals"><tbody>
         <tr><th>משך</th><td colspan="4">${T(S`T = ${months}`)} חודשים (${monthsLabel(months)}), ב-${plan.stages.length} ${multi ? "שלבים" : "שלב"}</td></tr>
         <tr><th>סכום התחלתי</th><td colspan="4">${plan.solve_for === "start_amount" ? html`${T(S`S_0`)} הוא הנעלם` : html`${T(S`S_0 = ${n(plan.start_amount)}`)} ${cur}`}</td></tr>
-        <tr><th>יעד</th><td colspan="4">${T(S`F^\star = ${n(plan.target_amount)}`)} ${cur}${plan.solve_for === "final" ? " (משמש רק לסיכוי להגיע ליעד)" : " (הסכום שצריך להגיע אליו)"}</td></tr>
+        ${plan.solve_for === "final"
+          ? html`<tr><th>סכום סופי</th><td colspan="4">${T(S`F`)}: הנעלם, מחושב לכל ריאליזציה</td></tr>`
+          : html`<tr><th>סכום סופי (יעד)</th><td colspan="4">${T(S`F^\star = ${n(plan.target_amount)}`)} ${cur} (הסכום שצריך להגיע אליו)</td></tr>`}
         <tr><th>מס</th><td colspan="4">${T(S`\tau = ${fr(tau, 3)}`)} על רווח ${plan.tax_basis === "real" ? "ריאלי" : "נומינלי"}${multi ? (plan.tax_on_switch ? ", מעבר בין שלבים הוא אירוע מס" : ", מעבר בין שלבים פטור ממס") : ""}</td></tr>
         <tr><th>דמי ניהול</th><td colspan="4">${T(S`f = ${fr(fee, 4)}`)} לשנה, כלומר מקדם חודשי ${T(S`\varphi = (1-f)^{1/12} = ${fr(phi, 6)}`)}</td></tr>
         <tr><th>מינוף</th><td colspan="4">${lev > 1 ? html`עד ${T(S`L = ${lev}`)}, עלות מינוף ${T(S`c = ${fr((Number(plan.leverage_cost) || 0) / 100, 4)}`)} לשנה` : "אין (כל הנכסים במינוף 1)"}</td></tr>
@@ -231,7 +233,7 @@ function DepositsMath({ plan, res }) {
       <p><b>מסלולים מייצגים.</b> לכל ${T(S`p \in \{p_1, 50, p_2\}`)} בוחרים את הריאליזציה שהתוצאה שלה הכי קרובה לאחוזון:</p>
       ${D(S`r_p = \arg\min_r \big|X_r - Q_p(X)\big|`)}
       <p>במצבי הפתרון ${T(S`X_r`)} הוא מינוס הנעלם שנפתר, כך ש"אחוזון גבוה" הוא תמיד תוצאה טובה (הפקדה נמוכה יותר).</p>
-      <p><b>סיכוי להיות בטווח.</b> החלק היחסי של הריאליזציות שבטווח שנבחר בהיסטוגרמה, ${T(S`\Pr(a \le X \le b) = \tfrac1n\,\#\{r : a \le X_r \le b\}`)}. "סיכוי להגיע ליעד" הוא המקרה ${T(S`a = F^\star,\ b = \infty`)}.</p>
+      <p><b>סיכוי להיות בטווח.</b> החלק היחסי של הריאליזציות שבטווח שנבחר בהיסטוגרמה, ${T(S`\Pr(a \le X \le b) = \tfrac1n\,\#\{r : a \le X_r \le b\}`)}. במצבי הפתרון, "סיכוי להיות מעל הסכום הסופי" הוא המקרה ${T(S`a = F^\star,\ b = \infty`)}.</p>
       <p><b>תשואה שנתית (IRR).</b> שיעור התשואה החודשי ${T(S`\iota`)} שבו ההפקדות, כל אחת צוברת ריבית דריבית מהחודש שלה, מגיעות בדיוק לסכום הסופי:</p>
       ${D(S`\sum_{m=0}^{T-1} D_m\,(1+\iota)^{\,T-m} = F, \qquad \mathrm{IRR} = (1+\iota)^{12} - 1`)}
       <p>משוואה סתומה (פולינום ממעלה ${T(S`T`)}); נפתרת בחצייה על ${T(S`\iota \in [-0.9999, 1]`)} עם כלל הורנר, 70 צעדים, לכל הריאליזציות בבת אחת. בהצגה ריאלית ${T(S`D_m`)} ו-${T(S`F`)} בכסף של היום, ולכן ה-IRR ריאלי.</p>
@@ -352,7 +354,11 @@ function SolverSection({ plan, api, kind }) {
       xLabel, yPrefix: sym, ySuffix: "", xSuffix: isRate ? "%" : "" });
     window.Plotly.react(ref.current, fig.data, fig.layout, PLOT_CONFIG);
   }, [data, step]);
-  useEffect(() => () => { if (ref.current) window.Plotly.purge(ref.current); }, []);
+  useEffect(() => {
+    const gd = ref.current;
+    const off = observeResize(gd);
+    return () => { off(); if (gd) window.Plotly.purge(gd); };
+  }, []);
   const fx = (v) => (isRate ? `${v.toFixed(4)}%` : money(v, plan.currency));
   const cur = data ? data.steps[step] : null;
 

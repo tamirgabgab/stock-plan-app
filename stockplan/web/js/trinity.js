@@ -1,10 +1,10 @@
 // Trinity (withdrawal) tab: inputs panel, results page and the success-rate heat map.
 // The results reuse the accumulation panels (fan chart, histogram, outcome by start, table).
 import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
-import { heatmapFigure, PLOT_CONFIG } from "./charts.js";
+import { heatmapFigure, observeResize, PLOT_CONFIG } from "./charts.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
 import { HoldingsTable, PeriodSection, RawPreset, StageHead, TaxSection, TickerList, newId } from "./inputs.js";
-import { CrossSection, FanChart, OutcomeByStart, RealizationsTable, SOLVED_SOURCE, Tile, VALUE_SOURCE,
+import { CrossSection, DetailModal, FanChart, OutcomeByStart, RealizationsTable, SOLVED_SOURCE, Tile, VALUE_SOURCE,
          dateColumns, solvedLabel, useActive } from "./results.js";
 import { columnStats, decodeMatrix, summarize } from "./stats.js";
 import { NumberField, Segmented, Toggle } from "./ui.js";
@@ -42,7 +42,8 @@ export function prepareTrinityResult(raw, plan) {
   const isRate = plan.solve_for === "rate";
   const labels = {
     solved: { rate: "אחוז משיכה מקסימלי", start_amount: "סכום התחלתי נדרש" },
-    outcome: "יתרה סופית", flow: "סך משיכות", flowVerb: "נמשך",
+    outcome: "יתרה סופית", flow: "סך משיכות", flowVerb: "נמשך", detailApi: "/api/trinity/realization",
+    targetLabel: "יעד", targetInFinal: true,
     solvedKind: isRate ? "pct" : "money",
     solvedFmt: isRate ? (v) => pct(v, 2) : (v) => money(v, cur),
     outcomeSub: (res, i) => `סך משיכות: ${money(res.raw.withdrawn_total[i], cur)}` +
@@ -247,6 +248,7 @@ export function TrinityResults({ res, ui, setUi, themeKey, plan, setPlan, payloa
       <${OutcomeByStart} ...${shared} />
     </div>
     <${RealizationsTable} ...${shared} columns=${trinityColumns(res)} />
+    <${DetailModal} ...${shared} />
   </div>`;
 }
 
@@ -302,7 +304,11 @@ function Heatmap({ payload, plan, setPlan, heat, setHeat, themeKey }) {
     gd.on("plotly_click", onClick);
     return () => { gd.removeAllListeners && gd.removeAllListeners("plotly_click"); };
   }, [data, heat.kind, themeKey, current?.rate, current?.years]);
-  useEffect(() => () => { if (ref.current) window.Plotly.purge(ref.current); }, []);
+  useEffect(() => {
+    const gd = ref.current;
+    const off = observeResize(gd);
+    return () => { off(); if (gd) window.Plotly.purge(gd); };
+  }, []);
 
   const num = (k, step, min, max) => html`<input type="number" dir="ltr" step=${step} min=${min} max=${max} value=${heat[k]}
     onInput=${(e) => Number.isFinite(e.currentTarget.valueAsNumber) && setHeat((h) => ({ ...h, [k]: e.currentTarget.valueAsNumber }))} />`;

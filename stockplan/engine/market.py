@@ -31,6 +31,7 @@ class Market:
     start_dates: pd.DatetimeIndex       # one per realization
     day_idx: np.ndarray                 # (R, months+1) calendar positions
     first_dates: Dict[str, date]        # first available date per ticker
+    fx_daily: Optional[np.ndarray] = None   # (n_days,) USD/ILS when the display currency is ILS
 
     @property
     def cpi_base(self) -> float:
@@ -175,4 +176,4 @@ def prepare_market(req: PlanRequest, md: MarketData) -> Market:
 
     return Market(calendar=calendar, asset_keys=keys, prices=prices, cpi_daily=cpi_daily,
                   start_dates=starts, day_idx=day_idx,
-                  first_dates={t: s.index[0].date() for t, s in raw.items()})
+                  first_dates={t: s.index[0].date() for t, s in raw.items()}, fx_daily=fx_daily)

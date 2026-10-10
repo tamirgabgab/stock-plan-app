@@ -34,11 +34,11 @@ def validate(req: PlanRequest) -> None:
 
 
 def _deflator(req: PlanRequest, market: Market, cpi) -> np.ndarray:
-    """(R, T+1) factor converting nominal values to money of each start date."""
+    """(R, T+1) factor converting nominal values to today's money (CPI of the last data month)."""
     R, T1 = market.day_idx.shape
     if not req.real or cpi is None:
         return np.ones((R, T1))
-    return cpi[:, :1] / cpi
+    return market.cpi_base / cpi
 
 
 def _initial_guess(req: PlanRequest) -> float:
@@ -65,7 +65,7 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
         def final_display(x, rows):
             out = simulate(req, market, x=x, rows=rows).final_net
             if req.real and cpi_all is not None:
-                out = out * cpi_all[rows, 0] / cpi_all[rows, T]
+                out = out * market.cpi_base / cpi_all[rows, T]
             return out
 
         solved = solve_monotone(final_display, req.target_amount, R, _initial_guess(req))

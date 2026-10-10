@@ -4,7 +4,7 @@ import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm
 import { fanFigure, histFigure, outcomeFigure, PLOT_CONFIG } from "./charts.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
 import { column, fractionBetween, histogram, nearestRow, quantileSorted, row, summarize } from "./stats.js";
-import { Segmented, Toggle } from "./ui.js";
+import { DualRange, Segmented, Toggle } from "./ui.js";
 
 const SOLVED_LABEL = { monthly_deposit: "הפקדה חודשית נדרשת", start_amount: "סכום התחלתי נדרש" };
 
@@ -92,7 +92,7 @@ function Kpis({ res }) {
     sub=${`הגרועה: ${pct(dd?.min, 1)}`} />`);
   return html`<section class="tiles" aria-label="סיכום">${tiles}
     <div class="tile meta-tile"><div class="tile-label">ריאליזציות</div><div class="tile-value">${raw.n.toLocaleString("he-IL")}</div>
-      <div class="tile-sub">${plan.real ? "ערכים ריאליים" : "ערכים נומינליים"} · ${cur === "ILS" ? "שקלים" : "דולרים"}</div></div>
+      <div class="tile-sub">${plan.real ? "ריאלי, בכסף של היום" : "ערכים נומינליים"} · ${cur === "ILS" ? "שקלים" : "דולרים"}</div></div>
   </section>`;
 }
 
@@ -112,17 +112,31 @@ function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, themeKe
     target: res.plan.target_amount, showDeposits: ui.showDeposits, showTarget: ui.showTarget,
     logY: ui.logY, currencySymbol: sym, timeIdx, highlight,
   }), [res, ui.p1, ui.p2, ui.showDeposits, ui.showTarget, ui.logY, timeIdx, active, themeKey], (gd) => {
-    let frame = 0, last = null;
+    let frame = 0, last = null, curRow = null, side = "right";
     const locate = (e) => {
       const fl = gd._fullLayout;
       if (!fl || !fl.xaxis) return null;
       const xa = fl.xaxis, ya = fl.yaxis, rect = gd.getBoundingClientRect();
       const px = e.clientX - rect.left - xa._offset, py = e.clientY - rect.top - ya._offset;
       if (px < 0 || px > xa._length || py < 0 || py > ya._length) return null;
+      const log = ya.type === "log";
+      const toPx = (v) => ya.c2p(log ? Math.log10(Math.max(v, 1e-9)) : v);
       let yv = ya.p2c(py);
-      if (ya.type === "log") yv = Math.pow(10, yv);
+      if (log) yv = Math.pow(10, yv);
       const t = Math.max(0, Math.min(res.T, Math.round(xa.p2c(px) * 12)));
-      return { t, r: nearestRow(res.paths, t, yv), x: e.clientX - rect.left, y: e.clientY - rect.top, w: rect.width };
+      let r = nearestRow(res.paths, t, yv);
+      // Hysteresis: keep the current path unless the new one is clearly closer (3px),
+      // so the highlight does not flicker when the cursor sits between two paths.
+      if (curRow !== null && r !== curRow) {
+        const dCur = Math.abs(toPx(res.paths.at(curRow, t)) - py);
+        const dNew = Math.abs(toPx(res.paths.at(r, t)) - py);
+        if (dCur - dNew < 3) r = curRow;
+      }
+      curRow = r;
+      const x = e.clientX - rect.left, w = rect.width;
+      if (x > w * 0.6) side = "left";
+      else if (x < w * 0.4) side = "right";
+      return { t, r, x, y: e.clientY - rect.top, w, side };
     };
     const onMove = (e) => {
       last = e;
@@ -134,7 +148,7 @@ function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, themeKe
         setHover(hit ? hit.r : null);
       });
     };
-    const onLeave = () => { setTip(null); setHover(null); };
+    const onLeave = () => { curRow = null; setTip(null); setHover(null); };
     const onClick = (e) => {
       const hit = locate(e);
       if (!hit) return;
@@ -182,7 +196,7 @@ function FanTip({ tip, res, ui }) {
   const col = res.cs.sorted[tip.t];
   const lo = Math.min(ui.p1, ui.p2), hi = Math.max(ui.p1, ui.p2);
   const start = res.raw.start_dates[tip.r];
-  const left = tip.x > tip.w / 2;
+  const left = tip.side === "left";
   const style = `top:${Math.max(tip.y - 20, 0)}px;${left ? `right:${tip.w - tip.x + 16}px` : `left:${tip.x + 16}px`}`;
   return html`<div class="fan-tip" style=${style} role="tooltip">
     <div class="tip-title">${monthsLabel(tip.t)} מההתחלה</div>
@@ -240,28 +254,25 @@ function CrossSection({ res, ui, setUi, themeKey }) {
   });
 
   if (!sum) return html`<section class="card"><p class="muted">אין נתונים להצגה</p></section>`;
-  const setA = (v) => setRange([v, b]);
-  const setB = (v) => setRange([a, v]);
   return html`<section class="card" aria-label="התפלגות">
     <div class="card-head"><div>
       <h2>${source === "solved" ? `התפלגות: ${SOLVED_LABEL[res.plan.solve_for]}` : `התפלגות השווי אחרי ${monthsLabel(t)}`}</h2>
-      <p class="muted">גרור על הגרף כדי לבחור טווח, או הקלד את הגבולות למטה.</p></div></div>
+      <p class="muted">גרור את הידיות שמתחת לגרף, או גרור על הגרף עצמו, כדי לבחור טווח.</p></div></div>
     <div class="controls">
       ${solveMode ? html`<${Segmented} small options=${[{ value: "solved", label: "המשתנה שנפתר" }, { value: "value", label: "שווי התיק" }]}
         value=${source} onChange=${(v) => setUi((u) => ({ ...u, histSource: v }))} />` : null}
-      ${source === "value" ? html`<label class="mini grow">נקודת זמן
-        <input type="range" min="0" max=${res.T} value=${t}
-          onInput=${(e) => setUi((u) => ({ ...u, timeIdx: Number(e.currentTarget.value) }))} />
-        <span class="muted nowrap">${monthsLabel(t)}</span></label>` : null}
       <label class="mini">עמודות <input type="number" dir="ltr" min="10" max="200" step="5" value=${ui.bins}
         onInput=${(e) => Number.isFinite(e.currentTarget.valueAsNumber) && setUi((u) => ({ ...u, bins: e.currentTarget.valueAsNumber }))} /></label>
     </div>
+    ${source === "value" ? html`<div class="time-slider">
+      <div class="time-slider-label">נקודת זמן: <b>${monthsLabel(t)}</b></div>
+      <input type="range" dir="ltr" min="0" max=${res.T} value=${t} aria-label="נקודת זמן"
+        onInput=${(e) => setUi((u) => ({ ...u, timeIdx: Number(e.currentTarget.value) }))} />
+    </div>` : null}
     <div ref=${ref} class="plot"></div>
+    <${DualRange} min=${sum.min} max=${sum.max} a=${a} b=${b} onChange=${setRange}
+      format=${(v) => money(v, cur, { compact: true })} />
     <div class="range-box">
-      <label class="mini">מ- <input type="number" dir="ltr" value=${Math.round(a)} step="1000"
-        onChange=${(e) => Number.isFinite(e.currentTarget.valueAsNumber) && setA(e.currentTarget.valueAsNumber)} /></label>
-      <label class="mini">עד <input type="number" dir="ltr" value=${Math.round(b)} step="1000"
-        onChange=${(e) => Number.isFinite(e.currentTarget.valueAsNumber) && setB(e.currentTarget.valueAsNumber)} /></label>
       <div class="prob"><span class="prob-value" dir="ltr">${pct(between.frac * 100, 1)}</span>
         <span class="muted">סיכוי להיות בטווח (${between.count.toLocaleString("he-IL")} מתוך ${sum.n.toLocaleString("he-IL")})</span></div>
       ${range ? html`<button class="btn link" onClick=${() => setRange(null)}>אפס טווח</button>` : null}
@@ -286,22 +297,72 @@ function CrossSection({ res, ui, setUi, themeKey }) {
 
 function OutcomeByStart({ res, active, setHover, setPinned, themeKey }) {
   const ref = useRef(null);
+  const [tip, setTip] = useState(null);
   const solved = res.plan.solve_for !== "final";
   const values = solved ? res.raw.solved : res.raw.final;
-  const sym = CURRENCY_SYMBOL[res.plan.currency];
+  const cur = res.plan.currency;
+  const sym = CURRENCY_SYMBOL[cur];
+  const xs = useMemo(() => res.raw.start_dates.map((d) => Date.parse(d + "T00:00:00Z")), [res]);
   usePlot(ref, () => outcomeFigure({
     dates: res.raw.start_dates, values, highlightIdx: active, prefix: sym, suffix: "",
     yTitle: solved ? SOLVED_LABEL[res.plan.solve_for] : "סכום סופי",
   }), [res, active, themeKey], (gd) => {
-    gd.on("plotly_hover", (ev) => { const p = ev.points?.find((q) => q.curveNumber === 0); if (p) setHover(p.pointIndex); });
-    gd.on("plotly_unhover", () => setHover(null));
-    gd.on("plotly_click", (ev) => { const p = ev.points?.find((q) => q.curveNumber === 0); if (p) setPinned(p.pointIndex); });
-    return () => ["plotly_hover", "plotly_unhover", "plotly_click"].forEach((n) => gd.removeAllListeners && gd.removeAllListeners(n));
+    // Own hover handling (Plotly's is off): pick the start date under the cursor and only
+    // switch to a neighbour once the cursor is clearly closer to it, so it never flickers.
+    let frame = 0, last = null, curIdx = null;
+    const locate = (e) => {
+      const fl = gd._fullLayout;
+      if (!fl || !fl.xaxis) return null;
+      const xa = fl.xaxis, rect = gd.getBoundingClientRect();
+      const px = e.clientX - rect.left - xa._offset, py = e.clientY - rect.top - fl.yaxis._offset;
+      if (px < 0 || px > xa._length || py < 0 || py > fl.yaxis._length) return null;
+      const xv = xa.p2c(px);
+      let lo = 0, hi = xs.length - 1;
+      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (xs[mid] <= xv) lo = mid; else hi = mid; }
+      let i = Math.abs(xs[lo] - xv) <= Math.abs(xs[hi] - xv) ? lo : hi;
+      if (curIdx !== null && i !== curIdx) {
+        const spacing = xs.length > 1 ? Math.abs(xa.c2p(xs[1]) - xa.c2p(xs[0])) : 10;
+        const margin = Math.max(2, Math.min(6, spacing / 2));
+        if (Math.abs(xa.c2p(xs[curIdx]) - px) - Math.abs(xa.c2p(xs[i]) - px) < margin) i = curIdx;
+      }
+      curIdx = i;
+      const x = e.clientX - rect.left;
+      return { i, x, y: e.clientY - rect.top, w: rect.width };
+    };
+    const onMove = (e) => {
+      last = e;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const hit = locate(last);
+        setTip(hit);
+        setHover(hit ? hit.i : null);
+      });
+    };
+    const onLeave = () => { curIdx = null; setTip(null); setHover(null); };
+    const onClick = (e) => { const hit = locate(e); if (hit) setPinned(hit.i); };
+    gd.addEventListener("mousemove", onMove);
+    gd.addEventListener("mouseleave", onLeave);
+    gd.addEventListener("click", onClick);
+    return () => {
+      gd.removeEventListener("mousemove", onMove);
+      gd.removeEventListener("mouseleave", onLeave);
+      gd.removeEventListener("click", onClick);
+    };
   });
+  const tipStyle = tip ? `top:${Math.max(tip.y - 56, 0)}px;${tip.x > tip.w * 0.6
+    ? `right:${tip.w - tip.x + 14}px` : `left:${tip.x + 14}px`}` : "";
   return html`<section class="card" aria-label="תוצאה לפי תאריך התחלה">
     <div class="card-head"><div><h2>${solved ? SOLVED_LABEL[res.plan.solve_for] : "סכום סופי"} לפי תאריך התחלה</h2>
-      <p class="muted">כל נקודה היא ריאליזציה אחת. ריחוף מדגיש את המסלול שלה בגרף העליון.</p></div></div>
-    <div ref=${ref} class="plot"></div>
+      <p class="muted">כל נקודה היא ריאליזציה אחת. ריחוף מדגיש את המסלול שלה בגרף העליון, ולחיצה נועצת אותו.</p></div></div>
+    <div class="plot-wrap">
+      <div ref=${ref} class="plot"></div>
+      ${tip ? html`<div class="fan-tip small" style=${tipStyle} role="tooltip">
+        <div class="tip-title">התחלה ${dateHe(res.raw.start_dates[tip.i])}</div>
+        <div>${solved ? SOLVED_LABEL[res.plan.solve_for] : "סכום סופי"}: <b dir="ltr">${money(values[tip.i], cur)}</b></div>
+        <div class="muted">תשואה שנתית (IRR): <span dir="ltr">${pct(res.raw.irr[tip.i])}</span></div>
+      </div>` : null}
+    </div>
   </section>`;
 }
 

@@ -55,10 +55,10 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
           hint="המניות נסחרות בדולר. בשקלים כל הפקדה מומרת לפי השער היציג של אותו יום, והשווי מוצג לפי השער העדכני." />
         <${Segmented} label="הצגת ערכים" options=${[{ value: false, label: "נומינלי" }, { value: true, label: "ריאלי" }]}
           value=${plan.real} onChange=${set("real")}
-          hint="ריאלי: כל הסכומים מוצגים בכסף של תאריך ההתחלה (מנוכה אינפלציה לפי מדד המחירים של המטבע שנבחר)." />
+          hint="ריאלי: כל הסכומים, גם ההפקדות והיעד שאתה מזין, הם בכסף של היום. הפקדה בעבר מוקטנת לפי מדד המחירים של המטבע שנבחר, והתוצאות מוצגות בכוח הקנייה של היום." />
       </div>
       <${Toggle} label="הצמדת ההפקדות למדד" checked=${plan.index_deposits} onChange=${set("index_deposits")}
-        hint="ההפקדות החודשיות גדלות עם האינפלציה, כך שערכן הריאלי נשמר." />
+        hint="ההפקדות גדלות עם האינפלציה, כך שערכן הריאלי נשמר. כבוי: הסכום הנומינלי קבוע מתחילת התוכנית." />
     </details>
 
     <details open class="section">
@@ -86,7 +86,8 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
         ? html`<p class="callout error">${rangeError}</p>`
         : range
           ? html`<p class="callout">תאריכי התחלה אפשריים: <b>${dateHe(range.min_start)}</b> עד <b>${dateHe(range.max_start)}</b>
-              <br /><span class="muted">משך התוכנית: ${monthsLabel(totalMonths)}</span></p>`
+              <br /><span class="muted">משך התוכנית: ${monthsLabel(totalMonths)}</span></p>
+              ${(range.notes || []).map((n) => html`<p class="callout warn">${n}</p>`)}`
           : html`<p class="callout muted">בודק את טווח הנתונים...</p>`}
       <div class="grid-2">
         <${Field} label="התחלה מוקדמת ביותר">

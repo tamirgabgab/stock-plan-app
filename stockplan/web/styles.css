@@ -314,3 +314,42 @@ table.data tbody tr.pinned { box-shadow: inset -3px 0 0 var(--series-7); }
   .tile-value { font-size: 18px; }
   .card { padding: 12px; }
 }
+
+/* ------------------------------------------------------------ time slider */
+.time-slider { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 6px; }
+.time-slider-label { font-size: 12px; color: var(--text-secondary); min-height: 18px; }
+.time-slider input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; }
+
+/* ------------------------------------------------------- dual range slider */
+/* Rail spans the histogram's plot area: margins mirror HIST_MARGIN (48 / 16px) minus half a thumb. */
+.dual { --thumb: 16px; position: relative; margin: 0 8px 0 40px; padding-top: 22px; }
+.dual-labels { position: absolute; top: 0; left: calc(var(--thumb) / 2); right: calc(var(--thumb) / 2); height: 20px; }
+.dual-label {
+  position: absolute; white-space: nowrap; font-size: 12px; font-weight: 500;
+  color: var(--text-primary); background: var(--surface-2); border-radius: 6px; padding: 1px 6px;
+  font-variant-numeric: tabular-nums;
+}
+.dual-rail { position: relative; height: 22px; }
+.dual-track {
+  position: absolute; top: 9px; left: calc(var(--thumb) / 2); right: calc(var(--thumb) / 2); height: 4px;
+  border-radius: 2px; background: var(--range-out);
+}
+.dual-fill { position: absolute; top: 0; bottom: 0; left: var(--a); right: calc(100% - var(--b)); background: var(--accent); border-radius: 2px; }
+.dual input[type="range"] {
+  position: absolute; inset: 0; width: 100%; height: 22px; margin: 0; background: none;
+  pointer-events: none; -webkit-appearance: none; appearance: none;
+}
+.dual input[type="range"]::-webkit-slider-runnable-track { background: none; height: 22px; }
+.dual input[type="range"]::-moz-range-track { background: none; }
+.dual input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; pointer-events: auto; cursor: grab; width: var(--thumb); height: var(--thumb);
+  margin-top: 3px; border-radius: 50%; background: var(--surface-1); border: 2px solid var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.dual input[type="range"]::-moz-range-thumb {
+  pointer-events: auto; cursor: grab; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--surface-1); border: 2px solid var(--accent);
+}
+.dual input[type="range"]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dual input[type="range"]:disabled::-webkit-slider-thumb { border-color: var(--axis); cursor: default; }
+.fan-tip.small { min-width: 0; }

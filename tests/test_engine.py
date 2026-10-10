@@ -226,3 +226,36 @@ def test_validation_messages():
         run_plan(plan([Stage(months=0, holdings=[Holding("A", 100)])]), data)
     with pytest.raises(ValueError):
         run_plan(plan([Stage(months=12, holdings=[Holding("A", 0)])]), data)
+
+
+def test_real_mode_inputs_are_in_todays_money():
+    # CPI doubles in June 2000 and stays there, so "today" is CPI 200.
+    data = FakeData({"A": step_series({})}, cpi=cpi_doubling())
+    res = one([Stage(months=12, holdings=[Holding("A", 100)], monthly_deposit=100)], data,
+              real=True, index_deposits=True)
+    # Each deposit is 100 of today's money when made; the 5 made before the CPI doubled
+    # lose half their real value afterwards.
+    assert res.final[0] == pytest.approx(5 * 50 + 7 * 100)
+    # Deposits are counted in today's money at the time they were made.
+    assert res.deposits_total[0] == pytest.approx(12 * 100)
+
+
+def test_real_mode_non_indexed_deposits_are_fixed_nominal():
+    data = FakeData({"A": step_series({})}, cpi=cpi_doubling())
+    res = one([Stage(months=12, holdings=[Holding("A", 100)], monthly_deposit=100)], data, real=True)
+    # Nominal amount fixed at the start: 100 today = 50 nominal in Jan 2000, for all 12 deposits.
+    assert res.final[0] == pytest.approx(12 * 50)
+
+
+def test_nominal_shekels_start_after_stabilization_plan():
+    days = pd.date_range("1980-01-01", "1990-12-31", freq="D")
+    prices = pd.Series(100.0, index=days)
+    cpi = pd.Series(100.0, index=pd.date_range(days[0], days[-1], freq="MS"))
+    data = FakeData({"A": prices}, fx=pd.Series(1.0, index=days), cpi=cpi)
+    stages = [Stage(months=12, holdings=[Holding("A", 100)], monthly_deposit=100)]
+    nominal = run_plan(PlanRequest(stages=stages, currency="ILS"), data)
+    assert nominal.start_dates[0] >= pd.Timestamp("1985-07-01")
+    real = run_plan(PlanRequest(stages=stages, currency="ILS", real=True), data)
+    assert real.start_dates[0] < pd.Timestamp("1981-01-01")
+    usd = run_plan(PlanRequest(stages=stages, currency="USD"), data)
+    assert usd.start_dates[0] < pd.Timestamp("1981-01-01")

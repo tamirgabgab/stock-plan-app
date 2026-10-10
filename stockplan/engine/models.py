@@ -40,7 +40,7 @@ class PlanRequest:
     target_amount: float = 1_000_000.0
     solve_for: str = SOLVE_FINAL
     currency: str = "USD"
-    real: bool = False             # report values in real terms (money of the start date)
+    real: bool = False             # inputs and results in today's money (CPI-adjusted)
     index_deposits: bool = False   # deposits grow with the CPI
     tax_rate: float = 25.0         # percent
     tax_basis: str = "nominal"     # "nominal" or "real" (gain above inflation only)

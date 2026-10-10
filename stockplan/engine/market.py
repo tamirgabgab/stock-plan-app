@@ -32,6 +32,11 @@ class Market:
     day_idx: np.ndarray                 # (R, months+1) calendar positions
     first_dates: Dict[str, date]        # first available date per ticker
 
+    @property
+    def cpi_base(self) -> float:
+        """CPI of the last data month: real values are expressed in this money ("today")."""
+        return float(self.cpi_daily[-1])
+
 
 def apply_leverage(prices: pd.Series, leverage: float, annual_cost_pct: float = 0.0) -> pd.Series:
     """Daily-rebalanced leveraged series. Borrowing cost is charged on (leverage - 1)."""
@@ -85,13 +90,32 @@ def available_range(req: PlanRequest, md: MarketData) -> dict:
     """Earliest and latest possible start dates for the plan's assets and duration."""
     raw, fx, cpi = load_series(req, md)
     lo, hi = _calendar_bounds(raw, fx, cpi)
+    notes = []
+    if _nominal_ils(req) and lo < ILS_NOMINAL_FROM:
+        lo = ILS_NOMINAL_FROM
+        notes.append(ILS_NOMINAL_NOTE)
     last_start = hi - pd.DateOffset(months=req.total_months)
     return {
         "min_start": lo.date(),
         "max_start": last_start.date(),
         "data_end": hi.date(),
         "first_dates": {t: s.index[0].date() for t, s in raw.items()},
+        "notes": notes,
     }
+
+
+# Israel's Economic Stabilization Plan. Before it, inflation reached hundreds of percent a
+# year and the currency was replaced twice, so fixed nominal shekel amounts are meaningless.
+ILS_NOMINAL_FROM = pd.Timestamp("1985-07-01")
+ILS_NOMINAL_NOTE = (
+    "בשקלים נומינליים אפשר להתחיל רק מיולי 1985 (תוכנית הייצוב). לפני כן האינפלציה הגיעה "
+    "למאות אחוזים בשנה והמטבע הוחלף פעמיים, כך שהפקדה נומינלית קבועה בשקלים חדשים חסרת משמעות. "
+    "במצב ריאלי או בדולרים כל ההיסטוריה זמינה."
+)
+
+
+def _nominal_ils(req: PlanRequest) -> bool:
+    return req.currency == "ILS" and not req.real
 
 
 def _calendar_bounds(raw, fx, cpi) -> tuple[pd.Timestamp, pd.Timestamp]:
@@ -135,7 +159,8 @@ def prepare_market(req: PlanRequest, md: MarketData) -> Market:
 
     T = req.total_months
     last_start = hi - pd.DateOffset(months=T)
-    s_lo = max(lo, pd.Timestamp(req.min_start)) if req.min_start else lo
+    first_start = max(lo, ILS_NOMINAL_FROM) if _nominal_ils(req) else lo
+    s_lo = max(first_start, pd.Timestamp(req.min_start)) if req.min_start else first_start
     s_hi = min(last_start, pd.Timestamp(req.max_start)) if req.max_start else last_start
     starts = _start_dates(s_lo.normalize(), s_hi.normalize(), req.step)
     if len(starts) == 0:

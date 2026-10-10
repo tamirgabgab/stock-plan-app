@@ -9,6 +9,9 @@ by the stage weights and held (no rebalancing). At a stage transition the portfo
 reallocated to the new weights, either tax-free (cost basis carried over, so the tax is
 deferred to the end) or as a taxable sale of the holdings that shrink.
 
+Real mode: amounts entered by the user (deposits, target) are in today's money, i.e. the
+CPI of the last data month; see ``deposit_scale``.
+
 Tax: realized losses build a shield that offsets later gains. With ``tax_basis="real"``
 the cost basis is CPI-indexed; an inflationary gain is not taxed and cannot create a
 deductible loss (only a nominal loss can), as in Israeli capital-gains rules.
@@ -97,6 +100,18 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
         if real_tax:
             Bc += add / cpi_now[:, None]
 
+    def deposit_scale(m):
+        """Nominal value of one input unit deposited at month m.
+
+        In real mode the inputs are in today's money (CPI of the last data month), so a
+        deposit made decades ago is scaled down by the CPI. Indexed deposits follow the
+        CPI month by month; otherwise the nominal amount is fixed at the plan's start.
+        """
+        ref = cpi[:, m] if req.index_deposits else cpi[:, 0]
+        if req.real:
+            return ref / market.cpi_base
+        return ref / cpi[:, 0]
+
     # Resolve deposits once (they may be overridden per realization by ``x``).
     stage_starts = np.cumsum([0] + [s.months for s in req.stages])
     if unit_growth:
@@ -150,8 +165,8 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
             m = m0 + j
             cpi_m = cpi[:, m] if cpi is not None else None
             amount = monthly + (initial if j == 0 else 0.0)
-            if req.index_deposits and cpi is not None and not unit_growth:
-                amount = amount * (cpi_m / cpi[:, 0])
+            if cpi is not None and not unit_growth:
+                amount = amount * deposit_scale(m)
             buy(amount, w, cpi_m)
             if record:
                 deposits[:, m] = amount

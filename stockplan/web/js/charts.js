@@ -23,6 +23,8 @@ export function theme() {
   };
 }
 
+export const HIST_MARGIN = { l: 48, r: 16 };
+
 export const PLOT_CONFIG = { displayModeBar: false, responsive: true, scrollZoom: false };
 
 function baseLayout(t, extra = {}) {
@@ -120,9 +122,11 @@ export function histFigure({ hist, a, b, median, mean, prefix, suffix, xTitle })
     selectdirection: "h",
     hovermode: "closest",
     shapes,
-    margin: { l: 48, r: 16, t: 8, b: 44 },
+    // Fixed margins and an explicit x range so the range slider below lines up with the axis.
+    margin: { l: HIST_MARGIN.l, r: HIST_MARGIN.r, t: 8, b: 44 },
     // x is not fixedrange: Plotly disables box-select when both axes are fixed.
-    xaxis: axis(t, { title: { text: xTitle }, tickprefix: prefix, ticksuffix: suffix, tickformat: "~s" }),
+    xaxis: axis(t, { title: { text: xTitle }, tickprefix: prefix, ticksuffix: suffix, tickformat: "~s",
+                     range: [hist.lo, hist.hi] }),
     yaxis: axis(t, { title: { text: "תקופות" }, fixedrange: true }),
   });
   return { data, layout };
@@ -132,18 +136,17 @@ export function outcomeFigure({ dates, values, highlightIdx, prefix, suffix, yTi
   const t = theme();
   const data = [
     { type: "scatter", mode: "lines", x: dates, y: values, line: { width: 2, color: t.blue },
-      hovertemplate: `התחלה %{x|%d/%m/%Y}<br>${prefix}%{y:,.0f}${suffix}<extra></extra>`, name: yTitle,
-      showlegend: false },
+      hoverinfo: "skip", name: yTitle, showlegend: false },
     { type: "scatter", mode: "markers", x: highlightIdx !== null ? [dates[highlightIdx]] : [],
       y: highlightIdx !== null ? [values[highlightIdx]] : [], hoverinfo: "skip", showlegend: false,
       marker: { size: 10, color: t.violet, line: { width: 2, color: t.surface } } },
   ];
   const layout = baseLayout(t, {
     showlegend: false,
-    hovermode: "x",
+    hovermode: false,
+    dragmode: false,
     margin: { l: 64, r: 16, t: 8, b: 40 },
-    xaxis: axis(t, { type: "date", fixedrange: true, showspikes: true, spikecolor: t.muted,
-                     spikethickness: 1, spikedash: "solid", spikemode: "across" }),
+    xaxis: axis(t, { type: "date", fixedrange: true }),
     yaxis: axis(t, { tickprefix: prefix, ticksuffix: suffix, tickformat: "~s", fixedrange: true }),
   });
   return { data, layout };

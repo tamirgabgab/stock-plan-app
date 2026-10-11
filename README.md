@@ -13,8 +13,11 @@ date, and every realization in a table. Hover any of them to see that path.
 
 ## Quick start
 
+**Online:** https://stock-plan-app.vercel.app — every push to `main` is deployed there
+automatically. Locally:
+
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-local.txt
 python run.py            # opens http://127.0.0.1:8000 in your browser
 ```
 
@@ -66,11 +69,26 @@ the UI — it is not real market history).
   the same equations with the current plan's numbers plugged in, and a live chart
   of the Illinois solver's steps on the current plan.
 
+## Hosting (Vercel)
+
+The repository is linked to a Vercel project, so every push to `main` redeploys the
+production URL within a couple of minutes (other branches get preview URLs).
+
+- `api/index.py` exposes the FastAPI app; `vercel.json` routes every path to it.
+- Dependencies come from the `[project]` table in `pyproject.toml` (kept in step with
+  `requirements.txt`). pyarrow is left out to fit the function size limit, so the cache
+  falls back to pickle files; `requirements-local.txt` adds pyarrow for local installs.
+- The cache lives in `/tmp` and is per instance, so a cold start downloads data again.
+- Yahoo is probed once per instance; if it does not answer the app switches to demo data
+  and the banner says so (`STOCKPLAN_DEMO_FALLBACK`, on by default when `VERCEL` is set).
+- Responses are capped at 4.5 MB, so the hosted app allows fewer realizations × months
+  (monthly sampling works; daily sampling over long histories needs the local app).
+
 ## Data sources
 
 | Data | Source | Notes |
 |---|---|---|
-| Prices | Yahoo Finance (`yfinance`) | Dividend-adjusted closes, cached as Parquet in `data_cache/`, refreshed incrementally |
+| Prices | Yahoo Finance (`yfinance`) | Dividend-adjusted closes, cached in `data_cache/` (Parquet, or pickle without pyarrow), refreshed incrementally |
 | USD/ILS | Bank of Israel, Yahoo `ILS=X`, FRED monthly | First available source wins; FRED extends older history |
 | US CPI | FRED `CPIAUCSL` | |
 | Israel CPI | CBS API, FRED `ISRCPIALLMINMEI` | |
@@ -82,6 +100,7 @@ Put a CSV with columns `date,value` in `data_cache/manual/` (`fx_usd_ils.csv`,
 
 ```
 run.py                 # launcher (FastAPI + browser)
+api/index.py           # Vercel entry point (vercel.json routes everything here)
 stockplan/
   data/                # market data providers + disk cache (Yahoo, demo)
   engine/              # pure numpy simulation engine and solvers

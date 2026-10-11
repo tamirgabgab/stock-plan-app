@@ -1,6 +1,7 @@
 """Real market data: Yahoo Finance prices, Bank of Israel / FRED FX, FRED / CBS CPI.
 
-Everything is cached on disk as Parquet. Prices are refreshed incrementally: only the
+Everything is cached on disk, as Parquet when pyarrow is installed and as pickle otherwise
+(the hosted build leaves pyarrow out to stay within the platform's size limit). Prices are refreshed incrementally: only the
 last few days are downloaded and chained onto the stored total-return index, so after
 the first run a refresh costs one tiny request per ticker.
 
@@ -43,6 +44,24 @@ def _safe_name(ticker: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in ticker.upper())
 
 
+try:
+    import pyarrow  # noqa: F401
+    CACHE_EXT = ".parquet"
+except ImportError:
+    CACHE_EXT = ".pkl"
+
+
+def _read_cache(p: Path) -> pd.Series:
+    return pd.read_parquet(p)["value"] if p.suffix == ".parquet" else pd.read_pickle(p)
+
+
+def _write_cache(series: pd.Series, p: Path) -> None:
+    if CACHE_EXT == ".parquet":
+        series.rename("value").to_frame().to_parquet(p)
+    else:
+        series.rename("value").to_pickle(p)
+
+
 class _DiskCache:
     def __init__(self, root: Path):
         self.root = root
@@ -54,7 +73,7 @@ class _DiskCache:
             return self._locks.setdefault(key, threading.Lock())
 
     def path(self, kind: str, name: str) -> Path:
-        return self.root / kind / f"{name}.parquet"
+        return self.root / kind / f"{name}{CACHE_EXT}"
 
     def load(self, kind: str, name: str) -> tuple[Optional[pd.Series], float]:
         """Return (series, age_hours). age is ``inf`` when nothing is cached."""
@@ -62,7 +81,7 @@ class _DiskCache:
         if not p.exists():
             return None, float("inf")
         try:
-            s = pd.read_parquet(p)["value"]
+            s = _read_cache(p)
         except Exception:  # corrupt file: refetch
             log.warning("ignoring unreadable cache file %s", p)
             return None, float("inf")
@@ -72,7 +91,7 @@ class _DiskCache:
         p = self.path(kind, name)
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".tmp")
-        series.rename("value").to_frame().to_parquet(tmp)
+        _write_cache(series, tmp)
         tmp.replace(p)
 
 
@@ -95,6 +114,24 @@ def _fred_series(series_id: str) -> pd.Series:
     # Column names changed over time ("DATE" vs "observation_date"); use positions.
     values = pd.to_numeric(df.iloc[:, 1], errors="coerce")
     return pd.Series(values.values, index=pd.to_datetime(df.iloc[:, 0])).dropna()
+
+
+_yf = None
+
+
+def _yfinance():
+    # Imported lazily: slow import, not needed in demo mode. Its own small cache goes next to
+    # ours, which also keeps it writable on hosts where only /tmp is.
+    global _yf
+    if _yf is None:
+        import yfinance as yf
+        try:
+            (CACHE_DIR / "yfinance").mkdir(parents=True, exist_ok=True)
+            yf.set_tz_cache_location(str(CACHE_DIR / "yfinance"))
+        except Exception as exc:  # noqa: BLE001 - yfinance works without its cache
+            log.warning("yfinance cache location not set: %s", exc)
+        _yf = yf
+    return _yf
 
 
 class YahooMarketData:
@@ -132,8 +169,7 @@ class YahooMarketData:
         return self._memo.setdefault(key, series)
 
     def _download(self, ticker: str, start: Optional[date] = None) -> pd.Series:
-        import yfinance as yf  # imported lazily: slow import, not needed in demo mode
-
+        yf = _yfinance()
         t = yf.Ticker(ticker)
         if start is None:
             hist = t.history(period="max", interval="1d", auto_adjust=True)
@@ -145,6 +181,14 @@ class YahooMarketData:
         # Drop today's bar: during the trading session it is an intraday quote.
         today = pd.Timestamp(date.today())
         return s[s.index < today]
+
+    def reachable(self) -> bool:
+        """True when Yahoo answers: a few days of SPY download. Used to fall back to demo data."""
+        try:
+            return not self._download("SPY", start=date.today() - timedelta(days=10)).empty
+        except Exception as exc:  # noqa: BLE001 - any failure means "not reachable"
+            log.warning("Yahoo Finance is not reachable: %s", exc)
+            return False
 
     def _refresh_prices(self, ticker: str, cached: Optional[pd.Series]) -> pd.Series:
         if cached is not None and len(cached) > 10:

@@ -1,0 +1,5 @@
+# Local install: the app plus pyarrow, which stores the data cache as Parquet.
+# requirements.txt alone is the hosted (Vercel) build: pyarrow does not fit its size limit,
+# and the cache falls back to pickle files there.
+-r requirements.txt
+pyarrow>=14

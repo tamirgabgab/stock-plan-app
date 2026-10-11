@@ -197,7 +197,9 @@ function App() {
           ${theme === "dark" ? "☾" : theme === "light" ? "☀" : "◐"}</button>
       </div>
     </header>
-    ${meta.demo ? html`<div class="demo-banner">מצב הדגמה: הנתונים סינתטיים ואינם היסטוריה אמיתית. להרצה עם נתונים אמיתיים הפעל <code dir="ltr">python run.py</code> בלי <code dir="ltr">--demo</code>.</div>` : null}
+    ${meta.demo ? html`<div class="demo-banner">${meta.demo_reason === "fallback"
+      ? html`מצב הדגמה: לא הצלחנו להתחבר ל-Yahoo Finance מהשרת, ולכן הנתונים סינתטיים ואינם היסטוריה אמיתית. לנתונים אמיתיים הרץ את האפליקציה במחשב שלך עם <code dir="ltr">python run.py</code>.`
+      : html`מצב הדגמה: הנתונים סינתטיים ואינם היסטוריה אמיתית. להרצה עם נתונים אמיתיים הפעל <code dir="ltr">python run.py</code> בלי <code dir="ltr">--demo</code>.`}</div>` : null}
     <main class="layout" style=${`--panel-w:${panelW}px`}>
       ${view === "trinity"
         ? html`<${TrinityInputs} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} />`

@@ -15,8 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__
-from .config import FAVORITES
-from .data import DataError, get_market_data
+from .config import FAVORITES, ON_VERCEL
+from .data import DataError, demo_reason, get_market_data
 from .data.search import lookup, search
 from .engine import (Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range,
                      benchmark_path, realization_detail, run_plan, run_trinity, solve_trace, trinity_heatmap)
@@ -24,6 +24,8 @@ from .engine import (Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent / "web"
 MAX_CELLS = 15_000_000   # realizations x months sent to the browser
+if ON_VERCEL:            # hosted responses are capped at 4.5 MB (~11 bytes per cell)
+    MAX_CELLS = 350_000
 
 
 class HoldingIn(BaseModel):
@@ -157,6 +159,13 @@ async def no_stale_assets(request, call_next):
     return response
 
 
+def _too_many(R: int, T1: int) -> str:
+    msg = f"יותר מדי נקודות ({R:,} תקופות × {T1:,} חודשים). בחר דגימה גסה יותר"
+    if ON_VERCEL:
+        msg += " (בגרסה המקוונת המגבלה קטנה יותר; במחשב שלך עם python run.py אין מגבלה כזו)"
+    return msg
+
+
 def _bad_request(exc: Exception) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
@@ -166,6 +175,7 @@ def meta():
     md = get_market_data()
     return {
         "demo": md.is_demo,
+        "demo_reason": demo_reason(),
         "version": __version__,
         "favorites": [{"group": g, "items": [{"label": l, "ticker": t} for l, t in items]}
                       for g, items in FAVORITES.items()],
@@ -261,7 +271,7 @@ def simulate(plan: PlanIn):
     R, T1 = res.paths.shape
     if R * T1 > MAX_CELLS:
         raise HTTPException(status_code=400,
-                            detail=f"יותר מדי נקודות ({R:,} תקופות × {T1:,} חודשים). בחר דגימה גסה יותר")
+                            detail=_too_many(R, T1))
     return {
         "months": res.months,
         "n": R,
@@ -308,7 +318,7 @@ def trinity_simulate(plan: TrinityIn):
     R, T1 = res.paths.shape
     if R * T1 > MAX_CELLS:
         raise HTTPException(status_code=400,
-                            detail=f"יותר מדי נקודות ({R:,} תקופות × {T1:,} חודשים). בחר דגימה גסה יותר")
+                            detail=_too_many(R, T1))
     return {
         "months": res.months,
         "n": R,

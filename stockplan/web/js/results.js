@@ -18,6 +18,17 @@ export const ACCUMULATION_LABELS = {
 };
 export const solvedLabel = (res) => res.labels.solved[res.plan.solve_for] || res.labels.outcome;
 
+// Gross (market value of the holdings) or net (after the tax of selling everything). The
+// accumulation result carries both views; this picks one so every panel reads ``res.paths``,
+// ``res.raw.final`` etc. without caring. Results without ``modes`` (Trinity) are net only.
+export function withMode(res, net) {
+  if (!res.modes) return res;
+  const m = net ? res.modes.net : res.modes.gross;
+  return { ...res, net, paths: m.paths, cs: m.cs, years: m.years, bestYear: m.bestYear, worstYear: m.worstYear,
+           raw: { ...res.raw, final: m.final, irr: m.irr, account_drawdown: m.account_drawdown } };
+}
+export const modeWord = (res) => (res.modes ? (res.net ? "נטו" : "ברוטו") : "");
+
 export function addMonths(iso, m) {
   const [y, mo, d] = iso.split("-").map(Number);
   const total = (mo - 1) + m;
@@ -64,7 +75,7 @@ export function useActive(res, ui) {
   const [hover, setHover] = useState(null);
   const [pinned, setPinned] = useState(null);
   const [detail, setDetail] = useState(null);
-  useEffect(() => setDetail(null), [res]);
+  useEffect(() => setDetail(null), [res.id]);
   const active = hover ?? pinned;
   const reps = useMemo(() => (ui.showReps ? representative(res, ui.p1, ui.p2) : []), [res, ui.showReps, ui.p1, ui.p2]);
   const openDetail = (i) => { setPinned(i); setDetail(i); };
@@ -75,40 +86,32 @@ export function useActive(res, ui) {
 const targetShown = (res) => res.plan.solve_for !== "final";
 
 // The detail modal for the open realization (if any); prev/next keep the pinned path in sync.
-// Also renders the floating bar for the pinned path, so "full detail" is reachable from any
-// scroll position (the table is far below the fan chart).
-export function DetailModal({ res, detail, openDetail, closeDetail, pinned, setPinned, themeKey }) {
-  return html`
-    ${pinned !== null && (detail === null || detail === undefined) ? html`<${PinBar} res=${res} pinned=${pinned}
-      setPinned=${setPinned} openDetail=${openDetail} />` : null}
-    ${detail !== null && detail !== undefined
-      ? html`<${RealizationDetail} res=${res} index=${detail} onClose=${closeDetail} onNav=${openDetail} themeKey=${themeKey} />`
-      : null}`;
+export function DetailModal({ res, detail, openDetail, closeDetail, themeKey }) {
+  return detail !== null && detail !== undefined
+    ? html`<${RealizationDetail} res=${res} index=${detail} onClose=${closeDetail} onNav=${openDetail} themeKey=${themeKey} />`
+    : null;
 }
 
-function PinBar({ res, pinned, setPinned, openDetail }) {
-  const solved = res.plan.solve_for !== "final";
-  const v = solved ? res.raw.solved[pinned] : res.raw.final[pinned];
-  const fmt = solved ? (res.labels.solvedFmt || ((x) => money(x, res.plan.currency))) : (x) => money(x, res.plan.currency);
-  return html`<div class="pin-bar" role="region" aria-label="ריאליזציה נבחרת">
-    <span>ריאליזציה נעוצה: התחלה <b><bdi>${dateHe(res.raw.start_dates[pinned])}</bdi></b></span>
-    <span class="muted">${solved ? solvedLabel(res) : res.labels.outcome}: <b dir="ltr">${fmt(v)}</b></span>
-    <button class="btn primary small" onClick=${() => openDetail(pinned)}>פירוט מלא</button>
-    <button class="icon-btn" title="בטל נעיצה" aria-label="בטל נעיצה" onClick=${() => setPinned(null)}>✕</button>
-  </div>`;
-}
+const MODE_OPTIONS = [{ value: "gross", label: "ברוטו" }, { value: "net", label: "נטו" }];
 
-export function Results({ res, ui, setUi, themeKey }) {
+export function Results({ res: full, ui, setUi, themeKey }) {
+  const res = useMemo(() => withMode(full, ui.net), [full, ui.net]);
   const shared = { res, ui, setUi, themeKey, ...useActive(res, ui) };
   return html`<div class="results">
     ${res.raw.warnings.length ? html`<div class="callout warn">${res.raw.warnings.join(" · ")}</div>` : null}
+    <div class="results-bar">
+      <${Segmented} small label="סכומים" options=${MODE_OPTIONS} value=${ui.net ? "net" : "gross"}
+        onChange=${(v) => setUi((u) => ({ ...u, net: v === "net" }))}
+        hint=${`ברוטו: שווי השוק של ההחזקות. נטו: מה שנשאר אחרי מכירת הכל ותשלום מס של ${res.plan.tax_rate}% על הרווח (לפי שדה שיעור המס). הבורר משפיע על כל הלשונית: הכרטיסיות, הגרפים, הטבלה והפירוט.`} />
+      <span class="muted small">${ui.net ? "נטו: אחרי מס על הרווח במימוש." : "ברוטו: שווי ההחזקות לפני מס."}</span>
+    </div>
     <${Kpis} res=${res} />
     <${FanChart} ...${shared} />
     <div class="row-2">
       <${CrossSection} ...${shared} sources=${ACCUMULATION_SOURCES} />
       <${OutcomeByStart} ...${shared} />
     </div>
-    <${RealizationsTable} ...${shared} columns=${accumulationColumns(res)} />
+    <${RealizationsTable} ...${shared} columns=${accumulationColumns(res)} caption=${depositsCaption(res)} />
     <${DetailModal} ...${shared} />
   </div>`;
 }
@@ -134,7 +137,7 @@ function Kpis({ res }) {
     const losses = raw.final.filter((v, i) => v < raw.deposits_total[i]).length;
     const worst = raw.final.indexOf(fin.min), best = raw.final.indexOf(fin.max);
     tiles.push(
-      html`<${Tile} label="סכום סופי חציוני" value=${m(fin.median)} sub=${`ממוצע ${m(fin.mean)}`} />`,
+      html`<${Tile} label=${`סכום סופי ${modeWord(res)} חציוני`} value=${m(fin.median)} sub=${`ממוצע ${m(fin.mean)}`} />`,
       html`<${Tile} label="סיכוי להפסד" value=${pct((100 * losses) / raw.n, 1)} sub="סכום סופי נמוך מסך ההפקדות" />`,
       html`<${Tile} label="תשואה שנתית (IRR) חציונית" value=${pct(irr?.median)} sub=${`10%–90%: ${pct(irr?.p10, 1)} עד ${pct(irr?.p90, 1)}`} />`,
       html`<${Tile} label="סך הפקדות (חציון)" value=${m(dep?.median)} sub=${`רווח חציוני ${m(fin.median - (dep?.median || 0))}`} />`,
@@ -158,7 +161,7 @@ function Kpis({ res }) {
     sub=${`הגרועה: ${pct(dd?.min, 1)} · שווי החשבון: ${pct(ddAcct?.median, 1)} (חציון)`} />`);
   return html`<section class="tiles" aria-label="סיכום">${tiles}
     <div class="tile meta-tile"><div class="tile-label">ריאליזציות</div><div class="tile-value">${raw.n.toLocaleString("he-IL")}</div>
-      <div class="tile-sub">${plan.real ? "ריאלי, בכסף של היום" : "ערכים נומינליים"} · ${cur === "ILS" ? "שקלים" : "דולרים"}</div></div>
+      <div class="tile-sub">${plan.real ? "ריאלי, בכסף של היום" : "ערכים נומינליים"} · ${cur === "ILS" ? "שקלים" : "דולרים"}${res.modes ? ` · ${modeWord(res)}` : ""}</div></div>
   </section>`;
 }
 
@@ -347,7 +350,7 @@ export const ACCUMULATION_SOURCES = [
     note: "הירידה הגדולה ביותר מהשיא של תשואת האסטרטגיה עצמה: יחידה אחת שהושקעה בהתחלה, כולל מינוף ודמי ניהול, בלי הפקדות ובלי מס. זה המדד המקובל ל'כמה כאב צפוי בדרך'." },
   { key: "dd_acct", kind: "pct", label: "ירידה מהשיא: החשבון", title: () => "התפלגות הירידה המקסימלית מהשיא: שווי החשבון",
     axis: "ירידה מהשיא (%)", values: (res) => res.raw.account_drawdown, stats: DD_STATS,
-    note: "הירידה הגדולה ביותר של שווי החשבון נטו לאורך המסלול. ההפקדות השוטפות מרככות אותה, ולכן בדרך כלל היא קטנה מירידת התיק." },
+    note: "הירידה הגדולה ביותר של שווי החשבון (ברוטו או נטו, לפי הבורר למעלה) לאורך המסלול. ההפקדות השוטפות מרככות אותה, ולכן בדרך כלל היא קטנה מירידת התיק." },
 ];
 
 export function CrossSection({ res, ui, setUi, themeKey, sources }) {
@@ -425,7 +428,7 @@ export function CrossSection({ res, ui, setUi, themeKey, sources }) {
 
 // ------------------------------------------------------------------ Outcome by start
 
-export function OutcomeByStart({ res, active, setHover, setPinned, themeKey }) {
+export function OutcomeByStart({ res, active, setHover, pinned, setPinned, openDetail, themeKey }) {
   const ref = useRef(null);
   const [tip, setTip] = useState(null);
   const solved = res.plan.solve_for !== "final";
@@ -435,10 +438,19 @@ export function OutcomeByStart({ res, active, setHover, setPinned, themeKey }) {
   const isPct = solved && res.labels.solvedKind === "pct";
   const fmtVal = isPct ? (v) => pct(v, 2) : (v) => money(v, cur);
   const xs = useMemo(() => res.raw.start_dates.map((d) => Date.parse(d + "T00:00:00Z")), [res]);
+  // The date field picks the realization that starts nearest to the typed date.
+  const pickDate = (iso) => {
+    const x = Date.parse(iso + "T00:00:00Z");
+    if (!Number.isFinite(x)) return;
+    let best = 0;
+    for (let i = 1; i < xs.length; i++) if (Math.abs(xs[i] - x) < Math.abs(xs[best] - x)) best = i;
+    setPinned(best);
+  };
+  const outcomeName = solved ? solvedLabel(res) : `${res.labels.outcome} ${modeWord(res)}`.trim();
   usePlot(ref, () => outcomeFigure({
-    dates: res.raw.start_dates, values, highlightIdx: active, prefix: isPct ? "" : sym, suffix: isPct ? "%" : "",
-    yTitle: solved ? solvedLabel(res) : res.labels.outcome,
-  }), [res, active, themeKey], (gd) => {
+    dates: res.raw.start_dates, values, highlightIdx: active, pinnedIdx: pinned, prefix: isPct ? "" : sym, suffix: isPct ? "%" : "",
+    yTitle: outcomeName,
+  }), [res, active, pinned, themeKey], (gd) => {
     // Own hover handling (Plotly's is off): pick the start date under the cursor and only
     // switch to a neighbour once the cursor is clearly closer to it, so it never flickers.
     let frame = 0, last = null, curIdx = null;
@@ -484,14 +496,24 @@ export function OutcomeByStart({ res, active, setHover, setPinned, themeKey }) {
   });
   const tipStyle = tip ? `top:${Math.max(tip.y - 56, 0)}px;${tip.x > tip.w * 0.6
     ? `right:${tip.w - tip.x + 14}px` : `left:${tip.x + 14}px`}` : "";
+  const n = res.raw.start_dates.length;
   return html`<section class="card" aria-label="תוצאה לפי תאריך התחלה">
-    <div class="card-head"><div><h2>${solved ? solvedLabel(res) : res.labels.outcome} לפי תאריך התחלה</h2>
-      <p class="muted">כל נקודה היא ריאליזציה אחת. ריחוף מדגיש את המסלול שלה בגרף העליון, ולחיצה נועצת אותו.</p></div></div>
+    <div class="card-head"><div><h2>${outcomeName} לפי תאריך התחלה</h2>
+      <p class="muted">כל נקודה היא ריאליזציה אחת. ריחוף מדגיש את המסלול שלה בגרף העליון, ולחיצה נועצת אותו. אפשר גם לבחור תאריך התחלה בשדה.</p></div></div>
+    <div class="date-pick">
+      <label class="mini">תאריך התחלה <input type="date" dir="ltr" min=${res.raw.start_dates[0]} max=${res.raw.start_dates[n - 1]}
+        value=${pinned !== null ? res.raw.start_dates[pinned] : ""} onChange=${(e) => pickDate(e.currentTarget.value)} /></label>
+      ${pinned !== null ? html`
+        <span class="muted">${outcomeName}: <b dir="ltr">${fmtVal(values[pinned])}</b></span>
+        <button class="btn primary small" onClick=${() => openDetail(pinned)}>פירוט מלא</button>
+        <button class="chip" title="בטל בחירה" onClick=${() => setPinned(null)}>✕</button>`
+        : html`<span class="muted small">בחר תאריך, או לחץ על נקודה בגרף או על שורה בטבלה.</span>`}
+    </div>
     <div class="plot-wrap">
       <div ref=${ref} class="plot"></div>
       ${tip ? html`<div class="fan-tip small" style=${tipStyle} role="tooltip">
         <div class="tip-title">התחלה ${dateHe(res.raw.start_dates[tip.i])}</div>
-        <div>${solved ? solvedLabel(res) : res.labels.outcome}: <b dir="ltr">${fmtVal(values[tip.i])}</b></div>
+        <div>${outcomeName}: <b dir="ltr">${fmtVal(values[tip.i])}</b></div>
         <div class="muted">${res.labels.outcomeSub(res, tip.i)}</div>
       </div>` : null}
     </div>
@@ -513,25 +535,48 @@ export function dateColumns(res) {
   ];
 }
 
+// Plan-year column: "שנה N (+x%)" where N is the year whose deposits did best or worst.
+// Sorted and exported by the return; the title shows which months that year covers.
+function yearColumn(res, key, label, pick) {
+  const yearOf = (i) => pick[i];
+  const ret = (i) => (yearOf(i) >= 0 ? res.years.at(i, yearOf(i)) : null);
+  return {
+    key, label, get: ret, fmt: (v) => pct(v, 1),
+    render: (i) => (yearOf(i) < 0 ? "—" : html`שנה ${yearOf(i) + 1} <span dir="ltr">(${pct(ret(i), 1)})</span>`),
+    title: (i) => (yearOf(i) < 0 ? "" : `הפקדות ${dateHe(addMonths(res.raw.start_dates[i], 12 * yearOf(i)))} עד ${dateHe(addMonths(res.raw.start_dates[i], 12 * yearOf(i) + 11))}, מוחזקות עד הסוף`),
+    csv: (i) => (yearOf(i) < 0 ? "" : `${yearOf(i) + 1} (${(ret(i) ?? 0).toFixed(1)}%)`),
+  };
+}
+
 function accumulationColumns(res) {
   const { raw, plan } = res;
   const cur = plan.currency;
+  const word = modeWord(res);
   return [
     ...dateColumns(res),
-    { key: "final", label: "סכום סופי", get: (i) => raw.final[i], fmt: (v) => money(v, cur) },
-    { key: "dep", label: "סך הפקדות", get: (i) => raw.deposits_total[i], fmt: (v) => money(v, cur) },
-    { key: "irr", label: "IRR שנתי", get: (i) => raw.irr[i], fmt: (v) => pct(v) },
-    { key: "cagr", label: "תשואת התיק", get: (i) => raw.cagr[i], fmt: (v) => pct(v) },
-    { key: "dd", label: "ירידת התיק", get: (i) => raw.max_drawdown[i], fmt: (v) => pct(v, 1) },
-    { key: "dda", label: "ירידת החשבון", get: (i) => raw.account_drawdown[i], fmt: (v) => pct(v, 1) },
+    { key: "final", label: `סכום סופי ${word}`, get: (i) => raw.final[i], fmt: (v) => money(v, cur) },
+    { key: "dep", label: "סך הפקדות", get: (i) => raw.deposits_total[i], fmt: (v) => money(v, cur), hidden: true },
+    { key: "irr", label: "תשואה שנתית (IRR)", get: (i) => raw.irr[i], fmt: (v) => pct(v) },
+    yearColumn(res, "best", `שנה מקסימלית ${word}`, res.bestYear),
+    yearColumn(res, "worst", `שנה מינימלית ${word}`, res.worstYear),
   ];
 }
 
-export function RealizationsTable({ res, active, setHover, pinned, setPinned, columns, openDetail }) {
+// The deposits total is the same in every row (unless it is solved or deflated), so it is
+// written once above the table instead of in a column.
+function depositsCaption(res) {
+  const d = res.raw.deposits_total, cur = res.plan.currency;
+  const lo = Math.min(...d), hi = Math.max(...d);
+  if (hi - lo <= 0.005 * Math.max(hi, 1)) return html`סך הפקדות בכל ריאליזציה: <b dir="ltr">${money(hi, cur)}</b>.`;
+  const s = summarize(d);
+  return html`סך הפקדות: <b dir="ltr">${money(s.min, cur)}</b> עד <b dir="ltr">${money(s.max, cur)}</b> (משתנה בין ריאליזציות${res.plan.real ? ", כי הסכומים בכסף של היום" : ""}).`;
+}
+
+export function RealizationsTable({ res, active, setHover, pinned, setPinned, columns, openDetail, caption }) {
   const { raw } = res;
   const [sort, setSort] = useState({ key: "start", dir: 1 });
   const [page, setPage] = useState(0);
-  const cols = columns;
+  const cols = columns.filter((c) => !c.hidden);
   const order = useMemo(() => {
     const c = cols.find((x) => x.key === sort.key);
     const idx = Array.from({ length: raw.n }, (_, i) => i);
@@ -549,8 +594,8 @@ export function RealizationsTable({ res, active, setHover, pinned, setPinned, co
   const shown = order.slice(page * PAGE, page * PAGE + PAGE);
   const clickSort = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : 1 }));
   const toCsv = () => {
-    const lines = [cols.map((c) => c.label).join(",")];
-    for (let i = 0; i < raw.n; i++) lines.push(cols.map((c) => c.get(i) ?? "").join(","));
+    const lines = [columns.map((c) => c.label).join(",")];
+    for (let i = 0; i < raw.n; i++) lines.push(columns.map((c) => (c.csv ? c.csv(i) : c.get(i) ?? "")).join(","));
     const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -561,7 +606,8 @@ export function RealizationsTable({ res, active, setHover, pinned, setPinned, co
 
   return html`<section class="card" aria-label="כל הריאליזציות">
     <div class="card-head"><div><h2>כל הריאליזציות</h2>
-      <p class="muted">ריחוף על שורה מציג את המסלול שלה בגרף, ולחיצה פותחת את הפירוט המלא שלה (כל פעולות המסחר). לחיצה על כותרת ממיינת.</p></div>
+      <p class="muted">ריחוף על שורה מציג את המסלול שלה בגרף, ולחיצה פותחת את הפירוט המלא שלה (כל פעולות המסחר). לחיצה על כותרת ממיינת.
+        ${caption ? html`<br />${caption}` : null}</p></div>
       <button class="btn ghost" onClick=${toCsv}>הורד CSV</button></div>
     <div class="table-wrap"><table class="data">
       <thead><tr>${cols.map((c) => html`<th><button type="button" onClick=${() => clickSort(c.key)}>
@@ -569,7 +615,8 @@ export function RealizationsTable({ res, active, setHover, pinned, setPinned, co
       <tbody onMouseLeave=${() => setHover(null)}>
         ${shown.map((i) => html`<tr key=${i} class=${(i === active ? "active" : "") + (i === pinned ? " pinned" : "")}
             onMouseEnter=${() => setHover(i)} onClick=${() => openDetail(i)} title="לחץ לפירוט מלא">
-          ${cols.map((c) => html`<td dir=${c.key === "start" || c.key === "end" || c.rtl ? "rtl" : "ltr"}>${c.fmt(c.get(i))}</td>`)}
+          ${cols.map((c) => html`<td dir=${c.key === "start" || c.key === "end" || c.rtl || c.render ? "rtl" : "ltr"}
+            title=${c.title ? c.title(i) : undefined}>${c.render ? c.render(i) : c.fmt(c.get(i))}</td>`)}
         </tr>`)}
       </tbody>
     </table></div>

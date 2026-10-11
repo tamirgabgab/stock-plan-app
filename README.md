@@ -55,12 +55,18 @@ the UI — it is not real market history).
   fixed monthly withdrawal, the maximum withdrawal rate (of the start amount or of
   the balance) or the minimum starting amount. Success-rate heat map (withdrawal
   rate × horizon, survival or capital preservation), click a cell to load it.
-- **Realization detail** – click any start date in the table (or use the floating
-  bar of the pinned path): the account value against the same plan at a fixed annual
-  return p (same deposits or withdrawals, fees and tax), and the full trade journal: every buy and sell with date, price (and the USD
-  quote in ILS mode), amount, units, tax, and each purchase's return to exit, total and
-  annualized. Next to it, the weighted basket of raw prices (weights as fractions, per
-  stage; optionally times the USD/ILS rate) with the buy dates marked in red.
+- **Gross or net** – one switch shows the whole accumulation tab either as the market
+  value of the holdings (gross, the default) or after the tax of selling everything (net).
+- **Plan-year cohorts** – for every realization, the annual return (IRR) of each plan
+  year's 12 deposits held to the end; the table shows the best and the worst year.
+- **Realization detail** – click any start date in the table, or pick a date next to the
+  outcome-by-start-date chart: the account value against the same plan at a fixed annual
+  return p (same deposits or withdrawals, fees and tax), and the full trade journal: every
+  buy and sell with date, price (and the USD quote in ILS mode), amount, the account value
+  and the fixed-return comparison at that month, tax, and each purchase's return to exit,
+  total and annualized. Next to it, the weighted basket of raw prices (weights as
+  fractions, per stage; optionally times the USD/ILS rate) with the buy dates marked in
+  red; both charts zoom with the wheel or a drag.
 - **Pleasant to use** – resizable settings panel (charts follow its width), calendar date picker plus a
   timeline range slider for the test window, a name ↔ ticker picker (built-in
   dictionary with Hebrew aliases, Yahoo search for the rest), a one-click

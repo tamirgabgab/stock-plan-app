@@ -75,6 +75,16 @@ class SimulationResult:
     deposits_path: "object"      # (R, months+1) cumulative deposits, display units
     solved: "object" = None      # (R,) solved variable, or None
     warnings: List[str] = field(default_factory=list)
+    # Gross = market value of the holdings, before the tax of selling everything at the end.
+    final_gross: "object" = None          # (R,) display units
+    irr_gross: "object" = None            # (R,) percent
+    account_drawdown_gross: "object" = None
+    paths_gross: "object" = None          # (R, months+1) display units
+    # Plan-year cohorts: annual return (IRR, percent) of the deposits made in each plan year
+    # (12 months), held to the end. Shape (R, years). Net applies the plan's tax rate to the
+    # cohort's own gain.
+    year_irr_gross: "object" = None
+    year_irr_net: "object" = None
 
 
 # ------------------------------------------------------------------ withdrawal (Trinity)

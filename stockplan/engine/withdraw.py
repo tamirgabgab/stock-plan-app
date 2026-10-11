@@ -30,6 +30,7 @@ class WithdrawOutput:
     shortfall_at: Optional[np.ndarray] = None    # (R,) first month not paid in full, or -1
     unpaid: Optional[np.ndarray] = None          # (R,) nominal sum of withdrawals that could not be paid
     cpi: Optional[np.ndarray] = None
+    paths_gross: Optional[np.ndarray] = None     # (R, T+1) nominal market value of the holdings
 
 
 def _weights(req: WithdrawRequest, market: Market) -> np.ndarray:
@@ -65,6 +66,7 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
     book.journal = journal
 
     paths = np.empty((R, T + 1)) if record else None
+    gross = np.empty((R, T + 1)) if record else None
     paid = np.zeros((R, T + 1)) if record else None
     shortfall_at = np.full(R, -1, dtype=np.int64)
     unpaid = np.zeros(R)
@@ -133,6 +135,7 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
             if record:
                 paid[:, m] = got
                 paths[:, m] = book.liquidation_value(cpi_m)
+                gross[:, m] = book.total
 
             book.grow(month_growth(market, idx, m), fee)
 
@@ -140,5 +143,6 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
     final = book.liquidation_value(cpi_T)
     if record:
         paths[:, T] = final
+        gross[:, T] = book.total
     return WithdrawOutput(final_net=final, paths_net=paths, withdrawals=paid, shortfall_at=shortfall_at,
-                          unpaid=unpaid, cpi=cpi)
+                          unpaid=unpaid, cpi=cpi, paths_gross=gross)

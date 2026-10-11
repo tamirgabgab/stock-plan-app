@@ -54,12 +54,13 @@ def realization_detail(req, md: MarketData, start: date) -> dict:
 
     journal: list = []
     if trinity:
-        simulate_withdraw(one, market, x=x, journal=journal)
+        out = simulate_withdraw(one, market, x=x, journal=journal, record=True)
     else:
-        simulate(one, market, x=x, journal=journal)
+        out = simulate(one, market, x=x, journal=journal, record=True)
 
     cpi = market.cpi_daily[idx] if market.cpi_daily is not None else None
     deflate = (market.cpi_base / cpi) if (req.real and cpi is not None) else np.ones(T + 1)
+    path_gross = out.paths_gross[0] * deflate
     fx = market.fx_daily
     if fx is None:                      # dollars: still offer the shekel view when the rate is available
         try:
@@ -132,6 +133,9 @@ def realization_detail(req, md: MarketData, start: date) -> dict:
         summary["depleted_at"] = None if res.depleted_at[0] < 0 else int(res.depleted_at[0])
         summary["success"] = bool(res.success[0])
     summary["solved"] = None if solved is None or np.isnan(solved) else solved
+    summary["final_gross"] = _num(path_gross[T])
+    if not trinity:
+        summary["irr_gross"] = _num(np.asarray(res.irr_gross)[0])
 
     return {
         "start_date": dates[0].strftime("%Y-%m-%d"), "end_date": dates[T].strftime("%Y-%m-%d"),
@@ -142,6 +146,7 @@ def realization_detail(req, md: MarketData, start: date) -> dict:
                     "weights": [_num(w) for w in W[i]]} for i, s in enumerate(one.stages)],
         "summary": summary, "trades": trades,
         "path": [_num(v) for v in np.asarray(res.paths)[0]],
+        "path_gross": [_num(v) for v in path_gross],
         "basket": series_at(days[keep]), "buys": series_at(marker_days), "sells": series_at(sale_days),
         "has_fx": fx is not None,
     }
@@ -179,4 +184,6 @@ def benchmark_path(req, md: MarketData, start: date, rate_pct: float, x: float |
     cpi = market.cpi_daily[idx] if market.cpi_daily is not None else None
     deflate = (market.cpi_base / cpi) if (req.real and cpi is not None) else np.ones(T + 1)
     path = out.paths_net[0] * deflate
-    return {"rate": rate_pct, "path": [_num(v) for v in path], "final": _num(path[T])}
+    gross = out.paths_gross[0] * deflate
+    return {"rate": rate_pct, "path": [_num(v) for v in path], "final": _num(path[T]),
+            "path_gross": [_num(v) for v in gross], "final_gross": _num(gross[T])}

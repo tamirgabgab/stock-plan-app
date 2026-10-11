@@ -308,6 +308,15 @@ def simulate(plan: PlanIn):
         "solved": None if res.solved is None else _floats(res.solved),
         "paths": _matrix_b64(res.paths),
         "deposits_path": _matrix_b64(res.deposits_path),
+        # Gross = market value before the tax of selling everything at the end.
+        "final_gross": _floats(res.final_gross),
+        "irr_gross": _floats(res.irr_gross),
+        "account_drawdown_gross": _floats(res.account_drawdown_gross),
+        "paths_gross": _matrix_b64(res.paths_gross),
+        # Plan-year cohorts: annual return of each year's deposits held to the end, (R, years).
+        "years": int(res.year_irr_gross.shape[1]),
+        "year_irr_gross": _matrix_b64(res.year_irr_gross),
+        "year_irr_net": _matrix_b64(res.year_irr_net),
         "warnings": res.warnings,
         "demo": get_market_data().is_demo,
     }

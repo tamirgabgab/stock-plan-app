@@ -8,7 +8,7 @@ from .market import Market, available_range, prepare_market
 from .models import (SOLVE_AMOUNT, SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_START,
                      TRINITY_SOLVE_MODES, Holding, PlanRequest, SimulationResult, Stage,
                      WithdrawRequest, WithdrawResult, WithdrawStage)
-from .simulate import simulate
+from .simulate import cohort_values, simulate
 from .solve import irr_annual, solve_monotone, trace_illinois
 from .withdraw import simulate_withdraw
 
@@ -88,15 +88,20 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
 
     D = _deflator(req, market, out.cpi)
     paths = out.paths_net * D
+    gross = out.paths_gross * D
     deposits = out.deposits * D
     final = paths[:, T]
+    final_gross = gross[:, T]
     irr = irr_annual(deposits, final)
+    irr_gross = irr_annual(deposits, final_gross)
+    year_gross, year_net = _cohort_irr(req, market, out, D)
 
     unit = simulate(req, market, record=True, unit_growth=True).paths_net * D
     with np.errstate(divide="ignore", invalid="ignore"):
         cagr = (np.maximum(unit[:, T], 0) ** (12 / T) - 1) * 100
         max_dd = _max_drawdown(unit)
         account_dd = _max_drawdown(paths)
+        account_dd_gross = _max_drawdown(gross)
 
     starts = list(market.start_dates)
     ends = list(market.calendar[market.day_idx[:, -1]])
@@ -107,7 +112,51 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
                             deposits_total=deposits.sum(axis=1), irr=irr, cagr=cagr,
                             max_drawdown=max_dd, account_drawdown=account_dd, paths=paths,
                             deposits_path=np.cumsum(deposits, axis=1),
-                            solved=solved, warnings=warnings)
+                            solved=solved, warnings=warnings,
+                            final_gross=final_gross, irr_gross=irr_gross, account_drawdown_gross=account_dd_gross,
+                            paths_gross=gross, year_irr_gross=year_gross, year_irr_net=year_net)
+
+
+def _cohort_irr(req: PlanRequest, market: Market, out, D: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(R, years) annual return of each plan year's deposits held to the end, gross and net.
+
+    Net takes the plan's tax rate off the cohort's own gain (value minus its deposits); the
+    loss shield and a real tax basis are left out, so it is the simple "tax on the profit"
+    the user expects, not the book's exact tax.
+    """
+    T = req.total_months
+    years = max(T // 12, 1)
+    value = cohort_values(req, market, out.deposits, years) * D[:, T:T + 1]     # display units
+    deposits = out.deposits * D
+    R = deposits.shape[0]
+    flows = np.zeros((R, years, 12))
+    exps = np.zeros((years, 12))
+    for y in range(years):
+        L = min(12, T - 12 * y)
+        flows[:, y, :L] = deposits[:, 12 * y:12 * y + L]
+        exps[y, :L] = T - (12 * y + np.arange(L))
+    cost = flows.sum(axis=2)
+    v_net = value - req.tax_rate / 100 * np.maximum(value - cost, 0.0)
+    return _irr_cohorts(flows, exps, cost, value), _irr_cohorts(flows, exps, cost, v_net)
+
+
+def _irr_cohorts(flows: np.ndarray, exps: np.ndarray, cost: np.ndarray, value: np.ndarray) -> np.ndarray:
+    """Annual IRR (percent) of 12 monthly flows (R, Y, 12) compounding ``exps`` (Y, 12) months
+    to ``value`` (R, Y). Bisection on the monthly rate, every cohort at once."""
+    lo = np.full(value.shape, -0.9999)
+    hi = np.full(value.shape, 1.0)
+    with np.errstate(over="ignore", invalid="ignore"):
+        for _ in range(70):
+            mid = 0.5 * (lo + hi)
+            fv = (flows * (1.0 + mid)[:, :, None] ** exps[None]).sum(axis=2)
+            above = fv > value
+            hi = np.where(above, mid, hi)
+            lo = np.where(above, lo, mid)
+    i = 0.5 * (lo + hi)
+    out = ((1 + i) ** 12 - 1) * 100
+    out[cost <= 0] = np.nan
+    out[value <= 0] = -100.0
+    return out
 
 
 # ------------------------------------------------------------------ withdrawal (Trinity)

@@ -25,7 +25,7 @@ export const newId = () => `s${Date.now().toString(36)}${nextId++}`;
 export function newStage(n) {
   return {
     id: newId(), name: `שלב ${n}`, months: 120, initial_deposit: 0, monthly_deposit: 1000,
-    holdings: [{ ticker: "^SP500TR", name: "S&P 500 Total Return", weight: 100, leverage: 1 }],
+    holdings: [{ ticker: "^GSPC", name: "S&P 500", weight: 100, leverage: 1 }],
   };
 }
 

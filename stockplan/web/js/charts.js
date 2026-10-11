@@ -27,6 +27,11 @@ export function theme() {
 export const HIST_MARGIN = { l: 48, r: 16 };
 
 export const PLOT_CONFIG = { displayModeBar: false, responsive: true, scrollZoom: false };
+// Charts the user explores: wheel zoom, box zoom, pan and the zoom buttons; double-click resets.
+export const ZOOM_CONFIG = {
+  displayModeBar: true, displaylogo: false, responsive: true, scrollZoom: true,
+  modeBarButtonsToRemove: ["select2d", "lasso2d", "toImage", "hoverClosestCartesian", "hoverCompareCartesian", "toggleSpikelines"],
+};
 
 function baseLayout(t, extra = {}) {
   return {
@@ -165,13 +170,17 @@ export function histFigure({ hist, a, b, median, mean, prefix, suffix, xTitle, m
   return { data, layout };
 }
 
-export function outcomeFigure({ dates, values, highlightIdx, prefix, suffix, yTitle }) {
+export function outcomeFigure({ dates, values, highlightIdx, pinnedIdx, prefix, suffix, yTitle }) {
   const t = theme();
+  const has = (i) => i !== null && i !== undefined && i >= 0;
   const data = [
     { type: "scatter", mode: "lines", x: dates, y: values, line: { width: 2, color: t.blue },
       hoverinfo: "skip", name: yTitle, showlegend: false },
-    { type: "scatter", mode: "markers", x: highlightIdx !== null ? [dates[highlightIdx]] : [],
-      y: highlightIdx !== null ? [values[highlightIdx]] : [], hoverinfo: "skip", showlegend: false,
+    // The pinned (selected) realization: a ring that stays while the cursor moves.
+    { type: "scatter", mode: "markers", x: has(pinnedIdx) ? [dates[pinnedIdx]] : [], y: has(pinnedIdx) ? [values[pinnedIdx]] : [],
+      hoverinfo: "skip", showlegend: false, marker: { size: 16, color: "rgba(0,0,0,0)", line: { width: 2.5, color: t.violet } } },
+    { type: "scatter", mode: "markers", x: has(highlightIdx) ? [dates[highlightIdx]] : [],
+      y: has(highlightIdx) ? [values[highlightIdx]] : [], hoverinfo: "skip", showlegend: false,
       marker: { size: 10, color: t.violet, line: { width: 2, color: t.surface } } },
   ];
   const layout = baseLayout(t, {
@@ -268,12 +277,12 @@ export function basketFigure({ basket, buys, sells, stages, useFx, highlight }) 
     { x: basket.dates, y: val(basket), mode: "lines", line: { width: 1.6, color: t.blue }, name: "מחיר הסל",
       hovertemplate: `%{x|%d/%m/%Y}<br>${pre}%{y:,.2f}<extra></extra>` },
     { x: buys.dates, y: val(buys), mode: "markers", name: "קנייה",
-      marker: { size: 6, color: red, line: { width: 1, color: t.surface } },
+      marker: { size: 4, color: red, line: { width: 0.5, color: t.surface } },
       hovertemplate: `קנייה %{x|%d/%m/%Y}<br>${pre}%{y:,.2f}<extra></extra>` },
   ];
   if (sells.dates.length) {
     data.push({ x: sells.dates, y: val(sells), mode: "markers", name: "מכירה",
-      marker: { size: 6, color: t.orange, symbol: "diamond", line: { width: 1, color: t.surface } },
+      marker: { size: 5, color: t.orange, symbol: "diamond", line: { width: 0.5, color: t.surface } },
       hovertemplate: `מכירה %{x|%d/%m/%Y}<br>${pre}%{y:,.2f}<extra></extra>` });
   }
   if (highlight) {
@@ -288,18 +297,19 @@ export function basketFigure({ basket, buys, sells, stages, useFx, highlight }) 
   const layout = baseLayout(t, {
     shapes, annotations, hovermode: "closest", dragmode: "zoom",
     margin: { l: 64, r: 16, t: 10, b: 40 },
+    legend: { orientation: "h", x: 0, xanchor: "left", y: 1.02, yanchor: "bottom", bgcolor: "rgba(0,0,0,0)" },
     xaxis: axis(t, { type: "date" }),
-    yaxis: axis(t, { tickprefix: pre, tickformat: "~s", fixedrange: true }),
+    yaxis: axis(t, { tickprefix: pre, tickformat: "~s" }),
   });
   return { data, layout };
 }
 
 // One realization's account value against the same plan at a fixed annual return.
-export function accountFigure({ dates, account, bench, flow, flowLabel, benchLabel, sym }) {
+export function accountFigure({ dates, account, accountLabel = "שווי החשבון", bench, flow, flowLabel, benchLabel, sym }) {
   const t = theme();
   const hv = (name) => `${name}: ${sym}%{y:,.0f}<extra></extra>`;
   const data = [
-    { x: dates, y: account, mode: "lines", line: { width: 2.4, color: t.blue }, name: "שווי החשבון", hovertemplate: hv("החשבון") },
+    { x: dates, y: account, mode: "lines", line: { width: 2.4, color: t.blue }, name: accountLabel, hovertemplate: hv("החשבון") },
     { x: dates, y: bench || [], mode: "lines", line: { width: 2, color: t.orange, dash: "dash" }, name: benchLabel,
       hovertemplate: hv("השוואה") },
     { x: dates, y: flow, mode: "lines", line: { width: 1.3, color: t.neutral, dash: "dot" }, name: flowLabel, hovertemplate: hv(flowLabel) },
@@ -307,8 +317,9 @@ export function accountFigure({ dates, account, bench, flow, flowLabel, benchLab
   const layout = baseLayout(t, {
     hovermode: "x unified", dragmode: "zoom",
     margin: { l: 64, r: 16, t: 8, b: 36 },
+    legend: { orientation: "h", x: 0, xanchor: "left", y: 1.02, yanchor: "bottom", bgcolor: "rgba(0,0,0,0)" },
     xaxis: axis(t, { type: "date" }),
-    yaxis: axis(t, { tickprefix: sym, tickformat: "~s", fixedrange: true, rangemode: "tozero" }),
+    yaxis: axis(t, { tickprefix: sym, tickformat: "~s", rangemode: "tozero" }),
   });
   return { data, layout };
 }

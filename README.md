@@ -81,6 +81,9 @@ production URL within a couple of minutes (other branches get preview URLs).
 - The cache lives in `/tmp` and is per instance, so a cold start downloads data again.
 - Yahoo is probed once per instance; if it does not answer the app switches to demo data
   and the banner says so (`STOCKPLAN_DEMO_FALLBACK`, on by default when `VERCEL` is set).
+- A data source that fails (timeout, blocked host) is skipped for an hour instead of being
+  retried on every request. `/api/status` lists each source tried by the instance, with
+  timing and errors; API responses carry a `Server-Timing` header.
 - Responses are capped at 4.5 MB, so the hosted app allows fewer realizations × months
   (monthly sampling works; daily sampling over long histories needs the local app).
 

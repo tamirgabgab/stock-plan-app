@@ -26,7 +26,8 @@ from .base import DataError, normalize_daily, normalize_monthly
 
 log = logging.getLogger(__name__)
 
-HTTP_TIMEOUT = 30
+HTTP_TIMEOUT = (5, 20)   # connect, read (seconds)
+FAIL_TTL = 3600          # a source that failed is skipped for this long (seconds)
 USER_AGENT = "Mozilla/5.0 (stock-plan-app)"
 
 BOI_USD_ILS_URL = (
@@ -60,6 +61,10 @@ def _write_cache(series: pd.Series, p: Path) -> None:
         series.rename("value").to_frame().to_parquet(p)
     else:
         series.rename("value").to_pickle(p)
+
+
+class _Skipped(Exception):
+    """A source is skipped because it failed a moment ago."""
 
 
 class _DiskCache:
@@ -141,6 +146,31 @@ class YahooMarketData:
         self.cache = _DiskCache(cache_root)
         self.ttl_hours = ttl_hours
         self._memo: dict[tuple[str, str], pd.Series] = {}
+        self._failed: dict[str, float] = {}     # source -> time it last failed
+        self.sources: dict[str, dict] = {}      # source -> last attempt, for /api/status
+
+    def _attempt(self, source: str, fetch: Callable[[], pd.Series], ttl: float = FAIL_TTL,
+                 remember_data_errors: bool = True) -> pd.Series:
+        """Run one download, timing it. A source that failed recently is skipped at once, so a
+        blocked or hanging host costs one timeout per ``ttl`` instead of one per request."""
+        failed_at = self._failed.get(source)
+        if failed_at is not None and time.time() - failed_at < ttl:
+            raise _Skipped(f"skipped, failed {int(time.time() - failed_at)}s ago")
+        t0 = time.time()
+        try:
+            s = fetch()
+            if s is None or len(s) == 0:
+                raise DataError("empty response")
+        except Exception as exc:
+            if remember_data_errors or not isinstance(exc, DataError):
+                self._failed[source] = time.time()
+            self.sources[source] = {"ok": False, "seconds": round(time.time() - t0, 2),
+                                    "error": str(exc)[:300], "at": time.time()}
+            raise
+        self._failed.pop(source, None)
+        self.sources[source] = {"ok": True, "seconds": round(time.time() - t0, 2),
+                                "rows": len(s), "at": time.time()}
+        return s
 
     # ------------------------------------------------------------------ prices
     def prices(self, ticker: str) -> pd.Series:
@@ -153,7 +183,9 @@ class YahooMarketData:
             if cached is not None and age < self.ttl_hours:
                 return self._memo_get(key, cached)
             try:
-                fresh = self._refresh_prices(ticker, cached)
+                # An unknown ticker (DataError) is not remembered: it fails fast anyway.
+                fresh = self._attempt(f"Yahoo {ticker}", lambda: self._refresh_prices(ticker, cached),
+                                      ttl=600, remember_data_errors=False)
             except DataError:
                 raise
             except Exception as exc:  # network errors etc.
@@ -185,7 +217,9 @@ class YahooMarketData:
     def reachable(self) -> bool:
         """True when Yahoo answers: a few days of SPY download. Used to fall back to demo data."""
         try:
-            return not self._download("SPY", start=date.today() - timedelta(days=10)).empty
+            self._attempt("Yahoo probe (SPY)",
+                          lambda: self._download("SPY", start=date.today() - timedelta(days=10)))
+            return True
         except Exception as exc:  # noqa: BLE001 - any failure means "not reachable"
             log.warning("Yahoo Finance is not reachable: %s", exc)
             return False
@@ -224,7 +258,7 @@ class YahooMarketData:
             errors = []
             for label, fetch in fetchers:
                 try:
-                    s = fetch()
+                    s = self._attempt(f"{label} ({name})", fetch)
                     s = normalize_monthly(s) if monthly else normalize_daily(s)
                     if len(s) > 12:
                         self.cache.save(*key, s)

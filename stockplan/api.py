@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import logging
 import math
+import time
 from datetime import date
 from pathlib import Path
 from typing import List, Literal, Optional
@@ -23,6 +24,7 @@ from .engine import (Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage
 
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent / "web"
+STARTED = time.time()
 MAX_CELLS = 15_000_000   # realizations x months sent to the browser
 if ON_VERCEL:            # hosted responses are capped at 4.5 MB (~11 bytes per cell)
     MAX_CELLS = 350_000
@@ -153,9 +155,12 @@ app.add_middleware(GZipMiddleware, minimum_size=2048)
 async def no_stale_assets(request, call_next):
     # Make the browser revalidate the UI files on every load (cheap: ETag -> 304), so a new
     # version is picked up without a hard refresh.
+    t0 = time.perf_counter()
     response = await call_next(request)
     if not request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-cache"
+    else:   # visible in the browser's network tab
+        response.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - t0) * 1000:.0f}"
     return response
 
 
@@ -179,6 +184,23 @@ def meta():
         "version": __version__,
         "favorites": [{"group": g, "items": [{"label": l, "ticker": t} for l, t in items]}
                       for g, items in FAVORITES.items()],
+    }
+
+
+@app.get("/api/status")
+def status():
+    """Which data sources answered, and how fast. Open it in the browser to diagnose slowness."""
+    md = get_market_data()
+    now = time.time()
+    sources = sorted(getattr(md, "sources", {}).items(), key=lambda kv: -kv[1]["at"])
+    return {
+        "version": __version__,
+        "demo": md.is_demo,
+        "demo_reason": demo_reason(),
+        "hosted": ON_VERCEL,
+        "instance_uptime_s": round(now - STARTED),
+        "sources": [{"source": k, **{f: v for f, v in info.items() if f != "at"},
+                     "ago_s": round(now - info["at"])} for k, info in sources],
     }
 
 

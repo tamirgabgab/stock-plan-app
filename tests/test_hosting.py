@@ -44,3 +44,40 @@ def test_no_probe_without_fallback_flag(fresh_provider, monkeypatch):
     monkeypatch.setattr(yahoo.YahooMarketData, "reachable",
                         lambda self: pytest.fail("must not probe"))
     assert not data.get_market_data().is_demo
+
+
+def test_failed_source_is_skipped_for_a_while(tmp_path):
+    md = yahoo.YahooMarketData(cache_root=tmp_path)
+    calls = []
+
+    def boom():
+        calls.append(1)
+        raise ConnectionError("timed out")
+
+    for _ in range(3):
+        with pytest.raises(Exception):
+            md._attempt("FRED (x)", boom)
+    assert len(calls) == 1                          # tried once, then skipped
+    assert md.sources["FRED (x)"]["ok"] is False
+
+
+def test_unknown_ticker_is_not_remembered(tmp_path):
+    md = yahoo.YahooMarketData(cache_root=tmp_path)
+    calls = []
+
+    def missing():
+        calls.append(1)
+        raise data.DataError("no such ticker")
+
+    for _ in range(2):
+        with pytest.raises(data.DataError):
+            md._attempt("Yahoo XYZ", missing, remember_data_errors=False)
+    assert len(calls) == 2
+
+
+def test_status_endpoint(monkeypatch):
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(data, "_provider", data.DemoMarketData(end="2026-01-01"))
+    from stockplan.api import app
+    r = TestClient(app).get("/api/status")
+    assert r.status_code == 200 and "sources" in r.json()

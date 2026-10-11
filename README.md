@@ -13,8 +13,10 @@ date, and every realization in a table. Hover any of them to see that path.
 
 ## Quick start
 
-**Online:** https://stock-plan-app.vercel.app — every push to `main` is deployed there
-automatically. Locally:
+**In the browser, nothing to install:**
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/tamirgabgab/stock-plan-app?quickstart=1)
+— the link opens (or resumes) your codespace, updates it to the latest `main`, starts the
+app and opens it in a new tab. Locally:
 
 ```bash
 pip install -r requirements-local.txt
@@ -69,10 +71,19 @@ the UI — it is not real market history).
   the same equations with the current plan's numbers plugged in, and a live chart
   of the Illinois solver's steps on the current plan.
 
-## Hosting (Vercel)
+## GitHub Codespaces
 
-The repository is linked to a Vercel project, so every push to `main` redeploys the
-production URL within a couple of minutes (other branches get preview URLs).
+`.devcontainer/` sets up a codespace: dependencies are installed when it is created, and
+every time it is opened `.devcontainer/start.sh` fast-forwards to the latest `main`,
+restarts the app on port 8000 and the port opens in a browser tab. The link
+`https://codespaces.new/tamirgabgab/stock-plan-app?quickstart=1` resumes an existing
+codespace instead of creating a new one. Codespaces stop after 30 idle minutes; the
+personal free quota is 120 core-hours a month (60 hours on the default 2-core machine).
+
+## Hosting (Vercel, paused)
+
+Automatic Vercel deployments are switched off (`"git": {"deploymentEnabled": false}` in
+`vercel.json`); the setup is kept for reference and can be re-enabled there.
 
 - `api/index.py` exposes the FastAPI app; `vercel.json` routes every path to it.
 - Dependencies come from the `[project]` table in `pyproject.toml` (kept in step with

@@ -11,12 +11,12 @@
   },
   "updateContentCommand": "pip3 install --user -r requirements-dev.txt",
   "postAttachCommand": {
-    "server": "python3 run.py --no-browser"
+    "server": "bash .devcontainer/start.sh"
   },
   "portsAttributes": {
     "8000": {
-      "label": "Application",
-      "onAutoForward": "openPreview"
+      "label": "Stock Plan App",
+      "onAutoForward": "openBrowser"
     }
   },
   "forwardPorts": [8000]

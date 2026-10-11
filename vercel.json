@@ -5,5 +5,8 @@
       "maxDuration": 300,
       "excludeFiles": "{legacy,tests,data_cache}/**"
     }
+  },
+  "git": {
+    "deploymentEnabled": { "claude/**": false }
   }
 }

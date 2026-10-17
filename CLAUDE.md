@@ -10,8 +10,10 @@ Working instructions for Claude Code sessions in this repository. Read
   the working branch and merge it, or push to `main`) without asking first, as long as
   nothing critical fails. "Critical" means anything CI would reject: a failing or erroring
   test in `python -m pytest`, a JavaScript syntax error, an app that does not start, or a
-  failing check on the PR if the repository has CI workflows (`.github/workflows/`; none
-  yet). Warnings and known limitations (for example data sources that could not be checked
+  failing job in the CI workflow (`.github/workflows/ci.yml`: pytest on Python 3.11 and
+  3.13, JavaScript syntax, and a smoke test that starts the app and runs a simulation).
+  Run the same checks locally before pushing, and after pushing to `main` check that the
+  CI run went green. Warnings and known limitations (for example data sources that could not be checked
   without network access) are not blockers: ship, and mention them in the report.
 - **If something critical fails,** do not push to `main`. Push the branch only, and tell the
   owner in the chat exactly what fails (the failing check or test and its error) and what

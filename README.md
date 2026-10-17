@@ -184,6 +184,11 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
+CI (`.github/workflows/ci.yml`, GitHub Actions) runs on every push to `main` and every pull
+request, on demo data: the test suite on Python 3.11 and 3.13, a syntax check of every
+JavaScript file, and a smoke test that starts the app, loads the page and its files and runs
+an apartment-tab simulation.
+
 The previous Streamlit version is kept in `legacy/` for reference (`streamlit run
 legacy/main.py`, requirements in `legacy/requirements.txt`); it is no longer maintained.
 

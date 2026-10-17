@@ -76,20 +76,28 @@ the UI — it is not real market history).
   missing parameter where one exists and the numerical solver where it does not, plus
   the same equations with the current plan's numbers plugged in, and a live chart
   of the Illinois solver's steps on the current plan.
-- **Apartment vs. capital market tab** – a deterministic month-by-month comparison with
-  fixed parameters (no market history). One person (equity + a monthly budget, optionally
-  CPI-indexed) and any number of scenarios: market portfolios (return, deposit fee,
-  management fee, capital-gains tax on real or nominal gains) and apartments (price,
-  single/additional apartment, LTV, a mortgage mix of tracks with term, rate, CPI-linking
-  and Spitzer or equal-principal repayment, one-time costs, purchase tax by editable
-  brackets, rent with growth, vacancy and the three Israeli rent-tax tracks, appreciation,
-  maintenance, insurance, selling costs, mas shevach with the single-apartment exemption
-  ceiling). The budget surplus or shortfall of an apartment goes to a side account in the
-  market. Each line is the **net worth on realization** (assets minus liabilities after
-  exit costs and taxes) over time. Metrics: final value, sum over all months, present
-  value, discounted sum, IRR, crossing points. Solve any numeric parameter for the value
-  at which two chosen scenarios are equivalent on a metric. The general equations and each
-  scenario's equation with its numbers plugged in are shown in the tab.
+- **Apartment vs. capital market tab** – should one person, with equity and a monthly
+  budget, buy an apartment or invest in the market? Any number of scenarios, each a line:
+  - *Market:* return (or a holdings table in history mode), deposit fee, management fee,
+    capital-gains tax on real or nominal gains.
+  - *Apartment:* price, single or additional apartment, LTV, a mortgage mix (fixed,
+    prime, variable every N years or an own rate schedule; CPI-linked or not; Spitzer or
+    equal principal), one-time costs, purchase tax by editable brackets, rent with growth,
+    vacancy and the three Israeli rent-tax tracks, appreciation, running costs, selling
+    costs and mas shevach with the single-apartment exemption ceiling. The budget surplus
+    or shortfall goes to a side account in the market.
+  - *Net worth on realization* per month: assets minus liabilities after exit costs and
+    taxes. Metrics: final value, sum over all months, present value, discounted sum, IRR,
+    crossing points.
+  - *Fixed parameters or history:* in history mode every start month is a realization and
+    each chosen series (portfolio returns, Israeli CPI, housing prices, rents, the Bank of
+    Israel rate) runs on the data; results show the median or mean, a 10–90 band, the
+    final value by start date and the probability that A beats B. In fixed mode the Bank
+    of Israel rate follows an editable step path with presets.
+  - *Break-even solver:* any numeric parameter (including a parallel shift of all floating
+    rates) for the value at which two scenarios are equivalent on a metric; in history
+    mode also for every start date separately.
+  - The general equations and each scenario's equation with its numbers plugged in.
 
 ## GitHub Codespaces
 
@@ -126,9 +134,13 @@ Automatic Vercel deployments are switched off (`"git": {"deploymentEnabled": fal
 | USD/ILS | Bank of Israel, Yahoo `ILS=X`, FRED monthly | First available source wins; FRED extends older history |
 | US CPI | FRED `CPIAUCSL` | |
 | Israel CPI | CBS API, FRED `ISRCPIALLMINMEI` | |
+| Israel housing prices | CBS index 40010, FRED `QISN628BIS` (quarterly) | Apartment tab, history mode. Not yet verified live |
+| Israel rents | CBS CPI component 120460 | Apartment tab, history mode. Not yet verified live |
+| Bank of Israel rate | Bank of Israel SDMX, FRED `IRSTCI01ILM156N` | Apartment tab, history mode. Not yet verified live |
 
 Put a CSV with columns `date,value` in `data_cache/manual/` (`fx_usd_ils.csv`,
-`cpi_us.csv`, `cpi_il.csv`) to override any series.
+`cpi_us.csv`, `cpi_il.csv`, `housing_il.csv`, `rent_il.csv`, `boi_rate.csv`) to override
+any series.
 
 ## Project structure
 
@@ -138,11 +150,14 @@ api/index.py           # Vercel entry point (vercel.json routes everything here)
 stockplan/
   data/                # market data providers + disk cache (Yahoo, demo)
   engine/              # pure numpy simulation engine and solvers
-    property.py        # apartment vs. capital market model (fixed parameters)
+    property.py        # apartment vs. capital market model (vectorized; fixed or history)
+    property_data.py   # history paths for the apartment tab
   api.py               # FastAPI endpoints, serves the web UI
   web/                 # static UI: Preact + htm + Plotly + KaTeX (vendored, no build step)
 tests/                 # pytest: engine and API
 legacy/                # the previous Streamlit app (kept for reference)
+HANDOFF.md             # design notes, the models, data sources, roadmap (Hebrew)
+CLAUDE.md              # working instructions for Claude Code sessions
 ```
 
 ## Development
@@ -155,7 +170,8 @@ python -m pytest
 The previous Streamlit version is kept in `legacy/` for reference (`streamlit run
 legacy/main.py`, requirements in `legacy/requirements.txt`); it is no longer maintained.
 
-See [HANDOFF.md](HANDOFF.md) for design notes, the engine model and the roadmap.
+See [HANDOFF.md](HANDOFF.md) for design notes, the engine model and the roadmap, and
+[CLAUDE.md](CLAUDE.md) for the working instructions given to Claude Code.
 
 ## Author
 

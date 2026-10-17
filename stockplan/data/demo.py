@@ -46,3 +46,30 @@ class DemoMarketData:
         infl = (0.025 if country == "US" else 0.03) / 12
         r = rng.normal(infl, 0.002, len(months))
         return pd.Series(100 * np.exp(np.cumsum(r)), index=months)
+
+    # ---- housing market (apartment vs. capital market tab)
+    def _months(self, start: str) -> pd.DatetimeIndex:
+        return pd.date_range(start, self.days[-1], freq="MS")
+
+    def housing_index(self) -> pd.Series:
+        months = self._months("1994-01-01")
+        rng = _rng("HOUSING_IL")
+        cycle = 0.004 * np.sin(np.arange(len(months)) / 40)
+        r = rng.normal(0.05 / 12, 0.008, len(months)) + cycle
+        return pd.Series(100 * np.exp(np.cumsum(r)), index=months)
+
+    def rent_index(self) -> pd.Series:
+        months = self._months("1990-01-01")
+        rng = _rng("RENT_IL")
+        r = rng.normal(0.035 / 12, 0.004, len(months))
+        return pd.Series(100 * np.exp(np.cumsum(r)), index=months)
+
+    def boi_rate(self) -> pd.Series:
+        """Mean-reverting rate: from about 12% in 1994 towards 3.5%, never below 0.1%."""
+        months = self._months("1994-01-01")
+        rng = _rng("BOI_RATE")
+        x = np.empty(len(months))
+        x[0] = 12.0
+        for i in range(1, len(x)):
+            x[i] = x[i - 1] + 0.02 * (3.5 - x[i - 1]) + rng.normal(0, 0.25)
+        return pd.Series(np.clip(x, 0.1, 18.0), index=months)

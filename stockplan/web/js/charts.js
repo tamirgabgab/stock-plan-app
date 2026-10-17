@@ -333,10 +333,17 @@ const yearsAxis = (t, T) => axis(t, { title: { text: "שנים" }, range: [0, T 
 export function propertyFigure({ series, T, timeIdx, crossings = [], sym }) {
   const t = theme();
   const x = Array.from({ length: T + 1 }, (_, i) => i / 12);
-  const data = series.map((s) => ({
-    x, y: s.y, mode: "lines", name: s.name, line: { width: s.bold ? 3 : 2.2, color: t.palette[s.color % 8], dash: s.dash },
-    hovertemplate: `${s.name}: ${sym}%{y:,.0f}<extra></extra>`,
-  }));
+  const data = [];
+  for (const s of series) {
+    const color = t.palette[s.color % 8];
+    if (s.band) {      // 10-90 percentile band of the realizations (history mode)
+      data.push({ x, y: s.band.lo, mode: "lines", line: { width: 0, color }, hoverinfo: "skip", showlegend: false });
+      data.push({ x, y: s.band.hi, mode: "lines", line: { width: 0, color }, fill: "tonexty", fillcolor: fade(color, 0.14),
+                  hoverinfo: "skip", showlegend: false });
+    }
+    data.push({ x, y: s.y, mode: "lines", name: s.name, line: { width: s.bold ? 3 : 2.2, color, dash: s.dash },
+                hovertemplate: `${s.name}: ${sym}%{y:,.0f}<extra></extra>` });
+  }
   if (crossings.length) {
     data.push({ x: crossings.map((c) => c.t / 12), y: crossings.map((c) => c.y), mode: "markers", name: "נקודת חיתוך",
       marker: { size: 11, symbol: "x", color: t.text, line: { width: 1, color: t.surface } }, hoverinfo: "skip" });
@@ -351,6 +358,48 @@ export function propertyFigure({ series, T, timeIdx, crossings = [], sym }) {
     yaxis: axis(t, { tickprefix: sym, tickformat: "~s", fixedrange: true }),
   });
   return { data, layout };
+}
+
+// "#rrggbb" or "rgb(...)" with an alpha.
+function fade(color, a) {
+  const c = color.trim();
+  if (c.startsWith("#") && c.length === 7) {
+    const n = parseInt(c.slice(1), 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+  }
+  const m = c.match(/rgba?\(([^)]+)\)/);
+  return m ? `rgba(${m[1].split(",").slice(0, 3).join(",")}, ${a})` : c;
+}
+
+// History mode: a metric of every scenario against the start date; the detailed date marked.
+export function outcomeByStartFigure({ dates, series, detail, sym }) {
+  const t = theme();
+  const data = series.map((s) => ({
+    x: dates, y: s.y, mode: "lines", name: s.name, line: { width: 2, color: t.palette[s.color % 8] },
+    hovertemplate: `${s.name}: ${sym}%{y:,.0f}<extra>%{x|%m/%Y}</extra>`,
+  }));
+  const shapes = detail ? [{ type: "line", yref: "paper", y0: 0, y1: 1, x0: detail, x1: detail, line: { color: t.violet, width: 2, dash: "dot" } }] : [];
+  return { data, layout: baseLayout(t, {
+    hovermode: "x unified", dragmode: false, shapes,
+    margin: { l: 64, r: 16, t: 8, b: 40 },
+    xaxis: axis(t, { type: "date", fixedrange: true, title: { text: "תאריך התחלה" } }),
+    yaxis: axis(t, { tickprefix: sym, tickformat: "~s", fixedrange: true }),
+  }) };
+}
+
+// History mode: the break-even value of every start date.
+export function rootHistFigure({ values, current, xLabel }) {
+  const t = theme();
+  const data = [{ type: "histogram", x: values, nbinsx: 30, marker: { color: t.blue, line: { width: 0 } }, name: "תאריכים",
+                  hovertemplate: "%{x}<br>%{y} תאריכים<extra></extra>" }];
+  const shapes = Number.isFinite(current)
+    ? [{ type: "line", yref: "paper", y0: 0, y1: 1, x0: current, x1: current, line: { color: t.violet, width: 1.5, dash: "dot" } }] : [];
+  return { data, layout: baseLayout(t, {
+    showlegend: false, hovermode: "closest", dragmode: false, shapes, bargap: 0.04,
+    margin: { l: 56, r: 16, t: 8, b: 44 },
+    xaxis: axis(t, { title: { text: xLabel }, fixedrange: true }),
+    yaxis: axis(t, { title: { text: "תאריכים" }, fixedrange: true }),
+  }) };
 }
 
 // One scenario's net worth split into assets (up) and liabilities and exit costs (down).

@@ -34,9 +34,16 @@ export const DEFAULT_TAXES = () => ({
   shevach_rate: 25, shevach_single_ceiling: 4_848_000, rent_exempt_ceiling: 5_654,
 });
 const DEFAULT_HOLDINGS = () => [{ ticker: "^SP500TR", name: "S&P 500 Total Return", weight: 100, leverage: 1 }];
-const MARKET_DEFAULTS = () => ({ annual_return: 7, deposit_fee: 0, annual_fee: 0.2, tax_rate: 25, tax_basis: "real",
+const MARKET_DEFAULTS = () => ({ annual_return: 7, volatility: 16, deposit_fee: 0, annual_fee: 0.2, tax_rate: 25, tax_basis: "real",
                                  holdings: DEFAULT_HOLDINGS() });
 const HISTORY_ALL = { market: true, cpi: true, housing: true, rent: true, rate: true };
+// Synthetic mode: correlations of the monthly draws, by pair (the engine's DEFAULT_CORR).
+const SYN_ORDER = ["market", "cpi", "housing", "rent", "rate"];
+const DEFAULT_CORR = () => ({ "market|cpi": 0, "market|housing": 0.1, "market|rent": 0, "market|rate": -0.1,
+                              "cpi|housing": 0.3, "cpi|rent": 0.5, "cpi|rate": 0.4, "housing|rent": 0.5,
+                              "housing|rate": -0.2, "rent|rate": 0.1 });
+const SYN_DEFAULTS = () => ({ n: 1000, seed: 1, series: { ...HISTORY_ALL }, cpi_vol: 1.5, housing_vol: 6, rent_vol: 3, rate_vol: 1,
+                              corr: DEFAULT_CORR() });
 const SERIES = [
   { key: "market", label: "תשואות שוק ההון", hint: "התיק של שוק ההון בכל תרחיש, לפי טבלת הנכסים, בשקלים לפי שער הדולר של כל יום." },
   { key: "cpi", label: "אינפלציה (מדד המחירים)", hint: "הצמדות, תקציב צמוד, מסלולים צמודים, מס ריאלי ותצוגה ריאלית לפי המדד בפועל." },
@@ -69,7 +76,7 @@ export function newScenario(name = "דירה", alloc = 100) {
 const DEFAULT_COMMON = () => ({
   years: 25, equity: 800_000, budget: 8_000, index_budget: true, inflation: 2.5, housing_rent: 0,
   housing_rent_growth: 2.5, discount_rate: 4, income: 0, real: false,
-  mode: "fixed", history: { ...HISTORY_ALL }, leverage_cost: 0,
+  mode: "fixed", history: { ...HISTORY_ALL }, synthetic: SYN_DEFAULTS(), leverage_cost: 0,
   rate_path: [{ year: 0, rate: 4.5 }], prime_spread: 1.5, rate_shift: 0,
 });
 
@@ -87,7 +94,10 @@ export function defaultPropertyPlan() {
 // Saved or shared plans: fill in fields added in later versions and keep the references valid.
 function normalize(p) {
   const d = defaultPropertyPlan();
-  const plan = { ...d, ...p, common: { ...d.common, ...(p.common || {}), history: { ...HISTORY_ALL, ...(p.common?.history || {}) } },
+  const ps = p.common?.synthetic || {};
+  const plan = { ...d, ...p, common: { ...d.common, ...(p.common || {}), history: { ...HISTORY_ALL, ...(p.common?.history || {}) },
+                                       synthetic: { ...SYN_DEFAULTS(), ...ps, series: { ...HISTORY_ALL, ...(ps.series || {}) },
+                                                    corr: { ...DEFAULT_CORR(), ...(ps.corr || {}) } } },
                  taxes: { ...d.taxes, ...(p.taxes || {}) }, compare: { ...d.compare, ...(p.compare || {}) },
                  solve: { ...d.solve, ...(p.solve || {}) } };
   const mkt = (x) => ({ ...MARKET_DEFAULTS(), ...(x || {}) });
@@ -334,6 +344,7 @@ export function PropertyInputs({ plan, setPlan, res, errors = {} }) {
   const c = plan.common;
   const hist = c.mode === "history";
   const H = (k) => hist && c.history[k];
+  const Y = (k) => c.mode === "synthetic" && c.synthetic.series[k];
   const setC = (k) => (v) => setPlan((p) => ({ ...p, common: { ...p.common, [k]: v } }));
   const setSc = (id, fn) => setPlan((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === id ? fn(s) : s)) }));
   const add = (alloc) => setPlan((p) => {
@@ -360,9 +371,10 @@ export function PropertyInputs({ plan, setPlan, res, errors = {} }) {
   return html`<aside class="panel inputs" aria-label="הגדרות דירה מול שוק ההון">
     <details open class="section">
       <summary>מקור התשואות</summary>
-      <${Segmented} options=${[{ value: "fixed", label: "פרמטרים קבועים" }, { value: "history", label: "היסטוריה" }]}
+      <${Segmented} options=${[{ value: "fixed", label: "פרמטרים קבועים" }, { value: "history", label: "היסטוריה" }, { value: "synthetic", label: "סינתטי" }]}
         value=${c.mode} onChange=${setC("mode")}
-        hint="פרמטרים קבועים: כל התשואות, האינפלציה והריבית קבועות כפי שהוזנו, וכל תרחיש הוא קו אחד. היסטוריה: כל חודש התחלה בעבר הוא ריאליזציה אחת, והסדרות שנבחרו למטה רצות על הנתונים בפועל. התוצאה היא התפלגות: חציון וקרן אחוזונים לכל תרחיש." />
+        hint="פרמטרים קבועים: כל התשואות, האינפלציה והריבית קבועות כפי שהוזנו, וכל תרחיש הוא קו אחד. היסטוריה: כל חודש התחלה בעבר הוא ריאליזציה אחת, והסדרות שנבחרו רצות על הנתונים בפועל. סינתטי: מגרילים הרבה עתידים אפשריים, לפי תוחלת, תנודתיות ומתאמים שבוחרים. בשני האחרונים התוצאה היא התפלגות: חציון וקרן אחוזונים לכל תרחיש." />
+      ${c.mode === "synthetic" ? html`<${SyntheticSection} plan=${plan} setPlan=${setPlan} errors=${errors} />` : null}
       ${hist ? html`
         <div class="series-flags">${SERIES.map((sr) => html`<${Toggle} label=${sr.label} hint=${sr.hint} checked=${c.history[sr.key]}
             onChange=${(v) => setPlan((p) => ({ ...p, common: { ...p.common, history: { ...p.common.history, [sr.key]: v } } }))} />`)}</div>
@@ -386,7 +398,7 @@ export function PropertyInputs({ plan, setPlan, res, errors = {} }) {
           error=${errors["common.years"]}
           hint="נקודת הזמן T שבה מסתיימת ההשוואה. בכל חודש עד T מחושב השווי נטו אם היו מממשים הכול באותו רגע." />
         <${NumberField} label="אינפלציה שנתית" value=${c.inflation} onChange=${setC("inflation")} step=${0.1} min=${-20} suffix="%"
-          disabled=${H("cpi")} note=${H("cpi") ? "מהיסטוריה" : null} />
+          disabled=${H("cpi")} note=${H("cpi") ? "מהיסטוריה" : Y("cpi") ? "החציון; התנודתיות בהגדרות הסינתטיות" : null} />
       </div>
       <${Toggle} label="התקציב החודשי צמוד למדד" checked=${c.index_budget} onChange=${setC("index_budget")}
         hint="דלוק: הסכום החודשי גדל עם האינפלציה (כמו משכורת צמודה). כבוי: אותו סכום נומינלי כל התקופה." />
@@ -394,7 +406,7 @@ export function PropertyInputs({ plan, setPlan, res, errors = {} }) {
         <${NumberField} label="שכר דירה שהאדם משלם" value=${c.housing_rent} onChange=${setC("housing_rent")} step=${100} suffix=${SYM}
           hint="שכר הדירה שהאדם משלם כשהוא לא גר בדירה בבעלותו. יורד מהתקציב בתרחישי שוק ההון ובדירה מושכרת, ולא בדירה שגרים בה. 0 = מחוץ למודל (למשל גר אצל ההורים, או שהמגורים זהים בכל התרחישים)." />
         <${NumberField} label="עליית שכר הדירה" value=${c.housing_rent_growth} onChange=${setC("housing_rent_growth")} step=${0.1} min=${-50} suffix="% לשנה"
-          disabled=${H("rent")} note=${H("rent") ? "מהיסטוריה" : null} />
+          disabled=${H("rent")} note=${H("rent") ? "מהיסטוריה" : Y("rent") ? "החציון" : null} />
       </div>
       <div class="grid-2">
         <${Segmented} label="הצגת ערכים" options=${[{ value: false, label: "נומינלי" }, { value: true, label: "ריאלי" }]}
@@ -418,12 +430,114 @@ export function PropertyInputs({ plan, setPlan, res, errors = {} }) {
       <p class="muted small">כל תרחיש הוא חלוקה של ההון העצמי: אחוז לדירה, והשאר לשוק ההון (0% = שוק ההון בלבד). אפשר להוסיף עד ${MAX_SCENARIOS} תרחישים ולשכפל תרחיש כדי לבדוק אותו עם פרמטרים אחרים. כל תרחיש הוא קו בגרף.</p>
       ${plan.scenarios.map((s, i) => html`<${ScenarioCard} key=${s.id} sc=${s} index=${i} count=${plan.scenarios.length}
           common=${c} taxes=${plan.taxes} summary=${summaries[s.id]} onChange=${(fn) => setSc(s.id, fn)}
-          onDup=${() => dup(s.id)} onRemove=${() => remove(s.id)} full=${full} H=${H}
+          onDup=${() => dup(s.id)} onRemove=${() => remove(s.id)} full=${full} H=${H} Y=${Y}
           E=${(k) => errors[`${s.id}:${k}`]} />`)}
     </section>
 
     <${TaxTablesSection} taxes=${plan.taxes} setTaxes=${(fn) => setPlan((p) => ({ ...p, taxes: fn(p.taxes) }))} errors=${errors} />
   </aside>`;
+}
+
+// ------------------------------------------------------------- synthetic mode
+
+const SYN_LABEL = { market: "שוק ההון", cpi: "אינפלציה", housing: "מחירי דירות", rent: "שכר דירה", rate: "ריבית בנק ישראל" };
+const SYN_HINT = {
+  market: "התשואה החודשית של התיק בכל תרחיש, לפי התשואה (חציון) והתנודתיות שבחלק 'שוק ההון' של התרחיש.",
+  cpi: "המדד, לפי 'אינפלציה שנתית' (חציון) והתנודתיות כאן.",
+  housing: "שווי הדירה, לפי 'התשואה השנתית של הדירה' בכל תרחיש (חציון) והתנודתיות כאן.",
+  rent: "השכירות ושכר הדירה שהאדם משלם, לפי קצב העלייה שלהם (חציון) והתנודתיות כאן.",
+  rate: "הלוח של ריבית בנק ישראל ועוד סטייה אקראית שמצטברת.",
+};
+const P_ = (v) => html`<span dir="ltr">${(Math.abs(v) < 0.05 ? 0 : v).toFixed(1)}%</span>`;
+const geoBand = (mean, vol, z) => (Math.exp(Math.log(1 + mean / 100) + z * vol / 100) - 1) * 100;
+
+// One line that says what a geometric mean and an annual volatility mean in practice.
+function volText(mean, vol, subject) {
+  if (!(vol > 0)) return html`${subject} גדל בדיוק ב-${P_(mean)} כל שנה, בלי תנודות.`;
+  const ten = (z) => geoBand(mean, vol / Math.sqrt(10), z);
+  return html`${subject} גדל בחציון ב-${P_(mean)} בשנה. בשנה טיפוסית (שני שלישים מהשנים) השינוי בין ${P_(geoBand(mean, vol, -1))} ל-${P_(geoBand(mean, vol, 1))},
+    ובשנה רעה (אחת מ-20) ${P_(geoBand(mean, vol, -1.645))} או פחות. לאורך 10 שנים התנודות מתקזזות בחלקן: הקצב השנתי הממוצע יהיה בדרך כלל בין ${P_(ten(-1))} ל-${P_(ten(1))}.`;
+}
+
+function corrWord(v) {
+  const a = Math.abs(v);
+  if (a < 0.1) return "כמעט בלי קשר";
+  const strength = a < 0.3 ? "קשר חלש" : a < 0.6 ? "קשר בינוני" : "קשר חזק";
+  return v > 0 ? `${strength}: נוטים לזוז יחד` : `${strength}, הפוך: כשאחד עולה יותר מהרגיל, השני נוטה לעלות פחות`;
+}
+
+function SyntheticSection({ plan, setPlan, errors }) {
+  const c = plan.common, sp = c.synthetic;
+  const setS = (k) => (v) => setPlan((p) => ({ ...p, common: { ...p.common, synthetic: { ...p.common.synthetic, [k]: v } } }));
+  const setSeries = (k) => (v) => setS("series")({ ...sp.series, [k]: v });
+  const setCorr = (key) => (v) => setS("corr")({ ...sp.corr, [key]: Math.max(-1, Math.min(1, v)) });
+  const [cal, setCal] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const apt = plan.scenarios.find((s) => s.alloc > 0);
+  const pairs = [];
+  for (let i = 0; i < SYN_ORDER.length; i++) {
+    for (let j = i + 1; j < SYN_ORDER.length; j++) {
+      const a = SYN_ORDER[i], b = SYN_ORDER[j];
+      if (sp.series[a] && sp.series[b]) pairs.push({ key: `${a}|${b}`, a, b });
+    }
+  }
+  const calibrate = async () => {
+    setBusy(true);
+    setCal(null);
+    try {
+      const r = await postJSON("/api/property/calibrate", propertyPayload(plan));
+      setPlan((p) => ({
+        ...p,
+        common: { ...p.common, inflation: r.inflation, housing_rent_growth: r.rent,
+                  synthetic: { ...p.common.synthetic, cpi_vol: r.cpi_vol, housing_vol: r.housing_vol, rent_vol: r.rent_vol,
+                               rate_vol: r.rate_vol, corr: r.corr } },
+        scenarios: p.scenarios.map((s) => ({ ...s, appreciation: r.housing, rent_growth: r.rent,
+                                             market: { ...s.market, ...(r.markets[s.id] || {}) } })),
+      }));
+      setCal({ ok: true, ranges: r.ranges });
+    } catch (e) {
+      setCal({ ok: false, msg: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`<div class="synthetic">
+    <p class="muted small">כל מסלול הוא עתיד אפשרי אחד: בכל חודש מוגרל יחד שינוי לכל סדרה, לפי התוחלת (החציון), התנודתיות והמתאמים שלמטה. כל התרחישים רצים על אותם מסלולים, כך שחודש רע בשוק ההון רע לכולם. אותו זרע נותן אותם מסלולים, ולכן שינוי בתוצאה נובע רק משינוי בפרמטרים.</p>
+    <div class="grid-2">
+      <${NumberField} label="מספר מסלולים" value=${sp.n} onChange=${(v) => setS("n")(Math.round(v))} step=${100} min=${10} max=${5000}
+        error=${errors["common.synthetic.n"]} hint="יותר מסלולים: אחוזונים יציבים יותר, וחישוב איטי יותר. 1,000 מספיק בדרך כלל." />
+      <${Field} label="זרע אקראי" hint="מספר שקובע את ההגרלה. אותו זרע = אותם מסלולים. 'הגרל מחדש' בוחר זרע חדש, כדי לראות כמה התוצאה תלויה בהגרלה עצמה.">
+        <div class="seed-row"><${NumberInput} value=${sp.seed} step=${1} onChange=${(v) => setS("seed")(Math.round(v))} />
+          <button type="button" class="btn ghost small" onClick=${() => setS("seed")(Math.floor(Math.random() * 1e9))}>הגרל מחדש</button></div>
+      </${Field}>
+    </div>
+    <div class="series-flags">${SERIES.map((sr) => html`<${Toggle} label=${sr.label} hint=${SYN_HINT[sr.key]} checked=${sp.series[sr.key]} onChange=${setSeries(sr.key)} />`)}</div>
+    <p class="muted small">סדרה כבויה נשארת קבועה לפי הפרמטר שלה.</p>
+    ${sp.series.market ? html`<p class="explain">התשואה (החציון) והתנודתיות של שוק ההון נקבעות בכל תרחיש, בחלק "שוק ההון" שלו.</p>` : null}
+    ${sp.series.cpi ? html`<${NumberField} label="תנודתיות האינפלציה" value=${sp.cpi_vol} onChange=${setS("cpi_vol")} step=${0.1} max=${50} suffix="% לשנה" />
+      <p class="explain">${volText(c.inflation, sp.cpi_vol, "המדד")} החציון הוא "אינפלציה שנתית" בחלק של האדם.</p>` : null}
+    ${sp.series.housing ? html`<${NumberField} label="תנודתיות מחירי הדירות" value=${sp.housing_vol} onChange=${setS("housing_vol")} step=${0.5} max=${100} suffix="% לשנה" />
+      <p class="explain">${volText(apt ? apt.appreciation : 3, sp.housing_vol, `שווי הדירה${apt ? ` ב"${apt.name}"` : ""}`)} החציון הוא "התשואה השנתית של הדירה" בכל תרחיש.</p>` : null}
+    ${sp.series.rent ? html`<${NumberField} label="תנודתיות שכר הדירה" value=${sp.rent_vol} onChange=${setS("rent_vol")} step=${0.5} max=${100} suffix="% לשנה" />
+      <p class="explain">${volText(apt ? apt.rent_growth : c.housing_rent_growth, sp.rent_vol, "שכר הדירה")} החציון הוא קצב העלייה של השכירות בכל תרחיש, ושל שכר הדירה שהאדם משלם.</p>` : null}
+    ${sp.series.rate ? html`<${NumberField} label="תנודתיות ריבית בנק ישראל" value=${sp.rate_vol} onChange=${setS("rate_vol")} step=${0.1} max=${20} suffix="נק' אחוז לשנה" />
+      <p class="explain">הריבית היא הלוח (בחלק "ריבית בנק ישראל") ועוד סטייה אקראית שמצטברת. אחרי שנה, בשני שלישים מהמסלולים הסטייה בתוך <span dir="ltr">±${(+sp.rate_vol).toFixed(1)}</span> נקודות אחוז;
+        אחרי 4 שנים <span dir="ltr">±${(2 * sp.rate_vol).toFixed(1)}</span>, ואחרי 9 שנים <span dir="ltr">±${(3 * sp.rate_vol).toFixed(1)}</span> (התנודה גדלה כמו שורש הזמן). הריבית לא יורדת מתחת ל-0.</p>` : null}
+    ${pairs.length ? html`<div class="holdings-title">מתאמים <${Hint} text="המתאם בין השינויים החודשיים של שתי סדרות, מ-1- עד 1. 1: זזות תמיד יחד. 0: בלי קשר. 1-: תמיד הפוך. למשל 0.5 בין מחירי דירות לשכר דירה: בחודש שמחירי הדירות עולים יותר מהרגיל, גם שכר הדירה נוטה לעלות יותר מהרגיל." /></div>
+      <div class="corr-list">${pairs.map((pr) => html`<div class="corr-row" key=${pr.key}>
+        <span>${SYN_LABEL[pr.a]} ↔ ${SYN_LABEL[pr.b]}</span>
+        <${NumberInput} value=${sp.corr[pr.key] ?? 0} step=${0.05} min=${-1} max=${1} onChange=${setCorr(pr.key)} />
+        <span class="muted small">${corrWord(sp.corr[pr.key] ?? 0)}</span></div>`)}</div>
+      ${errors["common.synthetic.corr"] ? html`<p class="field-error">${errors["common.synthetic.corr"]}</p>` : null}
+      <button type="button" class="btn link" onClick=${() => setS("corr")(DEFAULT_CORR())}>שחזר מתאמי ברירת מחדל</button>` : null}
+    <div class="preset-row">
+      <button type="button" class="btn ghost small" disabled=${busy} onClick=${calibrate}>${busy ? "מכייל..." : "כייל מהנתונים ההיסטוריים"}</button>
+      <${Hint} text="מחשב מההיסטוריה את החציון (תוחלת גיאומטרית), התנודתיות והמתאמים של השינויים החודשיים: מדד המחירים, מדד מחירי הדירות, מדד שכר הדירה, ריבית בנק ישראל, והתיק של כל תרחיש בשקלים. הערכים נכתבים לשדות, ואפשר לשנות אותם אחר כך." />
+    </div>
+    ${cal ? (cal.ok
+      ? html`<p class="callout">הערכים כוילו מהנתונים: ${Object.entries(cal.ranges).map(([k, [a, b]]) => `${k} ${dateHe(a)}–${dateHe(b)}`).join(" · ")}. התשואה והעלייה של הדירה והשכירות עודכנו בכל התרחישים.</p>`
+      : html`<p class="callout error">${cal.msg}</p>`) : null}
+  </div>`;
 }
 
 // Bank of Israel rate path (fixed mode), prime spread and a parallel shift of every floating rate.
@@ -476,7 +590,7 @@ function PointsEditor({ rows, onChange }) {
 const allocTag = (a) => (a > 0 ? (a >= 100 ? "דירה" : `דירה ${+a.toFixed(1)}%`) : "שוק ההון");
 const fmtShare = (v) => `${+(Math.round(v * 10) / 10).toFixed(1)}%`;
 
-function ScenarioCard({ sc, index, count, common, taxes, summary, onChange, onDup, onRemove, full, H, E }) {
+function ScenarioCard({ sc, index, count, common, taxes, summary, onChange, onDup, onRemove, full, H, Y, E }) {
   const set = (k) => (v) => onChange((s) => ({ ...s, [k]: v }));
   const pu = purchaseOf(sc, taxes, common.equity);
   const apt = sc.alloc > 0;
@@ -496,14 +610,14 @@ function ScenarioCard({ sc, index, count, common, taxes, summary, onChange, onDu
       <${AllocField} sc=${sc} pu=${pu} equity=${common.equity} set=${set("alloc")} error=${E("alloc")} />
       <fieldset class="apt-fields" disabled=${!apt}>
         ${apt ? null : html`<p class="field-note">0% לדירה: בתרחיש הזה אין דירה, ולכן השדות שלה לא בשימוש.</p>`}
-        <${ApartmentFields} sc=${sc} pu=${pu} common=${common} taxes=${taxes} summary=${apt ? summary : null} onChange=${onChange} H=${H} E=${E} />
+        <${ApartmentFields} sc=${sc} pu=${pu} common=${common} taxes=${taxes} summary=${apt ? summary : null} onChange=${onChange} H=${H} Y=${Y} E=${E} />
       </fieldset>
       <details open class="sub">
         <summary>שוק ההון</summary>
         <p class="field-note">${!apt ? `מקבל את כל ההון העצמי (${m(common.equity)}) ואת כל התקציב החודשי.`
           : pu.toMarket > 0.5 ? `מקבל ${m(pu.toMarket)} מההון העצמי, ובכל חודש את מה שנשאר מהתקציב אחרי ההוצאות על הדירה.`
           : "כל ההון העצמי בדירה, ולכן שוק ההון מקבל רק את מה שנשאר מהתקציב בכל חודש אחרי ההוצאות על הדירה (אם נשאר)."}</p>
-        <${MarketFields} p=${sc.market} onChange=${(fn) => onChange((s) => ({ ...s, market: fn(s.market) }))} fromHistory=${H("market")}
+        <${MarketFields} p=${sc.market} onChange=${(fn) => onChange((s) => ({ ...s, market: fn(s.market) }))} fromHistory=${H("market")} synth=${Y("market")}
           error=${E("market.holdings")} />
         <${NumberField} label="ריבית על גירעון" value=${sc.debt_rate} onChange=${set("debt_rate")} step=${0.25} max=${100} suffix="%"
           hint="אם בהמשך התקופה ההוצאות גבוהות מהתקציב (למשל כשהריבית עולה) והתיק ריק, ההפרש נרשם כחוב בריבית הזו." />
@@ -529,7 +643,7 @@ function AllocField({ sc, pu, equity, set, error }) {
   </div>`;
 }
 
-function MarketFields({ p, onChange, fromHistory, error }) {
+function MarketFields({ p, onChange, fromHistory, synth, error }) {
   const set = (k) => (v) => onChange((x) => ({ ...x, [k]: v }));
   const stage = { holdings: p.holdings || [] };
   return html`
@@ -537,13 +651,17 @@ function MarketFields({ p, onChange, fromHistory, error }) {
       ${error ? html`<p class="field-error">${error}</p>` : null}
       <p class="field-note">במצב היסטורי התשואה החודשית היא של הנכסים בפועל, בשקלים, עם איזון חודשי למשקלים.</p>` : null}
     <div class="grid-2">
-      <${NumberField} label="תשואה שנתית" value=${p.annual_return} onChange=${set("annual_return")} step=${0.25} min=${-50} suffix="%"
-        disabled=${fromHistory} note=${fromHistory ? "מהנכסים" : null} hint="תשואה שנתית נומינלית קבועה, לפני דמי ניהול ומס." />
+      <${NumberField} label=${synth ? "תשואה שנתית (חציון)" : "תשואה שנתית"} value=${p.annual_return} onChange=${set("annual_return")} step=${0.25} min=${-50} suffix="%"
+        disabled=${fromHistory} note=${fromHistory ? "מהנכסים" : null}
+        hint=${synth ? "התוחלת הגיאומטרית: התשואה השנתית המורכבת של המסלול החציוני, לפני דמי ניהול ומס." : "תשואה שנתית נומינלית קבועה, לפני דמי ניהול ומס."} />
+      ${synth ? html`<${NumberField} label="תנודתיות שנתית" value=${p.volatility} onChange=${set("volatility")} step=${1} max=${100} suffix="%"
+        hint="סטיית התקן השנתית של התשואה (הלוגריתמית). מדד מניות רחב: בערך 15%–20%. אג״ח: בערך 3%–8%." />` : null}
       <${NumberField} label="דמי ניהול שנתיים" value=${p.annual_fee} onChange=${set("annual_fee")} step=${0.05} max=${20} suffix="%" />
       <${NumberField} label="דמי הפקדה" value=${p.deposit_fee} onChange=${set("deposit_fee")} step=${0.1} max=${20} suffix="%"
         hint="אחוז שיורד מכל הפקדה לפני שהיא מושקעת." />
       <${NumberField} label="מס רווחי הון" value=${p.tax_rate} onChange=${set("tax_rate")} step=${0.5} max=${99} suffix="%" />
     </div>
+    ${synth ? html`<p class="explain">${volText(p.annual_return, p.volatility, "התיק")}</p>` : null}
     <${Segmented} label="המס על רווח" small options=${[{ value: "real", label: "ריאלי" }, { value: "nominal", label: "נומינלי" }]}
       value=${p.tax_basis} onChange=${set("tax_basis")}
       hint="ריאלי (כמו בניירות ערך בישראל): בסיס העלות צמוד למדד, ורק רווח מעל האינפלציה ממוסה. המס משולם במימוש: במכירה כדי לכסות גירעון, ובשווי נטו של כל נקודת זמן." />`;
@@ -581,7 +699,7 @@ function TrackCard({ t, sc, common, loanPart, sum, onSet, onRemove, canRemove, H
   </div>`;
 }
 
-function ApartmentFields({ sc, pu, common, taxes, summary, onChange, H, E }) {
+function ApartmentFields({ sc, pu, common, taxes, summary, onChange, H, Y, E }) {
   const set = (k) => (v) => onChange((s) => ({ ...s, [k]: v }));
   const shareSum = sc.tracks.reduce((a, t) => a + (Number(t.share) || 0), 0);
   const setTrack = (id, k, v) => onChange((s) => ({ ...s, tracks: s.tracks.map((t) => (t.id === id ? { ...t, [k]: v } : t)) }));
@@ -645,7 +763,7 @@ function ApartmentFields({ sc, pu, common, taxes, summary, onChange, H, E }) {
           <${NumberField} label="שכירות חודשית" value=${sc.rent} onChange=${set("rent")} step=${100} suffix=${SYM}
             note=${sc.price ? `תשואת שכירות ברוטו ${pct((sc.rent * 12 / sc.price) * 100, 2)}` : null} />
           <${NumberField} label="עליית שכירות" value=${sc.rent_growth} onChange=${set("rent_growth")} step=${0.1} min=${-50} suffix="% לשנה"
-            disabled=${H("rent")} note=${H("rent") ? "מהיסטוריה" : null} />
+            disabled=${H("rent")} note=${H("rent") ? "מהיסטוריה" : Y("rent") ? "החציון" : null} />
           <${NumberField} label="חודשי ריקות בשנה" value=${sc.vacancy_months} onChange=${set("vacancy_months")} step=${0.25} max=${12}
             error=${E("vacancy_months")} hint="חודשים בשנה בממוצע שבהם הדירה עומדת ריקה. ההכנסה מוכפלת ב-(1 − חודשים/12)." />
           <${NumberField} label="מס שולי" value=${sc.marginal_rate} onChange=${set("marginal_rate")} step=${1} max=${100} suffix="%"
@@ -661,7 +779,8 @@ function ApartmentFields({ sc, pu, common, taxes, summary, onChange, H, E }) {
       <summary>עליית ערך והוצאות שוטפות</summary>
       <div class="grid-2">
         <${NumberField} label="תשואה שנתית של הדירה" value=${sc.appreciation} onChange=${set("appreciation")} step=${0.25} min=${-50} suffix="%"
-          disabled=${H("housing")} note=${H("housing") ? "ממדד מחירי הדירות" : null} hint="עליית ערך נומינלית שנתית של הדירה." />
+          disabled=${H("housing")} note=${H("housing") ? "ממדד מחירי הדירות" : Y("housing") ? "החציון; התנודתיות בהגדרות הסינתטיות" : null}
+          hint="עליית ערך נומינלית שנתית של הדירה." />
         <${NumberField} label="תחזוקה" value=${sc.maintenance_pct} onChange=${set("maintenance_pct")} step=${0.1} max=${20} suffix="% לשנה"
           hint="אחוז שנתי משווי הדירה לתיקונים ובלאי." />
         <${NumberField} label="ביטוח (לחודש)" value=${sc.insurance} onChange=${set("insurance")} step=${10} suffix=${SYM}
@@ -775,7 +894,9 @@ export function PropertyResults({ res, plan, setPlan, themeKey, stale }) {
 function PropertyResultsBody({ res, plan, setPlan, themeKey, stale }) {
   const raw = res.raw;
   const T = raw.months;
-  const hist = raw.mode === "history";
+  const byDate = raw.mode === "history";
+  const hist = raw.n > 1;                 // a distribution over realizations: history or synthetic
+  const over = byDate ? "תאריכי ההתחלה" : "המסלולים המוגרלים";
   const stat = hist ? plan.stat : "median";
   const [timeIdx, setTimeIdx] = useState(T);
   useEffect(() => setTimeIdx((t) => (t > T ? T : t)), [T]);
@@ -787,21 +908,26 @@ function PropertyResultsBody({ res, plan, setPlan, themeKey, stale }) {
   const warnings = list.flatMap((s) => s.warnings.map((w) => ({ name: s.name, w })));
   const setFocus = (id) => setPlan((p) => ({ ...p, focus: id }));
   const setDetail = (d) => setPlan((p) => ({ ...p, detail: d }));
-  const detailDate = hist ? raw.start_dates[raw.detail_row] : null;
+  const detailDate = byDate ? raw.start_dates[raw.detail_row] : null;
+  const detail = byDate ? { title: `התחלה ב-${dateHe(detailDate)}`, note: " במצב היסטורי: הריאליזציה שנבחרה בגרף לפי תאריך התחלה.",
+                            eq: ` במצב היסטורי המספרים הם של הריאליזציה שמתחילה ב-${dateHe(detailDate)}, ביחידות הקלט (הכסף של תאריך ההתחלה).` }
+    : hist ? { title: "המסלול החציוני", note: ` במצב סינתטי: המסלול שהשווי הסופי של "${list[0].name}" בו הוא החציון.`,
+               eq: ` במצב סינתטי המספרים הם של המסלול החציוני (לפי השווי הסופי של "${list[0].name}").` } : null;
   return html`<div class="results property">
     ${stale ? html`<p class="callout muted">ההגדרות השתנו מאז החישוב האחרון. התוצאות יתעדכנו כשהחישוב יסתיים.</p>` : null}
     <${Problems} raw=${raw} />
     ${warnings.map(({ name, w }) => html`<p class="callout warn"><b>${name}:</b> ${w}</p>`)}
-    ${hist ? html`<div class="stat-bar"><span>${raw.n} ריאליזציות, תאריכי התחלה ${dateHe(raw.start_dates[0])}–${dateHe(raw.start_dates[raw.n - 1])}.</span>
+    ${hist ? html`<div class="stat-bar"><span>${byDate ? `${raw.n} ריאליזציות, תאריכי התחלה ${dateHe(raw.start_dates[0])}–${dateHe(raw.start_dates[raw.n - 1])}.`
+                                                      : `${raw.n.toLocaleString("en-US")} מסלולים מוגרלים (זרע ${raw.history?.seed ?? ""}).`}</span>
       <${Segmented} small label="הסטטיסטיקה בגרף ובטבלאות" options=${[{ value: "median", label: "חציון" }, { value: "mean", label: "ממוצע" }]}
         value=${plan.stat} onChange=${(v) => setPlan((p) => ({ ...p, stat: v }))} /></div>` : null}
     <${NetWorthChart} list=${list} T=${T} tIdx=${tIdx} setTimeIdx=${setTimeIdx} compare=${plan.compare} byId=${byId} themeKey=${themeKey}
-      real=${raw.real} hist=${hist} stat=${stat} />
-    <${MetricsTable} list=${list} tIdx=${tIdx} focus=${plan.focus} setFocus=${setFocus} real=${raw.real} hist=${hist} stat=${stat} />
-    ${hist ? html`<${OutcomeByStart} list=${list} raw=${raw} themeKey=${themeKey} setDetail=${setDetail} compare=${plan.compare} />` : null}
-    <${CompareCard} plan=${plan} setPlan=${setPlan} byId=${byId} list=${list} T=${T} themeKey=${themeKey} hist=${hist} stat=${stat} raw=${raw} />
-    <${BreakdownCard} plan=${plan} setFocus=${setFocus} byId=${byId} list=${list} T=${T} themeKey=${themeKey} detailDate=${detailDate} />
-    <${EquationsCard} plan=${res.plan} raw=${raw} focus=${plan.focus} setFocus=${setFocus} list=${list} tIdx=${tIdx} detailDate=${detailDate} />
+      real=${raw.real} hist=${hist} stat=${stat} over=${over} />
+    <${MetricsTable} list=${list} tIdx=${tIdx} focus=${plan.focus} setFocus=${setFocus} real=${raw.real} hist=${hist} stat=${stat} over=${over} />
+    ${byDate ? html`<${OutcomeByStart} list=${list} raw=${raw} themeKey=${themeKey} setDetail=${setDetail} compare=${plan.compare} />` : null}
+    <${CompareCard} plan=${plan} setPlan=${setPlan} byId=${byId} list=${list} T=${T} themeKey=${themeKey} hist=${hist} stat=${stat} raw=${raw} over=${over} />
+    <${BreakdownCard} plan=${plan} setFocus=${setFocus} byId=${byId} list=${list} T=${T} themeKey=${themeKey} detail=${detail} />
+    <${EquationsCard} plan=${res.plan} raw=${raw} focus=${plan.focus} setFocus=${setFocus} list=${list} tIdx=${tIdx} detail=${detail} />
   </div>`;
 }
 
@@ -813,7 +939,7 @@ function TimeSlider({ T, tIdx, setTimeIdx }) {
   </div>`;
 }
 
-function NetWorthChart({ list, T, tIdx, setTimeIdx, compare, byId, themeKey, real, hist, stat }) {
+function NetWorthChart({ list, T, tIdx, setTimeIdx, compare, byId, themeKey, real, hist, stat, over }) {
   const ref = useRef(null);
   const vis = list.filter((s) => s.visible);
   const A = byId[compare.a], B = byId[compare.b];
@@ -824,7 +950,7 @@ function NetWorthChart({ list, T, tIdx, setTimeIdx, compare, byId, themeKey, rea
   return html`<section class="card" aria-label="שווי נטו לאורך זמן">
     <div class="card-head"><div><h2>שווי נטו לאורך זמן</h2>
       <p class="muted">נכסים פחות התחייבויות בכל חודש, אם היו מממשים הכול באותו רגע${real ? ", בכסף של היום" : ""}. בדירה: שווי הדירה פחות יתרת המשכנתא, עלויות המכירה, מס שבח, ועוד חשבון הצד נטו ממס.
-        ${hist ? ` הקו הוא ה${STAT_LABEL[stat]} על כל תאריכי ההתחלה, והקרן היא אחוזונים 10–90.` : ""}
+        ${hist ? ` הקו הוא ה${STAT_LABEL[stat]} על כל ${over}, והקרן היא אחוזונים 10–90.` : ""}
         ${cross.length ? html` ה-✕ מסמן נקודת חיתוך בין "${A.name}" ל"${B.name}".` : null}</p></div></div>
     <div ref=${ref} class="plot plot-tall"></div>
     <${TimeSlider} T=${T} tIdx=${tIdx} setTimeIdx=${setTimeIdx} />
@@ -833,7 +959,7 @@ function NetWorthChart({ list, T, tIdx, setTimeIdx, compare, byId, themeKey, rea
   </section>`;
 }
 
-function MetricsTable({ list, tIdx, focus, setFocus, real, hist, stat }) {
+function MetricsTable({ list, tIdx, focus, setFocus, real, hist, stat, over }) {
   const vis = list.filter((s) => s.visible);
   const cols = [{ key: "at_t", label: `בזמן t (${monthsLabel(tIdx)})`, money: true, hint: "השווי נטו בנקודת הזמן שנבחרה בסליידר.",
                   get: (s) => s.path[tIdx] },
@@ -844,7 +970,7 @@ function MetricsTable({ list, tIdx, focus, setFocus, real, hist, stat }) {
   }));
   return html`<section class="card" aria-label="מדדים">
     <div class="card-head"><div><h2>מדדים להשוואה${hist ? ` (${STAT_LABEL[stat]})` : ""}</h2>
-      <p class="muted">המודגש בכל עמודה הוא התרחיש הטוב ביותר לפי אותו מדד${real ? ". הסכומים בכסף של היום" : ""}.${hist ? " מתחת לשווי הסופי: אחוזונים 10–90 על תאריכי ההתחלה." : ""} לחיצה על שורה בוחרת אותו לפירוק ולמשוואות.</p></div></div>
+      <p class="muted">המודגש בכל עמודה הוא התרחיש הטוב ביותר לפי אותו מדד${real ? ". הסכומים בכסף של היום" : ""}.${hist ? ` מתחת לשווי הסופי: אחוזונים 10–90 על ${over}.` : ""} לחיצה על שורה בוחרת אותו לפירוק ולמשוואות.</p></div></div>
     <div class="table-wrap"><table class="data metrics">
       <thead><tr><th>תרחיש</th>${cols.map((c) => html`<th>${c.short || c.label} ${c.hint ? html`<${Hint} text=${c.hint} />` : null}</th>`)}<th>שווי נמוך ביותר <${Hint} text="הנקודה הנמוכה ביותר בדרך: בדירה זה בדרך כלל מיד אחרי הרכישה, בגלל מס הרכישה ועלויות הקנייה והמכירה." /></th></tr></thead>
       <tbody>${vis.map((s) => html`<tr class=${s.id === focus ? "active" : ""} onClick=${() => setFocus(s.id)}>
@@ -890,6 +1016,14 @@ const COMMON_PARAMS = [
   { key: "prime_spread", label: "מרווח הפריים", unit: "pct", lo: -2, hi: 6 },
   { key: "discount_rate", label: "שיעור היוון (רק למדדים מהוונים)", unit: "pct", lo: 0, hi: 15 },
 ];
+// Synthetic mode: the volatilities are parameters too (and solvable).
+const SYN_PARAMS = [
+  { key: "synthetic.cpi_vol", label: "תנודתיות האינפלציה", unit: "pct", lo: 0, hi: 5, series: "cpi" },
+  { key: "synthetic.housing_vol", label: "תנודתיות מחירי הדירות", unit: "pct", lo: 0, hi: 20, series: "housing" },
+  { key: "synthetic.rent_vol", label: "תנודתיות שכר הדירה", unit: "pct", lo: 0, hi: 10, series: "rent" },
+  { key: "synthetic.rate_vol", label: "תנודתיות ריבית בנק ישראל", unit: "num", lo: 0, hi: 3, series: "rate" },
+];
+const synOn = (plan, k) => plan.common.mode === "synthetic" && plan.common.synthetic.series[k];
 const marketParams = (prefix, tag = "") => [
   { key: `${prefix}.annual_return`, label: `תשואה שנתית${tag}`, unit: "pct", lo: -5, hi: 20 },
   { key: `${prefix}.annual_fee`, label: `דמי ניהול${tag}`, unit: "pct", lo: 0, hi: 3 },
@@ -907,7 +1041,8 @@ function scenarioParams(sc, plan) {
   const pu = purchaseOf(sc, plan.taxes, plan.common.equity);
   const lo = Number.isFinite(pu.lo) ? Math.min(100, Math.ceil(pu.lo * 10) / 10) : 0;
   const alloc = { key: "alloc", label: "אחוז ההון לדירה", unit: "pct", lo, hi: Math.max(lo, Math.min(100, Math.floor(pu.hi * 10) / 10)) };
-  if (!(sc.alloc > 0)) return [alloc, ...marketParams("market")];
+  const vol = synOn(plan, "market") ? [{ key: "market.volatility", label: "תנודתיות (שוק ההון)", unit: "pct", lo: 0, hi: 40 }] : [];
+  if (!(sc.alloc > 0)) return [alloc, ...marketParams("market"), ...vol];
   const trackParam = (t, i) => (t.kind === "prime" || t.kind === "variable"
     ? { key: `tracks.${i}.margin`, label: `מרווח מסלול "${t.name || i + 1}"`, unit: "pct", lo: -3, hi: 5 }
     : { key: `tracks.${i}.rate`, label: `ריבית מסלול "${t.name || i + 1}"`, unit: "pct", lo: 0, hi: 15 });
@@ -927,11 +1062,12 @@ function scenarioParams(sc, plan) {
     { key: "marginal_rate", label: "מס שולי על שכירות", unit: "pct", lo: 0, hi: 50 },
     ...sc.tracks.map(trackParam),
     ...marketParams("market", " (שוק ההון)"),
+    ...vol,
   ];
 }
 const fmtUnit = (unit, v) => (!Number.isFinite(v) ? "—" : unit === "money" ? m(v) : unit === "pct" ? pct(v, 3) : v.toFixed(3));
 
-function CompareCard({ plan, setPlan, byId, list, T, themeKey, hist, stat, raw }) {
+function CompareCard({ plan, setPlan, byId, list, T, themeKey, hist, stat, raw, over }) {
   const cmp = plan.compare;
   const A = byId[cmp.a], B = byId[cmp.b];
   const setCmp = (k) => (v) => setPlan((p) => ({ ...p, compare: { ...p.compare, [k]: v } }));
@@ -965,9 +1101,9 @@ function CompareCard({ plan, setPlan, byId, list, T, themeKey, hist, stat, raw }
     <p class="verdict">${winner
       ? html`לפי <b>${def.label}</b>${hist ? ` (${STAT_LABEL[stat]})` : ""}: <b>${winner.name}</b> עדיף, בהפרש של <b dir="ltr">${def.money ? m(Math.abs(diff)) : pct(Math.abs(diff), 2)}</b>${def.money && Math.min(Math.abs(va), Math.abs(vb)) > 0 ? ` (${pct(Math.abs(diff) / Math.abs(winner === A ? vb : va) * 100, 1)})` : ""}.`
       : html`לפי <b>${def.label}</b> שני התרחישים שקולים${Number.isFinite(diff) ? (diff ? ` (הפרש של ${def.money ? m(Math.abs(diff)) : pct(Math.abs(diff), 4)} בלבד)` : "") : " (המדד לא מוגדר)"}.`}
-      ${hist && Number.isFinite(pb) ? html`<br />"${A.name}" עדיף ב-<b>${pct(pb * 100, 0)}</b> מתאריכי ההתחלה (${raw.n} ריאליזציות).` : null}</p>
+      ${hist && Number.isFinite(pb) ? html`<br />"${A.name}" עדיף ב-<b>${pct(pb * 100, 0)}</b> מ${over} (${raw.n.toLocaleString("en-US")} ריאליזציות).` : null}</p>
     <div class="table-wrap"><table class="data compact">
-      <thead><tr><th>מדד</th><th>${A.name}</th><th>${B.name}</th><th>A − B</th>${hist ? html`<th>הסתברות ש-A עדיף <${Hint} text="בכמה אחוז מתאריכי ההתחלה המדד של A גבוה מזה של B באותו תאריך." /></th>` : null}</tr></thead>
+      <thead><tr><th>מדד</th><th>${A.name}</th><th>${B.name}</th><th>A − B</th>${hist ? html`<th>הסתברות ש-A עדיף <${Hint} text=${`בכמה אחוז מ${over} המדד של A גבוה מזה של B באותה ריאליזציה.`} /></th>` : null}</tr></thead>
       <tbody>${METRIC_DEFS.map((d) => { const x = metricAgg(A, d.key, stat), y = metricAgg(B, d.key, stat); return html`<tr class=${d.key === def.key ? "active" : ""}>
         <td>${d.label}</td><td dir="ltr">${fmtMetric(d, x)}</td><td dir="ltr">${fmtMetric(d, y)}</td>
         <td dir="ltr" class=${x - y > 0 ? "pos" : x - y < 0 ? "neg" : ""}>${Number.isFinite(x - y) ? (d.money ? m(x - y) : pct(x - y, 2)) : "—"}</td>
@@ -977,19 +1113,19 @@ function CompareCard({ plan, setPlan, byId, list, T, themeKey, hist, stat, raw }
     ${cross.length
       ? html`<ul class="cross-list">${cross.map((c) => html`<li>אחרי <b>${yearsLabel(c.t)}</b>: <b>${(c.leader === "a" ? A : B).name}</b> עוקף את ${(c.leader === "a" ? B : A).name} (שווי ${m(c.y)}).</li>`)}</ul>`
       : html`<p class="muted">אין נקודת חיתוך בתקופה: ${(A.path[T] >= B.path[T] ? A : B).name} מוביל לאורך כל ${monthsLabel(T)}.</p>`}
-    <${SolvePanel} plan=${plan} setPlan=${setPlan} A=${A} B=${B} def=${def} themeKey=${themeKey} hist=${hist} />
+    <${SolvePanel} plan=${plan} setPlan=${setPlan} A=${A} B=${B} def=${def} themeKey=${themeKey} hist=${hist} over=${over} />
   </section>`;
 }
 
 const SOLVE_STATS = [{ value: "median", label: "חציון" }, { value: "mean", label: "ממוצע" }, { value: "prob", label: "הסתברות 50%" }];
 
-function SolvePanel({ plan, setPlan, A, B, def, themeKey, hist }) {
+function SolvePanel({ plan, setPlan, A, B, def, themeKey, hist, over }) {
   const sv = plan.solve;
   const c = plan.common;
   const H = (k) => c.mode === "history" && c.history[k];
   const scA = plan.scenarios.find((s) => s.id === A.id), scB = plan.scenarios.find((s) => s.id === B.id);
   const groups = [
-    { scope: "common", title: "משותף", params: usedParams(COMMON_PARAMS, H) },
+    { scope: "common", title: "משותף", params: [...usedParams(COMMON_PARAMS, H), ...SYN_PARAMS.filter((p) => synOn(plan, p.series))] },
     { scope: "a", title: `A: ${A.name}`, params: usedParams(scenarioParams(scA, plan), H) },
     { scope: "b", title: `B: ${B.name}`, params: usedParams(scenarioParams(scB, plan), H) },
   ];
@@ -1057,7 +1193,7 @@ function SolvePanel({ plan, setPlan, A, B, def, themeKey, hist }) {
       </${Select}></label>
     </div>
     ${hist ? html`<${Segmented} small label="שקולים לפי" options=${SOLVE_STATS} value=${stat} onChange=${setB("stat")}
-        hint="חציון או ממוצע: הערך שבו החציון (או הממוצע) של המדד של A שווה לזה של B. הסתברות 50%: הערך שבו A עדיף בדיוק בחצי מתאריכי ההתחלה. בנוסף מחושב ערך שקול לכל תאריך התחלה בנפרד." />` : null}
+        hint=${`חציון או ממוצע: הערך שבו החציון (או הממוצע) של המדד של A שווה לזה של B. הסתברות 50%: הערך שבו A עדיף בדיוק בחצי מ${over}.${c.mode === "history" ? " בנוסף מחושב ערך שקול לכל תאריך התחלה בנפרד." : ""}`} />` : null}
     <div class="controls">
       <label class="mini">מ-<${NumberInput} value=${sv.lo} min=${-1e12} step=${param.unit === "money" ? 1000 : 0.5} onChange=${setB("lo")} /></label>
       <label class="mini">עד <${NumberInput} value=${sv.hi} min=${-1e12} step=${param.unit === "money" ? 1000 : 0.5} onChange=${setB("hi")} /></label>
@@ -1069,14 +1205,14 @@ function SolvePanel({ plan, setPlan, A, B, def, themeKey, hist }) {
       ${staleOut ? html`<p class="callout muted">ההגדרות השתנו מאז החיפוש; לחץ שוב כדי לעדכן.</p>` : null}
       ${out.roots.length
         ? html`<ul class="cross-list">${out.roots.map((x) => html`<li>${out.param.label} = <b dir="ltr">${fmtUnit(out.param.unit, x)}</b>:
-              ${out.stat === "prob" ? `"${out.aName}" עדיף בחצי מתאריכי ההתחלה לפי ${out.def.label}.` : `${statLabel} "${out.aName}" ו"${out.bName}" שקולים לפי ${out.def.label}.`}
+              ${out.stat === "prob" ? `"${out.aName}" עדיף בחצי מ${over} לפי ${out.def.label}.` : `${statLabel} "${out.aName}" ו"${out.bName}" שקולים לפי ${out.def.label}.`}
               <button type="button" class="btn link apply" onClick=${() => apply(x)}>החל את הערך</button></li>`)}</ul>
            ${out.roots.length > 1 ? html`<p class="muted">יש יותר מפתרון אחד: ההפרש לא מונוטוני בפרמטר הזה.</p>` : null}`
         : ys.length && Math.max(...ys) - Math.min(...ys) < 1e-9 * Math.max(1, Math.abs(ys[0]))
         ? html`<p class="callout warn">הפרמטר הזה לא משפיע על ההפרש בין התרחישים, ולכן אין לו ערך שקול.</p>`
         : html`<p class="callout warn">אין ערך בטווח שבו התרחישים שקולים: ${ys.length ? (Math.min(...ys) > 0 ? `"${out.aName}" עדיף בכל הטווח` : Math.max(...ys) < 0 ? `"${out.bName}" עדיף בכל הטווח` : "ההפרש לא מוגדר בחלק מהטווח") : "המדד לא מוגדר בטווח"}. נסה להרחיב את הטווח.</p>`}
       <div ref=${ref} class="plot plot-scan"></div>
-      <p class="muted small">הגרף: ${out.stat === "prob" ? `אחוז התאריכים שבהם A עדיף, פחות 50%,` : `${out.def.label} של A פחות של B${hist ? ` (${STAT_LABEL[out.stat]})` : ""},`} כפונקציה של ${out.param.label}. הקו המקווקו האנכי הוא הערך הנוכחי.</p>
+      <p class="muted small">הגרף: ${out.stat === "prob" ? `אחוז ${over} שבהם A עדיף, פחות 50%,` : `${out.def.label} של A פחות של B${hist ? ` (${STAT_LABEL[out.stat]})` : ""},`} כפונקציה של ${out.param.label}. הקו המקווקו האנכי הוא הערך הנוכחי.</p>
       ${pr ? html`<h3 class="h3">הערך השקול לכל תאריך התחלה</h3>
         <p class="muted">${prVals.length
           ? html`ל-${prVals.length} מתוך ${pr.roots.length} תאריכים יש ערך שקול בטווח: חציון <b dir="ltr">${fmtUnit(out.param.unit, q(prVals, 50))}</b>, אחוזונים 10–90 <span dir="ltr">${fmtUnit(out.param.unit, q(prVals, 10))} – ${fmtUnit(out.param.unit, q(prVals, 90))}</span>.`
@@ -1104,7 +1240,7 @@ function breakdownParts(s) {
   return rows.filter((r) => r.y.some((v) => Math.abs(v) > 0.5));
 }
 
-function BreakdownCard({ plan, setFocus, byId, list, T, themeKey, detailDate }) {
+function BreakdownCard({ plan, setFocus, byId, list, T, themeKey, detail }) {
   const s = byId[plan.focus] || list[0];
   const ref = useRef(null);
   usePlotly(ref, () => withNetLine(breakdownFigure({ T, parts: breakdownParts(s), sym: SYM }), { T, y: s.net, sym: SYM }), [s, themeKey]);
@@ -1112,8 +1248,8 @@ function BreakdownCard({ plan, setFocus, byId, list, T, themeKey, detailDate }) 
   if (T % 12) years.push(T);
   const f = s.flows, p = s.parts;
   return html`<section class="card" aria-label="פירוק השווי">
-    <div class="card-head"><div><h2>פירוק השווי: ${s.name}${detailDate ? `, התחלה ב-${dateHe(detailDate)}` : ""}</h2>
-      <p class="muted">נכסים מעל הציר, התחייבויות ועלויות מימוש מתחתיו, והקו השחור הוא השווי נטו.${detailDate ? " במצב היסטורי: הריאליזציה שנבחרה בגרף לפי תאריך התחלה." : ""}</p></div>
+    <div class="card-head"><div><h2>פירוק השווי: ${s.name}${detail ? `, ${detail.title}` : ""}</h2>
+      <p class="muted">נכסים מעל הציר, התחייבויות ועלויות מימוש מתחתיו, והקו השחור הוא השווי נטו.${detail ? detail.note : ""}</p></div>
       <${ScenarioPicker} list=${list} value=${s.id} onChange=${setFocus} /></div>
     <div ref=${ref} class="plot"></div>
     <details class="yearly"><summary>טבלה שנתית</summary>
@@ -1141,13 +1277,13 @@ function ScenarioPicker({ list, value, onChange }) {
 
 // ---------------------------------------------------------------------- equations
 
-function EquationsCard({ plan, raw, focus, setFocus, list, tIdx, detailDate }) {
+function EquationsCard({ plan, raw, focus, setFocus, list, tIdx, detail }) {
   const [tab, setTab] = useState("specific");
   const s = list.find((x) => x.id === focus) || list[0];
   const sc = plan.scenarios.find((x) => x.id === s.id);
   return html`<section class="card math-inline" aria-label="המשוואות">
     <div class="card-head"><div><h2>המשוואות</h2>
-      <p class="muted">המודל הכללי שבונה כל קו, והמשוואה של תרחיש ספציפי עם הפרמטרים שלו, מוצבת בנקודת הזמן t = ${tIdx} שנבחרה בסליידר.${detailDate ? ` במצב היסטורי המספרים הם של הריאליזציה שמתחילה ב-${dateHe(detailDate)}, ביחידות הקלט (הכסף של תאריך ההתחלה).` : ""}</p></div>
+      <p class="muted">המודל הכללי שבונה כל קו, והמשוואה של תרחיש ספציפי עם הפרמטרים שלו, מוצבת בנקודת הזמן t = ${tIdx} שנבחרה בסליידר.${detail ? detail.eq : ""}</p></div>
       ${tab === "specific" ? html`<${ScenarioPicker} list=${list} value=${s.id} onChange=${setFocus} />` : null}</div>
     <div class="subtabs" role="tablist">
       <button type="button" role="tab" aria-selected=${tab === "specific"} class=${tab === "specific" ? "on" : ""} onClick=${() => setTab("specific")}>המשוואה של התרחיש</button>
@@ -1210,6 +1346,11 @@ function GeneralEquations() {
     <p>כל חודש התחלה ${T_(S`s`)} הוא ריאליזציה: ${T_(S`t_m = s + m`)} חודשים, וכל סדרה שנבחרה (${T_(S`g_m, C_t, I^P_t, I^R_t, b_m`)}) נלקחת מהנתונים של אותם חודשים. הסכומים שהוזנו הם בכסף של היום ומיוצגים ברמת המחירים של ${T_(S`s`)}:
       בתצוגה ריאלית ${T_(S`W_t / C_t`)} חוזר לכסף של היום, ובתצוגה נומינלית ${T_(S`W_t\cdot\mathrm{CPI}(s)/\mathrm{CPI}(\text{today})`)} הוא בשקלים של אותה תקופה.
       הסטטיסטיקות (חציון, ממוצע, אחוזונים) הן על פני תאריכי ההתחלה, והסתברות ש-A עדיף היא ${T_(S`\frac{1}{n}\sum_s [\mathcal{M}_A(s) > \mathcal{M}_B(s)]`)}.</p>
+    <h3>מצב סינתטי</h3>
+    <p>במקום ההיסטוריה מגרילים ${T_(S`n`)} מסלולים. בכל חודש ${T_(S`m`)} מוגרל וקטור ${T_(S`z_m = L\,\varepsilon_m`)}, עם ${T_(S`\varepsilon_m \sim N(0, I)`)} ו-${T_(S`LL^\top = \Sigma`)}, מטריצת המתאמים. לכל סדרה ${T_(S`k`)} יש קצב חציוני ${T_(S`\mu_k`)} (הפרמטר הרגיל שלה) ותנודתיות שנתית ${T_(S`\sigma_k`)}:</p>
+    ${D_(S`\ln\frac{X^k_m}{X^k_{m-1}} = \frac{\ln(1+\mu_k)}{12} + \sigma_k\,\frac{z^k_m}{\sqrt{12}}, \qquad X^k_t = (1+\mu_k)^{t/12}\,e^{\sigma_k S^k_t}, \quad S^k_t = \sum_{m\le t} \frac{z^k_m}{\sqrt{12}}`)}
+    <p>כך החציון של ${T_(S`X^k_t`)} הוא בדיוק ${T_(S`(1+\mu_k)^{t/12}`)} (התוחלת הגיאומטרית), והתנודה של הקצב השנתי הממוצע לאורך ${T_(S`Y`)} שנים היא ${T_(S`\sigma_k/\sqrt{Y}`)}. כך נבנים ${T_(S`g_m`)} של התיק (עם התשואה והתנודתיות של כל תרחיש), ${T_(S`C_t`)}, ${T_(S`I^P_t`)} ו-${T_(S`I^R_t`)}. ריבית בנק ישראל היא הלוח ועוד הליכה אקראית: ${T_(S`b_m = \max\big(0,\; \mathrm{sched}(m) + \sigma_b S^b_{m-1}\big)`)}.
+      הזרע קובע את ${T_(S`\varepsilon`)}, ולכן אותו זרע נותן אותם מסלולים, וכל התרחישים רצים על אותם מסלולים.</p>
     <h3>שקילות ונקודת חיתוך</h3>
     <p>עבור מדד ${T_(S`\mathcal{M}`)} ופרמטר נעלם ${T_(S`\theta`)}, מחפשים את השורשים של ${T_(S`F(\theta) = \mathrm{stat}\,\mathcal{M}_A(\theta) - \mathrm{stat}\,\mathcal{M}_B(\theta)`)} (בהסתברות: ${T_(S`P(\mathcal{M}_A > \mathcal{M}_B) - \tfrac12`)}).
       סורקים 48 נקודות בסימולציה אחת (כל נקודה היא שורה), ומעדנים כל החלפת סימן בסריקה צפופה בתוך הקטע ובאינטרפולציה לינארית. במצב היסטורי פותרים גם לכל תאריך בנפרד, וכל שורה מקבלת קטע משלה.
@@ -1223,8 +1364,9 @@ const rate = (v) => nx(v / 100, 6);
 
 function MarketEquations({ sc, s, plan, raw, t }) {
   const c = plan.common, p = sc.market;
+  const Y = (k) => c.mode === "synthetic" && c.synthetic.series[k];
   const histMarket = c.mode === "history" && c.history.market;
-  const histCpi = c.mode === "history" && c.history.cpi;
+  const histCpi = (c.mode === "history" && c.history.cpi) || Y("cpi");
   const q = Math.pow(1 + p.annual_return / 100, 1 / 12) * Math.pow(1 - p.annual_fee / 100, 1 / 12);
   const g = c.index_budget ? (histCpi ? NaN : Math.pow(1 + c.inflation / 100, 1 / 12)) : 1;
   const gh = Math.pow(1 + c.housing_rent_growth / 100, 1 / 12);
@@ -1233,11 +1375,14 @@ function MarketEquations({ sc, s, plan, raw, t }) {
   const V = nomAt(raw, s.parts.portfolio, t), tax = nomAt(raw, s.parts.portfolio_tax, t), debt = nomAt(raw, s.parts.debt, t);
   const W = V - tax - debt;
   const noDeficit = s.parts.debt.every((v) => v === 0);
-  const closedOk = noDeficit && !histMarket && Number.isFinite(g) && !(c.mode === "history" && c.history.rent && c.housing_rent);
+  const closedOk = noDeficit && !histMarket && !Y("market") && Number.isFinite(g)
+    && !(((c.mode === "history" && c.history.rent) || Y("rent")) && c.housing_rent);
   return html`<div class="eqs">
     <p>תרחיש <b>${sc.name}</b>: ${histMarket ? `תיק היסטורי (${(p.holdings || []).filter((h) => h.ticker).map((h) => `${h.ticker} ${h.weight}%`).join(", ")})` : `תשואה ${p.annual_return}%`}, דמי ניהול ${p.annual_fee}%, דמי הפקדה ${p.deposit_fee}%, מס ${p.tax_rate}% על רווח ${p.tax_basis === "real" ? "ריאלי" : "נומינלי"}.</p>
     ${histMarket
       ? html`<p>במצב היסטורי ${T_(S`q_m`)} משתנה מחודש לחודש לפי תשואות הנכסים, ולכן השווי מחושב ברקורסיה ${T_(S`V_m = q_m V_{m-1} + (1-\delta)c_m`)}.</p>`
+      : Y("market") ? html`<p>במצב סינתטי ${T_(S`q_m`)} מוגרל בכל חודש, ולכן השווי מחושב ברקורסיה ${T_(S`V_m = q_m V_{m-1} + (1-\delta)c_m`)}:</p>
+        ${D_(S`q_m = (1+${rate(p.annual_return)})^{1/12}\,e^{${rate(p.volatility)}\,z_m/\sqrt{12}}\,(1-${rate(p.annual_fee)})^{1/12}`)}`
       : D_(S`q = (1+${rate(p.annual_return)})^{1/12}(1-${rate(p.annual_fee)})^{1/12} = ${nx(q, 8)}`)}
     ${D_(S`V_0 = (1-${rate(p.deposit_fee)})\cdot ${nx(c.equity)} = ${nx(c.equity * (1 - p.deposit_fee / 100))}`)}
     ${closedOk
@@ -1254,7 +1399,7 @@ const KIND_HE = { fixed: "ריבית קבועה", prime: "פריים", variable:
 
 function ApartmentEquations({ sc, s, plan, raw, t }) {
   const c = plan.common, sm = s.summary, taxes = plan.taxes;
-  const histHome = c.mode === "history" && c.history.housing;
+  const histHome = (c.mode === "history" && c.history.housing) || (c.mode === "synthetic" && c.synthetic.series.housing);
   const P = sc.price, Pt = nomAt(raw, s.parts.home, t);
   const at = (k) => nomAt(raw, s.parts[k], t);
   const f1 = (k) => nomAt(raw, s.flows[k], 1);

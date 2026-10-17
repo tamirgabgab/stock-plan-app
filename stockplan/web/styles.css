@@ -666,3 +666,12 @@ table.data.compact td, table.data.compact th { padding: 4px 8px; }
 .alloc .preset-row { margin: 0; }
 fieldset.apt-fields { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 fieldset.apt-fields:disabled > :not(.field-note) { opacity: 0.45; }
+
+/* Synthetic mode: a line under each parameter says what it means in practice. */
+.synthetic { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.explain { font-size: 12px; color: var(--text-secondary); background: var(--surface-2); border-radius: 8px; padding: 6px 8px; margin: 0; line-height: 1.5; }
+.seed-row { display: flex; gap: 6px; align-items: center; }
+.seed-row .input-wrap { flex: 1; min-width: 0; }
+.corr-list { display: flex; flex-direction: column; gap: 4px; }
+.corr-row { display: grid; grid-template-columns: minmax(0, 1.2fr) 84px minmax(0, 1.4fr); gap: 8px; align-items: center; font-size: 13px; }
+@media (max-width: 640px) { .corr-row { grid-template-columns: minmax(0, 1fr) 84px; } .corr-row > :last-child { grid-column: 1 / -1; } }

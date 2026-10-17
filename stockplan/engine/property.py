@@ -97,6 +97,7 @@ class MarketParams(BaseModel):
     tax_rate: float = Field(25.0, ge=0, lt=100)
     tax_basis: Literal["nominal", "real"] = "real"
     holdings: List[HoldingP] = Field(default_factory=lambda: [HoldingP(**h) for h in DEFAULT_HOLDINGS])
+    volatility: float = Field(16.0, ge=0, le=100)    # synthetic mode: annual std of the log return
 
 
 class RatePoint(BaseModel):
@@ -164,6 +165,32 @@ class HistoryFlags(BaseModel):
     rate: bool = True
 
 
+SYN_SERIES = ("market", "cpi", "housing", "rent", "rate")
+DEFAULT_CORR = {"market|cpi": 0.0, "market|housing": 0.1, "market|rent": 0.0, "market|rate": -0.1,
+                "cpi|housing": 0.3, "cpi|rent": 0.5, "cpi|rate": 0.4, "housing|rent": 0.5,
+                "housing|rate": -0.2, "rent|rate": 0.1}
+
+
+class SyntheticParams(BaseModel):
+    """Synthetic mode: ``n`` paths of correlated monthly draws, the same for every scenario.
+
+    Each return series has a geometric mean (the parameter it replaces: the portfolio's return,
+    inflation, appreciation, rent growth) and an annual volatility ``s``: its monthly log change
+    is ``ln(1 + mean) / 12 + s * z / sqrt(12)`` with ``z ~ N(0, 1)``, so the median path grows
+    exactly at the mean. The Bank of Israel rate is the rate schedule plus a random walk of
+    ``rate_vol`` percentage points a year (floored at 0). ``corr`` holds the correlations of the
+    monthly draws, by pair ("cpi|rent").
+    """
+    n: int = Field(1000, ge=10, le=5000)
+    seed: int = Field(1, ge=0, le=2**31 - 1)
+    series: HistoryFlags = Field(default_factory=lambda: HistoryFlags())
+    cpi_vol: float = Field(1.5, ge=0, le=50)
+    housing_vol: float = Field(6.0, ge=0, le=100)
+    rent_vol: float = Field(3.0, ge=0, le=100)
+    rate_vol: float = Field(1.0, ge=0, le=20)
+    corr: Dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_CORR))
+
+
 class Common(BaseModel):
     years: float = Field(25.0, ge=1 / 12, le=60)
     equity: float = Field(0.0, ge=0)
@@ -175,8 +202,9 @@ class Common(BaseModel):
     discount_rate: float = Field(4.0, ge=-50, le=100)
     income: float = Field(0.0, ge=0)                 # monthly net income, only for the payment-to-income warning
     real: bool = False
-    mode: Literal["fixed", "history"] = "fixed"
+    mode: Literal["fixed", "history", "synthetic"] = "fixed"
     history: HistoryFlags = Field(default_factory=HistoryFlags)
+    synthetic: SyntheticParams = Field(default_factory=SyntheticParams)
     leverage_cost: float = Field(0.0, ge=0, le=30)
     rate_path: List[RatePoint] = Field(default_factory=lambda: [RatePoint(year=0, rate=4.5)])
     prime_spread: float = Field(1.5, ge=-10, le=20)
@@ -254,7 +282,12 @@ def holdings_key(holdings) -> str:
 
 @dataclass
 class Paths:
-    """Per-realization paths ``(R, T+1)``; None means "use the parameter" (fixed mode)."""
+    """Per-realization paths ``(R, T+1)``; None means "use the parameter" (fixed mode).
+
+    In synthetic mode ``syn`` holds, for each drawn series, the cumulative standardized shock
+    ``S_m = sum_{k<=m} z_k / sqrt(12)`` (``S_0 = 0``); the simulator turns it into a path with
+    the scenario's own mean and volatility, so those stay parameters (and solvable).
+    """
     R: int
     T: int
     cpi: Optional[np.ndarray] = None          # C_t / C_0
@@ -265,6 +298,7 @@ class Paths:
     start_dates: Optional[pd.DatetimeIndex] = None
     scale: Optional[np.ndarray] = None        # (R,) CPI(start) / CPI(last): nominal display factor
     info: dict = field(default_factory=dict)
+    syn: Dict[str, np.ndarray] = field(default_factory=dict)
 
     @property
     def history(self) -> bool:
@@ -273,6 +307,43 @@ class Paths:
 
 def fixed_paths(T: int) -> Paths:
     return Paths(R=1, T=T)
+
+
+def corr_matrix(corr: Dict[str, float]) -> np.ndarray:
+    """The correlation matrix of the monthly draws, in ``SYN_SERIES`` order (missing pairs: 0)."""
+    n = len(SYN_SERIES)
+    M = np.eye(n)
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = SYN_SERIES[i], SYN_SERIES[j]
+            v = corr.get(f"{a}|{b}", corr.get(f"{b}|{a}", 0.0))
+            M[i, j] = M[j, i] = v
+    return M
+
+
+MAX_SYN_CELLS = 2_000_000          # paths x months of the synthetic draws
+
+
+def synthetic_paths(c: dict, T: int) -> Paths:
+    """``n`` paths of correlated standard-normal monthly draws, cumulated (see ``Paths.syn``).
+
+    All five series are always drawn from the full correlation matrix, so switching a series
+    off (it then stays on its fixed parameter) does not change the draws of the others.
+    """
+    sp = c["synthetic"]
+    R = int(sp["n"])
+    w, V = np.linalg.eigh(corr_matrix(sp["corr"]))
+    L = V * np.sqrt(np.maximum(w, 0.0))                # L @ L.T = the correlation matrix
+    rng = np.random.default_rng(int(sp["seed"]))
+    z = rng.standard_normal((T, R, len(SYN_SERIES))) @ L.T / np.sqrt(12)
+    paths = Paths(R=R, T=T)
+    for k, name in enumerate(SYN_SERIES):
+        if sp["series"][name]:
+            S = np.zeros((R, T + 1))
+            S[:, 1:] = np.cumsum(z[:, :, k], axis=0).T
+            paths.syn[name] = S
+    paths.info = {"n": R, "seed": int(sp["seed"]), "series": [k for k in SYN_SERIES if sp["series"][k]]}
+    return paths
 
 
 class Account:
@@ -287,6 +358,8 @@ class Account:
         self.fee = (1 - np.asarray(p["annual_fee"]) / 100) ** (1 / 12)
         self.r = (1 + np.asarray(p["annual_return"]) / 100) ** (1 / 12)
         self.growth = paths.growth.get(holdings_key(p["holdings"])) if paths.growth else None
+        self.shock = paths.syn.get("market")
+        self.vol = np.asarray(p.get("volatility", 0.0), dtype=float) / 100
         self.delta = np.asarray(p["deposit_fee"]) / 100
         self.tau = np.asarray(p["tax_rate"]) / 100
         self.real = p["tax_basis"] == "real"
@@ -299,7 +372,12 @@ class Account:
         self.first_debt = np.full(shape, -1)
 
     def factor(self, m: int):
-        g = self.growth[:, m] if self.growth is not None else self.r
+        if self.growth is not None:
+            g = self.growth[:, m]
+        elif self.shock is not None:
+            g = self.r * np.exp(self.vol * (self.shock[:, m] - self.shock[:, m - 1]))
+        else:
+            g = self.r
         return g * self.fee
 
     def basis(self, m: int):
@@ -354,14 +432,28 @@ def simulate(sc: dict, c: dict, taxes: dict, paths: Paths, shape=None, full: boo
     S = tuple(shape) if shape is not None else (R,)
     pi = np.asarray(c["inflation"], dtype=float)
 
+    syn = paths.syn
+    sp = c["synthetic"]
+    # Synthetic paths: the parameter is the geometric mean, times exp(volatility * S_m).
+    wiggle = lambda name, vol, m: np.exp(np.asarray(vol) / 100 * syn[name][:, m]) if name in syn else 1.0
+
     def C(m):
-        return paths.cpi[:, m] if paths.cpi is not None else (1 + pi / 100) ** (m / 12)
+        if paths.cpi is not None:
+            return paths.cpi[:, m]
+        return (1 + pi / 100) ** (m / 12) * wiggle("cpi", sp["cpi_vol"], m)
 
     def rent_index(m, growth):
-        return paths.rent[:, m] if paths.rent is not None else (1 + np.asarray(growth) / 100) ** (m / 12)
+        if paths.rent is not None:
+            return paths.rent[:, m]
+        return (1 + np.asarray(growth) / 100) ** (m / 12) * wiggle("rent", sp["rent_vol"], m)
 
     def boi(m):
-        base = paths.rate[:, m - 1] if paths.rate is not None else (schedule_at(c["rate_path"], (m - 1) / 12) or 0.0)
+        if paths.rate is not None:
+            base = paths.rate[:, m - 1]
+        else:
+            base = schedule_at(c["rate_path"], (m - 1) / 12) or 0.0
+            if "rate" in syn:
+                base = np.maximum(0.0, base + np.asarray(sp["rate_vol"]) * syn["rate"][:, m - 1])
         return base + np.asarray(c["rate_shift"])
 
     alloc = np.asarray(sc["alloc"], dtype=float)
@@ -453,7 +545,8 @@ def simulate(sc: dict, c: dict, taxes: dict, paths: Paths, shape=None, full: boo
 
     a_g = (1 + np.asarray(sc["appreciation"]) / 100) ** (1 / 12)
     occupancy = 1 - np.asarray(sc["vacancy_months"]) / 12
-    home_at = lambda m: P0 * (paths.home[:, m] if paths.home is not None else a_g ** m)
+    home_at = lambda m: P0 * (paths.home[:, m] if paths.home is not None
+                              else a_g ** m * wiggle("housing", sp["housing_vol"], m))
     home = home_at(0)
     pti_max = np.zeros(S)
     rate_t: Dict[int, list] = {}
@@ -628,6 +721,17 @@ def check_common(d: dict) -> Tuple[List[Issue], List[str]]:
     years = [p["year"] for p in c["rate_path"]]
     if not history_rate and len(set(years)) != len(years):
         errors.append(_issue("common.rate_path", "בלוח ריבית בנק ישראל יש שתי שורות לאותה שנה."))
+    if c["mode"] == "synthetic":
+        sp = c["synthetic"]
+        if min(np.linalg.eigvalsh(corr_matrix(sp["corr"]))) < -1e-9:
+            errors.append(_issue("common.synthetic.corr", "המתאמים לא עקביים זה עם זה (למשל א' ו-ב' בקשר חזק, ב' ו-ג' בקשר חזק, "
+                                                          "אבל א' ו-ג' בקשר הפוך), ולכן אי אפשר להגריל אותם יחד. הקטן חלק מהמתאמים."))
+        if sp["n"] * (months_of(c["years"]) + 1) > MAX_SYN_CELLS:
+            errors.append(_issue("common.synthetic.n", f"{sp['n']:,} מסלולים על {c['years']:g} שנים הם יותר מדי נקודות. "
+                                                       f"אפשר עד {MAX_SYN_CELLS // (months_of(c['years']) + 1):,} מסלולים לתקופה הזו."))
+        for key, label in (("cpi_vol", "האינפלציה"), ("housing_vol", "מחירי הדירות"), ("rent_vol", "שכר הדירה")):
+            if sp["series"][key.split("_")[0]] and sp[key] > 30:
+                warnings.append(f"תנודתיות של {sp[key]:g}% בשנה ב{label} גבוהה מאוד.")
     if c["income"] > 0 and c["budget"] > c["income"]:
         warnings.append(f"הסכום החודשי להשקעה ({_ils(c['budget'])}) גבוה מההכנסה החודשית נטו ({_ils(c['income'])}).")
     return errors, warnings
@@ -652,6 +756,8 @@ def check_scenario(sc: dict, c: dict, taxes: dict) -> Tuple[List[Issue], List[st
     hist = c["mode"] == "history"
     H = lambda k: hist and c["history"][k]
     mk = sc["market"]
+    if c["mode"] == "synthetic" and c["synthetic"]["series"]["market"] and mk["volatility"] > 40:
+        warnings.append(f"תנודתיות של {mk['volatility']:g}% בשנה בשוק ההון גבוהה מאוד (מדד מניות רחב: בערך 15%–20%).")
     if H("market"):
         if not any(h["weight"] > 0 and h["ticker"].strip() for h in mk["holdings"]):
             errors.append(_issue("market.holdings", "אין נכסים בתיק של שוק ההון."))

@@ -103,6 +103,14 @@ the UI — it is not real market history).
     Israel rate) runs on the data; results show the median or mean, a 10–90 band, the
     final value by start date and the probability that A beats B. In fixed mode the Bank
     of Israel rate follows an editable step path with presets.
+  - *Synthetic (Monte Carlo):* 1,000 (or up to 5,000) paths of correlated monthly draws, the
+    same for every scenario, from a fixed seed. Each series has a geometric mean (its usual
+    parameter, so the median path grows at exactly that rate) and an annual volatility; the
+    portfolio's return and volatility are set per scenario, the Bank of Israel rate is the
+    rate schedule plus a random walk, and an editable correlation matrix ties the series
+    together. A line under each parameter says what it means in practice (a typical year, a
+    bad year, the spread of the 10-year average), and one click calibrates every value from
+    the historical data.
   - *Break-even solver:* any numeric parameter (including a parallel shift of all floating
     rates) for the value at which two scenarios are equivalent on a metric; in history
     mode also for every start date separately.

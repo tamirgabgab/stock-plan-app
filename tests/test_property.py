@@ -448,3 +448,71 @@ def test_solve_on_the_share_skips_values_that_cannot_happen():
     assert all(y is not None for x, y in zip(xs, ys) if lo + 1e-9 < x <= 100)
     for x in out["roots"]:
         assert lo <= x <= hi
+
+
+# -------------------------------------------------------------------- synthetic
+
+from stockplan.engine.property import synthetic_paths
+
+
+def syn_request(scenarios, **syn):
+    common = {"years": 10, "equity": 1_500_000, "budget": 10_000, "index_budget": False, "inflation": 2,
+              "mode": "synthetic", "synthetic": {"n": 400, **syn}}
+    return PropertyRequest.model_validate(plan(scenarios, common))
+
+
+def test_synthetic_without_volatility_is_the_fixed_model():
+    scen = [market(annual_return=6, volatility=0),
+            apartment(rent=5000, appreciation=3, tracks=[{"share": 100, "years": 20, "kind": "prime"}],
+                      market={"annual_return": 4, "volatility": 0})]
+    zero = dict(cpi_vol=0, housing_vol=0, rent_vol=0, rate_vol=0)
+    syn = run_property(syn_request(scen, **zero))
+    fixed = request(scen, years=10, inflation=2)
+    fx = run_property(fixed)
+    for a, b in zip(syn["scenarios"], fx["scenarios"]):
+        assert a["net"].shape[1] == 400
+        assert np.allclose(a["net"], b["net"][:, :1], rtol=1e-10)
+
+
+def test_synthetic_median_growth_is_the_geometric_mean():
+    req = syn_request([market(annual_return=7, volatility=16, annual_fee=0, tax_rate=0)], n=4000)
+    req.common.budget = 0
+    s = run_property(req)["scenarios"][0]
+    final = s["net"][-1] / 1_500_000
+    assert np.median(final) == pytest.approx(1.07 ** 10, rel=0.02)
+    assert np.std(np.log(final)) == pytest.approx(0.16 * np.sqrt(10), rel=0.05)
+
+
+def test_synthetic_draws_are_correlated_seeded_and_stable():
+    c = syn_request([market()], n=3000).model_dump()["common"]
+    p = synthetic_paths(c, 120)
+    dz = {k: np.diff(v, axis=1).ravel() for k, v in p.syn.items()}
+    assert np.corrcoef(dz["cpi"], dz["rent"])[0, 1] == pytest.approx(0.5, abs=0.03)
+    assert np.std(dz["market"]) == pytest.approx(1 / np.sqrt(12), rel=0.02)
+    again = synthetic_paths(c, 120)
+    assert np.array_equal(p.syn["market"], again.syn["market"])
+    c["synthetic"]["series"]["cpi"] = False          # a series off does not move the others' draws
+    off = synthetic_paths(c, 120)
+    assert "cpi" not in off.syn and np.array_equal(p.syn["market"], off.syn["market"])
+    c["synthetic"]["seed"] = 2
+    assert not np.array_equal(p.syn["market"], synthetic_paths(c, 120).syn["market"])
+
+
+def test_synthetic_inconsistent_correlations_are_an_error():
+    corr = {"market|cpi": 0.9, "market|housing": 0.9, "cpi|housing": -0.9}
+    with pytest.raises(InputError) as e:
+        run_property(syn_request([market()], corr=corr))
+    assert e.value.errors[0]["field"] == "common.synthetic.corr"
+
+
+def test_synthetic_solve_and_calibrate_api(monkeypatch):
+    import stockplan.data as data_mod
+    monkeypatch.setattr(data_mod, "_provider", MD)
+    req = syn_request([market(annual_return=5), apartment(rent=5000, appreciation=3)], n=200)
+    out = solve_equal(req, "m", "a", "final", "m", "market.annual_return", 0, 15)
+    assert len(out["roots"]) == 1 and "per_row" not in out
+    body = client.post("/api/property/simulate", json=req.model_dump()).json()
+    assert body["mode"] == "synthetic" and body["n"] == 200 and body["start_dates"] is None
+    cal = client.post("/api/property/calibrate", json=req.model_dump()).json()
+    assert set(cal["markets"]) == {"m", "a"} and len(cal["corr"]) == 10
+    assert 0 < cal["housing_vol"] < 50 and cal["markets"]["m"]["volatility"] > 0

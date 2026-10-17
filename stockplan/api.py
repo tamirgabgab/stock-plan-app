@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import logging
 import math
+import time
 from datetime import date
 from pathlib import Path
 from typing import List, Literal, Optional
@@ -15,8 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__
-from .config import FAVORITES
-from .data import DataError, get_market_data
+from .config import FAVORITES, ON_VERCEL
+from .data import DataError, demo_reason, get_market_data
 from .data.search import lookup, search
 from .engine import (Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range,
                      benchmark_path, realization_detail, run_plan, run_trinity, solve_trace, trinity_heatmap)
@@ -24,7 +25,10 @@ from .engine.property import METRICS, PropertyRequest, run_property, solve_equal
 
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent / "web"
+STARTED = time.time()
 MAX_CELLS = 15_000_000   # realizations x months sent to the browser
+if ON_VERCEL:            # hosted responses are capped at 4.5 MB (~11 bytes per cell)
+    MAX_CELLS = 350_000
 
 
 class HoldingIn(BaseModel):
@@ -152,10 +156,20 @@ app.add_middleware(GZipMiddleware, minimum_size=2048)
 async def no_stale_assets(request, call_next):
     # Make the browser revalidate the UI files on every load (cheap: ETag -> 304), so a new
     # version is picked up without a hard refresh.
+    t0 = time.perf_counter()
     response = await call_next(request)
     if not request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-cache"
+    else:   # visible in the browser's network tab
+        response.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - t0) * 1000:.0f}"
     return response
+
+
+def _too_many(R: int, T1: int) -> str:
+    msg = f"יותר מדי נקודות ({R:,} תקופות × {T1:,} חודשים). בחר דגימה גסה יותר"
+    if ON_VERCEL:
+        msg += " (בגרסה המקוונת המגבלה קטנה יותר; במחשב שלך עם python run.py אין מגבלה כזו)"
+    return msg
 
 
 def _bad_request(exc: Exception) -> HTTPException:
@@ -167,9 +181,27 @@ def meta():
     md = get_market_data()
     return {
         "demo": md.is_demo,
+        "demo_reason": demo_reason(),
         "version": __version__,
         "favorites": [{"group": g, "items": [{"label": l, "ticker": t} for l, t in items]}
                       for g, items in FAVORITES.items()],
+    }
+
+
+@app.get("/api/status")
+def status():
+    """Which data sources answered, and how fast. Open it in the browser to diagnose slowness."""
+    md = get_market_data()
+    now = time.time()
+    sources = sorted(getattr(md, "sources", {}).items(), key=lambda kv: -kv[1]["at"])
+    return {
+        "version": __version__,
+        "demo": md.is_demo,
+        "demo_reason": demo_reason(),
+        "hosted": ON_VERCEL,
+        "instance_uptime_s": round(now - STARTED),
+        "sources": [{"source": k, **{f: v for f, v in info.items() if f != "at"},
+                     "ago_s": round(now - info["at"])} for k, info in sources],
     }
 
 
@@ -262,7 +294,7 @@ def simulate(plan: PlanIn):
     R, T1 = res.paths.shape
     if R * T1 > MAX_CELLS:
         raise HTTPException(status_code=400,
-                            detail=f"יותר מדי נקודות ({R:,} תקופות × {T1:,} חודשים). בחר דגימה גסה יותר")
+                            detail=_too_many(R, T1))
     return {
         "months": res.months,
         "n": R,
@@ -277,6 +309,15 @@ def simulate(plan: PlanIn):
         "solved": None if res.solved is None else _floats(res.solved),
         "paths": _matrix_b64(res.paths),
         "deposits_path": _matrix_b64(res.deposits_path),
+        # Gross = market value before the tax of selling everything at the end.
+        "final_gross": _floats(res.final_gross),
+        "irr_gross": _floats(res.irr_gross),
+        "account_drawdown_gross": _floats(res.account_drawdown_gross),
+        "paths_gross": _matrix_b64(res.paths_gross),
+        # Plan-year cohorts: annual return of each year's deposits held to the end, (R, years).
+        "years": int(res.year_irr_gross.shape[1]),
+        "year_irr_gross": _matrix_b64(res.year_irr_gross),
+        "year_irr_net": _matrix_b64(res.year_irr_net),
         "warnings": res.warnings,
         "demo": get_market_data().is_demo,
     }
@@ -309,7 +350,7 @@ def trinity_simulate(plan: TrinityIn):
     R, T1 = res.paths.shape
     if R * T1 > MAX_CELLS:
         raise HTTPException(status_code=400,
-                            detail=f"יותר מדי נקודות ({R:,} תקופות × {T1:,} חודשים). בחר דגימה גסה יותר")
+                            detail=_too_many(R, T1))
     return {
         "months": res.months,
         "n": R,

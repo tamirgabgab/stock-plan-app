@@ -1,3 +1,18 @@
+# The hosted build (Vercel) installs the [project] dependencies below; keep them in step with
+# requirements.txt. The app version lives in stockplan/__init__.py, not here.
+[project]
+name = "stock-plan-app"
+version = "0"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "yfinance>=0.2.40",
+    "requests>=2.28",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

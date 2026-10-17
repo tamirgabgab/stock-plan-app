@@ -31,6 +31,8 @@ def free_port(preferred: int) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Stock Plan App")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="address to listen on (0.0.0.0 inside a container such as Codespaces)")
     parser.add_argument("--demo", action="store_true", help="use synthetic data (no internet needed)")
     parser.add_argument("--no-browser", action="store_true", help="do not open a browser tab")
     args = parser.parse_args()
@@ -52,7 +54,7 @@ def main() -> None:
     print(f"Stock Plan App {__version__} running at {url}  (Ctrl+C to stop)")
     if not args.no_browser:
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
-    uvicorn.run("stockplan.api:app", host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run("stockplan.api:app", host=args.host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":

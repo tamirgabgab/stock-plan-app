@@ -29,10 +29,12 @@ from .models import PlanRequest, SOLVE_MONTHLY, SOLVE_START
 
 @dataclass
 class SimOutput:
-    final_net: np.ndarray                     # (R,) nominal
+    final_net: np.ndarray                     # (R,) nominal, after the tax of selling everything
     paths_net: Optional[np.ndarray] = None    # (R, T+1) nominal net liquidation value
     deposits: Optional[np.ndarray] = None     # (R, T+1) nominal deposit made at month m
     cpi: Optional[np.ndarray] = None          # (R, T+1) CPI at each month (if loaded)
+    final_gross: Optional[np.ndarray] = None  # (R,) nominal market value of the holdings
+    paths_gross: Optional[np.ndarray] = None  # (R, T+1) nominal market value (before the final tax)
 
 
 def _stage_weights(req: PlanRequest, market: Market) -> np.ndarray:
@@ -72,6 +74,7 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
     book.journal = journal
 
     paths = np.empty((R, T + 1)) if record else None
+    gross = np.empty((R, T + 1)) if record else None
     deposits = np.zeros((R, T + 1)) if record else None
 
     def deposit_scale(m):
@@ -124,15 +127,49 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
             book.buy(amount, w, cpi_m)
             if record:
                 deposits[:, m] = amount
-                paths[:, m] = book.liquidation_value(cpi_m) if not unit_growth else book.total
+                gross[:, m] = book.total
+                paths[:, m] = book.liquidation_value(cpi_m) if not unit_growth else gross[:, m]
 
             book.grow(month_growth(market, idx, m), fee)
 
     cpi_T = cpi[:, T] if cpi is not None else None
-    final = book.total if unit_growth else book.liquidation_value(cpi_T)
+    final_gross = book.total
+    final = final_gross if unit_growth else book.liquidation_value(cpi_T)
     if record:
         paths[:, T] = final
-    return SimOutput(final_net=final, paths_net=paths, deposits=deposits, cpi=cpi)
+        gross[:, T] = final_gross
+    return SimOutput(final_net=final, paths_net=paths, deposits=deposits, cpi=cpi,
+                     final_gross=final_gross, paths_gross=gross)
+
+
+def cohort_values(req: PlanRequest, market: Market, deposits: np.ndarray, years: int) -> np.ndarray:
+    """(R, years) gross value at the end of the plan of the deposits made in each plan year
+    (12 months each; a partial last year is left out), before tax.
+
+    The holdings are linear in the deposits, so every lot's growth is known in closed form:
+    within its stage a lot keeps the stage weights, so it grows like the weighted sum of its
+    assets' price ratios (fees included); at a stage switch all lots are reallocated to the
+    new weights, so from there on every lot grows like one bought at the switch.
+    A taxable switch would also take tax out of the lot, which is ignored here (gross).
+    """
+    idx = market.day_idx
+    R, T = idx.shape[0], idx.shape[1] - 1
+    W = _stage_weights(req, market)
+    fee = (1 - req.annual_fee / 100) ** (1 / 12)
+    stage_starts = np.cumsum([0] + [s.months for s in req.stages])
+    growth = np.empty((R, T))               # growth of a lot bought at month m, to month T
+    tail = np.ones(R)                       # growth from the end of the current stage to T
+    for s in range(len(req.stages) - 1, -1, -1):
+        m0, m1 = int(stage_starts[s]), int(stage_starts[s + 1])
+        p_end = market.prices[:, idx[:, m1]]                          # (A, R)
+        p_m = market.prices[:, idx[:, m0:m1]]                         # (A, R, L)
+        ratio = np.divide(p_end[:, :, None], p_m, out=np.zeros_like(p_m), where=p_m > 0)
+        months_held = np.arange(m1 - m0, 0, -1)                       # m1 - m for m in [m0, m1)
+        g = (W[s][:, None, None] * ratio).sum(axis=0) * fee ** months_held   # (R, L)
+        growth[:, m0:m1] = g * tail[:, None]
+        tail = tail * g[:, 0]
+    value = deposits[:, :T] * growth
+    return np.stack([value[:, 12 * y:12 * (y + 1)].sum(axis=1) for y in range(years)], axis=1)
 
 
 def month_growth(market: Market, idx: np.ndarray, m: int) -> np.ndarray:

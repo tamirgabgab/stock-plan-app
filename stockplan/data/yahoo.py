@@ -1,6 +1,7 @@
 """Real market data: Yahoo Finance prices, Bank of Israel / FRED FX, FRED / CBS CPI.
 
-Everything is cached on disk as Parquet. Prices are refreshed incrementally: only the
+Everything is cached on disk, as Parquet when pyarrow is installed and as pickle otherwise
+(the hosted build leaves pyarrow out to stay within the platform's size limit). Prices are refreshed incrementally: only the
 last few days are downloaded and chained onto the stored total-return index, so after
 the first run a refresh costs one tiny request per ticker.
 
@@ -25,7 +26,8 @@ from .base import DataError, normalize_daily, normalize_monthly
 
 log = logging.getLogger(__name__)
 
-HTTP_TIMEOUT = 30
+HTTP_TIMEOUT = (5, 20)   # connect, read (seconds)
+FAIL_TTL = 3600          # a source that failed is skipped for this long (seconds)
 USER_AGENT = "Mozilla/5.0 (stock-plan-app)"
 
 BOI_USD_ILS_URL = (
@@ -43,6 +45,28 @@ def _safe_name(ticker: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in ticker.upper())
 
 
+try:
+    import pyarrow  # noqa: F401
+    CACHE_EXT = ".parquet"
+except ImportError:
+    CACHE_EXT = ".pkl"
+
+
+def _read_cache(p: Path) -> pd.Series:
+    return pd.read_parquet(p)["value"] if p.suffix == ".parquet" else pd.read_pickle(p)
+
+
+def _write_cache(series: pd.Series, p: Path) -> None:
+    if CACHE_EXT == ".parquet":
+        series.rename("value").to_frame().to_parquet(p)
+    else:
+        series.rename("value").to_pickle(p)
+
+
+class _Skipped(Exception):
+    """A source is skipped because it failed a moment ago."""
+
+
 class _DiskCache:
     def __init__(self, root: Path):
         self.root = root
@@ -54,7 +78,7 @@ class _DiskCache:
             return self._locks.setdefault(key, threading.Lock())
 
     def path(self, kind: str, name: str) -> Path:
-        return self.root / kind / f"{name}.parquet"
+        return self.root / kind / f"{name}{CACHE_EXT}"
 
     def load(self, kind: str, name: str) -> tuple[Optional[pd.Series], float]:
         """Return (series, age_hours). age is ``inf`` when nothing is cached."""
@@ -62,7 +86,7 @@ class _DiskCache:
         if not p.exists():
             return None, float("inf")
         try:
-            s = pd.read_parquet(p)["value"]
+            s = _read_cache(p)
         except Exception:  # corrupt file: refetch
             log.warning("ignoring unreadable cache file %s", p)
             return None, float("inf")
@@ -72,7 +96,7 @@ class _DiskCache:
         p = self.path(kind, name)
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".tmp")
-        series.rename("value").to_frame().to_parquet(tmp)
+        _write_cache(series, tmp)
         tmp.replace(p)
 
 
@@ -97,6 +121,24 @@ def _fred_series(series_id: str) -> pd.Series:
     return pd.Series(values.values, index=pd.to_datetime(df.iloc[:, 0])).dropna()
 
 
+_yf = None
+
+
+def _yfinance():
+    # Imported lazily: slow import, not needed in demo mode. Its own small cache goes next to
+    # ours, which also keeps it writable on hosts where only /tmp is.
+    global _yf
+    if _yf is None:
+        import yfinance as yf
+        try:
+            (CACHE_DIR / "yfinance").mkdir(parents=True, exist_ok=True)
+            yf.set_tz_cache_location(str(CACHE_DIR / "yfinance"))
+        except Exception as exc:  # noqa: BLE001 - yfinance works without its cache
+            log.warning("yfinance cache location not set: %s", exc)
+        _yf = yf
+    return _yf
+
+
 class YahooMarketData:
     is_demo = False
 
@@ -104,6 +146,31 @@ class YahooMarketData:
         self.cache = _DiskCache(cache_root)
         self.ttl_hours = ttl_hours
         self._memo: dict[tuple[str, str], pd.Series] = {}
+        self._failed: dict[str, float] = {}     # source -> time it last failed
+        self.sources: dict[str, dict] = {}      # source -> last attempt, for /api/status
+
+    def _attempt(self, source: str, fetch: Callable[[], pd.Series], ttl: float = FAIL_TTL,
+                 remember_data_errors: bool = True) -> pd.Series:
+        """Run one download, timing it. A source that failed recently is skipped at once, so a
+        blocked or hanging host costs one timeout per ``ttl`` instead of one per request."""
+        failed_at = self._failed.get(source)
+        if failed_at is not None and time.time() - failed_at < ttl:
+            raise _Skipped(f"skipped, failed {int(time.time() - failed_at)}s ago")
+        t0 = time.time()
+        try:
+            s = fetch()
+            if s is None or len(s) == 0:
+                raise DataError("empty response")
+        except Exception as exc:
+            if remember_data_errors or not isinstance(exc, DataError):
+                self._failed[source] = time.time()
+            self.sources[source] = {"ok": False, "seconds": round(time.time() - t0, 2),
+                                    "error": str(exc)[:300], "at": time.time()}
+            raise
+        self._failed.pop(source, None)
+        self.sources[source] = {"ok": True, "seconds": round(time.time() - t0, 2),
+                                "rows": len(s), "at": time.time()}
+        return s
 
     # ------------------------------------------------------------------ prices
     def prices(self, ticker: str) -> pd.Series:
@@ -116,7 +183,9 @@ class YahooMarketData:
             if cached is not None and age < self.ttl_hours:
                 return self._memo_get(key, cached)
             try:
-                fresh = self._refresh_prices(ticker, cached)
+                # An unknown ticker (DataError) is not remembered: it fails fast anyway.
+                fresh = self._attempt(f"Yahoo {ticker}", lambda: self._refresh_prices(ticker, cached),
+                                      ttl=600, remember_data_errors=False)
             except DataError:
                 raise
             except Exception as exc:  # network errors etc.
@@ -132,8 +201,7 @@ class YahooMarketData:
         return self._memo.setdefault(key, series)
 
     def _download(self, ticker: str, start: Optional[date] = None) -> pd.Series:
-        import yfinance as yf  # imported lazily: slow import, not needed in demo mode
-
+        yf = _yfinance()
         t = yf.Ticker(ticker)
         if start is None:
             hist = t.history(period="max", interval="1d", auto_adjust=True)
@@ -145,6 +213,16 @@ class YahooMarketData:
         # Drop today's bar: during the trading session it is an intraday quote.
         today = pd.Timestamp(date.today())
         return s[s.index < today]
+
+    def reachable(self) -> bool:
+        """True when Yahoo answers: a few days of SPY download. Used to fall back to demo data."""
+        try:
+            self._attempt("Yahoo probe (SPY)",
+                          lambda: self._download("SPY", start=date.today() - timedelta(days=10)))
+            return True
+        except Exception as exc:  # noqa: BLE001 - any failure means "not reachable"
+            log.warning("Yahoo Finance is not reachable: %s", exc)
+            return False
 
     def _refresh_prices(self, ticker: str, cached: Optional[pd.Series]) -> pd.Series:
         if cached is not None and len(cached) > 10:
@@ -180,7 +258,7 @@ class YahooMarketData:
             errors = []
             for label, fetch in fetchers:
                 try:
-                    s = fetch()
+                    s = self._attempt(f"{label} ({name})", fetch)
                     s = normalize_monthly(s) if monthly else normalize_daily(s)
                     if len(s) > 12:
                         self.cache.save(*key, s)

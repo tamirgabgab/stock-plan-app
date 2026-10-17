@@ -8,6 +8,6 @@ where python >nul 2>nul || set PY=py
   pause
   exit /b 1
 )
-%PY% -m pip install -q -r requirements.txt
+%PY% -m pip install -q -r requirements-local.txt
 %PY% run.py %*
 pause

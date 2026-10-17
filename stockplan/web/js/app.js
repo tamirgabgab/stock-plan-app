@@ -33,7 +33,7 @@ const DEFAULT_PLAN = {
 };
 
 const DEFAULT_UI = { p1: 10, p2: 90, showDeposits: true, showTarget: true, logY: false, timeIdx: null,
-                     bins: 50, histSource: "solved", showReps: false };
+                     bins: 50, histSource: "solved", showReps: false, net: false };
 
 function loadPlan(hashKey, storageKey, defaults) {
   try {
@@ -58,13 +58,39 @@ function initialView() {
 
 const withIds = (p) => ({ ...p, stages: p.stages.map((s) => ({ ...s, id: s.id || newId() })) });
 
+// Both views of the result are prepared once: gross (market value of the holdings) and net
+// (after the tax of selling everything). ``withMode`` in results.js picks one.
 function prepareResult(raw, plan) {
   const T1 = raw.months + 1;
-  const paths = decodeMatrix(raw.paths, raw.n, T1);
   const deps = decodeMatrix(raw.deposits_path, raw.n, T1);
-  const cs = columnStats(paths);
   const depMean = Array.from(columnStats(deps).mean);
-  return { raw, plan, paths, deps, cs, depMean, n: raw.n, T: raw.months, id: Math.random(), labels: ACCUMULATION_LABELS };
+  const mode = (pathsB64, final, irr, dd, yearsB64) => {
+    const paths = decodeMatrix(pathsB64, raw.n, T1);
+    const years = decodeMatrix(yearsB64, raw.n, raw.years);
+    return { paths, cs: columnStats(paths), final, irr, account_drawdown: dd, years, ...bestWorstYear(years) };
+  };
+  const modes = {
+    gross: mode(raw.paths_gross, raw.final_gross, raw.irr_gross, raw.account_drawdown_gross, raw.year_irr_gross),
+    net: mode(raw.paths, raw.final, raw.irr, raw.account_drawdown, raw.year_irr_net),
+  };
+  return { raw, plan, deps, depMean, modes, paths: modes.gross.paths, cs: modes.gross.cs,
+           n: raw.n, T: raw.months, id: Math.random(), labels: ACCUMULATION_LABELS };
+}
+
+// Per realization: the plan year (0-based) whose deposits earned the most / the least.
+function bestWorstYear(years) {
+  const best = new Int16Array(years.rows), worst = new Int16Array(years.rows);
+  for (let r = 0; r < years.rows; r++) {
+    let bi = -1, wi = -1, bv = -Infinity, wv = Infinity;
+    for (let y = 0; y < years.cols; y++) {
+      const v = years.flat[r * years.cols + y];
+      if (!Number.isFinite(v)) continue;
+      if (v > bv) { bv = v; bi = y; }
+      if (v < wv) { wv = v; wi = y; }
+    }
+    best[r] = bi; worst[r] = wi;
+  }
+  return { bestYear: best, worstYear: worst };
 }
 
 // One plan + its results, for the accumulation and the Trinity tabs alike.
@@ -194,7 +220,9 @@ function App() {
           ${theme === "dark" ? "☾" : theme === "light" ? "☀" : "◐"}</button>
       </div>
     </header>
-    ${meta.demo ? html`<div class="demo-banner">מצב הדגמה: הנתונים סינתטיים ואינם היסטוריה אמיתית. להרצה עם נתונים אמיתיים הפעל <code dir="ltr">python run.py</code> בלי <code dir="ltr">--demo</code>.</div>` : null}
+    ${meta.demo ? html`<div class="demo-banner">${meta.demo_reason === "fallback"
+      ? html`מצב הדגמה: לא הצלחנו להתחבר ל-Yahoo Finance מהשרת, ולכן הנתונים סינתטיים ואינם היסטוריה אמיתית. לנתונים אמיתיים הרץ את האפליקציה במחשב שלך עם <code dir="ltr">python run.py</code>.`
+      : html`מצב הדגמה: הנתונים סינתטיים ואינם היסטוריה אמיתית. להרצה עם נתונים אמיתיים הפעל <code dir="ltr">python run.py</code> בלי <code dir="ltr">--demo</code>.`}</div>` : null}
     <main class="layout" style=${`--panel-w:${panelW}px`}>
       ${view === "trinity"
         ? html`<${TrinityInputs} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} />`

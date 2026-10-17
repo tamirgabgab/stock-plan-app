@@ -46,6 +46,10 @@ def test_simulate_returns_paths_matrix():
     paths = np.frombuffer(base64.b64decode(body["paths"]), dtype="<f4").reshape(n, T1)
     assert len(body["start_dates"]) == n
     assert np.allclose(paths[:, -1], body["final"], rtol=1e-5)
+    gross = np.frombuffer(base64.b64decode(body["paths_gross"]), dtype="<f4").reshape(n, T1)
+    assert (gross[:, -1] >= paths[:, -1] - 1e-3).all() and np.allclose(gross[:, -1], body["final_gross"], rtol=1e-5)
+    years = np.frombuffer(base64.b64decode(body["year_irr_gross"]), dtype="<f4").reshape(n, body["years"])
+    assert body["years"] == T1 // 12 and np.isfinite(years).all()
     assert len(body["account_drawdown"]) == n and all(v <= 0 for v in body["account_drawdown"])
 
 
@@ -115,3 +119,4 @@ def test_benchmark_endpoint():
     sim = client.post("/api/simulate", json=PLAN).json()
     body = client.post("/api/realization/benchmark", json={"plan": PLAN, "start_date": sim["start_dates"][0], "rate": 0}).json()
     assert len(body["path"]) == 121 and body["final"] > 0
+    assert len(body["path_gross"]) == 121 and body["final_gross"] >= body["final"]

@@ -1,7 +1,7 @@
 // Realization detail: a large modal with the trade journal of one start date on one side and
 // the weighted basket of raw prices (buy dates in red) on the other. Shared by both tabs.
 import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
-import { accountFigure, basketFigure, observeResize, PLOT_CONFIG } from "./charts.js";
+import { accountFigure, basketFigure, observeResize, ZOOM_CONFIG } from "./charts.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
 import { toPayload } from "./inputs.js";
 import { Segmented, Toggle } from "./ui.js";
@@ -62,13 +62,38 @@ export function RealizationDetail({ res, index, onClose, onNav, themeKey }) {
   </div>`;
 }
 
+const MODE_OPTIONS = [{ value: "gross", label: "ברוטו" }, { value: "net", label: "נטו" }];
+
 function DetailBody({ data, res, themeKey }) {
   const [hl, setHl] = useState(null);
+  // Gross or net, starting from the results tab's choice (Trinity results are net only).
+  const [net, setNet] = useState(res.modes ? !!res.net : true);
+  // The fixed-return comparison (the dashed line) is shared by the chart and the journal.
+  const [p, setP] = useState(0);
+  const [bench, setBench] = useState(null);
+  const [benchError, setBenchError] = useState(null);
+  useEffect(() => {
+    const c = new AbortController();
+    const id = setTimeout(() => {
+      postJSON(`${res.labels.detailApi}/benchmark`, { plan: toPayload(res.plan), start_date: data.start_date, rate: p,
+        x: data.summary.solved }, c.signal)
+        .then((b) => { setBench(b); setBenchError(null); }).catch((e) => { if (e.name !== "AbortError") setBenchError(e.message); });
+    }, 250);
+    return () => { clearTimeout(id); c.abort(); };
+  }, [data, p]);
+  const benchReady = bench && bench.rate === p ? bench : null;
+  const view = { net, p, bench: benchReady, account: net ? data.path : data.path_gross,
+                 benchPath: benchReady ? (net ? benchReady.path : benchReady.path_gross) : null };
   return html`<div class="modal-body">
-    <${DetailSummary} data=${data} res=${res} />
-    <${AccountChart} data=${data} res=${res} themeKey=${themeKey} />
+    ${res.modes ? html`<div class="results-bar">
+      <${Segmented} small label="סכומים" options=${MODE_OPTIONS} value=${net ? "net" : "gross"} onChange=${(v) => setNet(v === "net")}
+        hint=${`ברוטו: שווי השוק של ההחזקות. נטו: אחרי מכירת הכל ותשלום מס של ${res.plan.tax_rate}% על הרווח. משפיע על הסיכום, על הגרף ועל היומן.`} />
+      <span class="muted small">${net ? "נטו: אחרי מס על הרווח במימוש." : "ברוטו: שווי ההחזקות לפני מס."}</span>
+    </div>` : null}
+    <${DetailSummary} data=${data} res=${res} net=${net} />
+    <${AccountChart} data=${data} res=${res} themeKey=${themeKey} view=${view} setP=${setP} error=${benchError} />
     <div class="detail-grid">
-      <${Journal} data=${data} res=${res} setHl=${setHl} />
+      <${Journal} data=${data} res=${res} setHl=${setHl} view=${view} />
       <${BasketChart} data=${data} themeKey=${themeKey} hl=${hl} />
     </div>
   </div>`;
@@ -77,22 +102,12 @@ function DetailBody({ data, res, themeKey }) {
 // The account against the same plan at a fixed annual return p (same deposits or
 // withdrawals, fees and tax; computed on the server by swapping the market for one asset).
 const P_CHIPS = [0, 4, 7, 10];
-function AccountChart({ data, res, themeKey }) {
+function AccountChart({ data, res, themeKey, view, setP, error }) {
   const ref = useRef(null);
-  const [p, setP] = useState(0);
-  const [bench, setBench] = useState(null);
-  const [error, setError] = useState(null);
+  const { p, bench, net, account, benchPath } = view;
   const cur = data.currency;
   const sym = CURRENCY_SYMBOL[cur];
-  useEffect(() => {
-    const c = new AbortController();
-    const id = setTimeout(() => {
-      postJSON(`${res.labels.detailApi}/benchmark`, { plan: toPayload(res.plan), start_date: data.start_date, rate: p,
-        x: data.summary.solved }, c.signal)
-        .then((b) => { setBench(b); setError(null); }).catch((e) => { if (e.name !== "AbortError") setError(e.message); });
-    }, 250);
-    return () => { clearTimeout(id); c.abort(); };
-  }, [data, p]);
+  const word = net ? "נטו" : "ברוטו";
   const dates = useMemo(() => data.path.map((_, m) => addMonths(data.start_date, m)), [data]);
   // Cumulative deposits (accumulation) or net withdrawals (Trinity), from the journal.
   const flow = useMemo(() => {
@@ -105,19 +120,20 @@ function AccountChart({ data, res, themeKey }) {
     return perMonth.map((v) => (acc += v));
   }, [data]);
   const flowLabel = data.trinity ? "סך משיכות נטו" : "סך הפקדות";
-  const benchLabel = `השוואה: ${p}% ${res.plan.real ? "ריאלי " : ""}לשנה`;
+  const benchLabel = `השוואה: ${p}% ${res.plan.real ? "ריאלי " : ""}לשנה (${word})`;
   useEffect(() => {
     if (!ref.current) return;
-    const fig = accountFigure({ dates, account: data.path, bench: bench && bench.rate === p ? bench.path : null, flow, flowLabel, benchLabel, sym });
-    window.Plotly.react(ref.current, fig.data, fig.layout, PLOT_CONFIG);
-  }, [data, bench, themeKey]);
+    const fig = accountFigure({ dates, account, accountLabel: `שווי החשבון (${word})`, bench: benchPath, flow, flowLabel, benchLabel, sym });
+    window.Plotly.react(ref.current, fig.data, fig.layout, ZOOM_CONFIG);
+  }, [data, bench, net, themeKey]);
   useEffect(() => {
     const gd = ref.current;
     const off = observeResize(gd);
     return () => { off(); if (gd) window.Plotly.purge(gd); };
   }, []);
-  const fin = data.path[data.path.length - 1];
-  const diff = bench ? fin - bench.final : null;
+  const fin = account[account.length - 1];
+  const benchFin = bench ? (net ? bench.final : bench.final_gross) : null;
+  const diff = bench ? fin - benchFin : null;
   return html`<section class="account-chart" aria-label="שווי החשבון מול השוואה">
     <div class="journal-head">
       <h3>שווי החשבון מול תשואה קבועה</h3>
@@ -128,18 +144,22 @@ function AccountChart({ data, res, themeKey }) {
       </div>
     </div>
     <p class="muted small">הקו המקווקו הוא אותה תוכנית בדיוק (${data.trinity ? "אותן משיכות" : "אותן הפקדות"}, אותם דמי ניהול ואותו מס), אבל בנכס אחד שמניב ${p}% בשנה${res.plan.real ? " מעל האינפלציה" : ""}. ב-0% הוא מראה כמה היה נשאר בלי שום תשואה.
-      ${bench ? html` בסוף התקופה: החשבון <b dir="ltr">${money(fin, cur)}</b>, ההשוואה <b dir="ltr">${money(bench.final, cur)}</b>,${" "}<span class=${diff >= 0 ? "pos" : "neg"}>${diff >= 0 ? "החשבון הקדים ב-" : "החשבון פיגר ב-"}<b dir="ltr">${money(Math.abs(diff), cur)}</b></span>.` : ""}</p>
+      ${bench ? html` בסוף התקופה (${word}): החשבון <b dir="ltr">${money(fin, cur)}</b>, ההשוואה <b dir="ltr">${money(benchFin, cur)}</b>,${" "}<span class=${diff >= 0 ? "pos" : "neg"}>${diff >= 0 ? "החשבון הקדים ב-" : "החשבון פיגר ב-"}<b dir="ltr">${money(Math.abs(diff), cur)}</b></span>.` : ""}
+      ${" "}גלגלת העכבר מגדילה, גרירה מסמנת טווח, ולחיצה כפולה מחזירה.</p>
     ${error ? html`<div class="callout error">${error}</div>` : null}
     <div ref=${ref} class="plot plot-account"></div>
   </section>`;
 }
 
-function DetailSummary({ data, res }) {
+function DetailSummary({ data, res, net }) {
   const cur = data.currency;
   const s = data.summary;
   const m = (v) => money(v, cur);
   const solvedName = res.labels.solved[res.plan.solve_for];
   const solvedFmt = res.labels.solvedFmt || m;
+  const word = net ? "נטו" : "ברוטו";
+  const final = net ? s.final : s.final_gross;
+  const endTax = s.final_gross - s.final;
   const items = data.trinity ? [
     ["יתרה סופית", m(s.final)],
     ["סך משיכות נטו", m(s.withdrawn_total)],
@@ -148,10 +168,11 @@ function DetailSummary({ data, res }) {
     ...(res.plan.solve_for === "final"
       ? [["תוצאה", s.depleted_at === null ? "הכסף לא נגמר" : `הכסף נגמר אחרי ${monthsLabel(s.depleted_at)}`]] : []),
   ] : [
-    ["סכום סופי נטו", m(s.final)],
+    [`סכום סופי ${word}`, m(final)],
     ["סך הפקדות", m(s.deposits_total)],
-    ["רווח", m(s.final - s.deposits_total)],
-    ["תשואה שנתית (IRR)", pct(s.irr)],
+    [`רווח ${word}`, m(final - s.deposits_total)],
+    [`תשואה שנתית (IRR) ${word}`, pct(net ? s.irr : s.irr_gross)],
+    ...(endTax > 0.5 ? [["מס במכירת הכל בסוף", m(endTax)]] : []),
     ["תשואת התיק (שנתית)", pct(s.cagr)],
     ["ירידה מקסימלית: התיק", pct(s.max_drawdown, 1)],
     ["ירידה מקסימלית: החשבון", pct(s.account_drawdown, 1)],
@@ -169,8 +190,10 @@ function DetailSummary({ data, res }) {
   </div>`;
 }
 
-function Journal({ data, res, setHl }) {
+function Journal({ data, res, setHl, view }) {
   const [filter, setFilter] = useState("all");
+  const { net, p, benchPath, account } = view;
+  const word = net ? "נטו" : "ברוטו";
   const [limit, setLimit] = useState(ROWS);
   const cur = data.currency;
   const sym = CURRENCY_SYMBOL[cur];
@@ -187,16 +210,21 @@ function Journal({ data, res, setHl }) {
   }, [data]);
   const ret = (v) => (v === null || v === undefined ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`);
   const cls = (v) => (v === null || v === undefined ? "" : v >= 0 ? "pos" : "neg");
+  const hasTax = data.trades.some((t) => t.tax > 0.005);
+  const hasExit = data.trades.some((t) => t.kind === "buy");
   return html`<section class="journal" aria-label="יומן פעולות">
     <div class="journal-head">
       <h3>יומן פעולות</h3>
       <${Segmented} small options=${[{ value: "all", label: "הכל" }, { value: "buy", label: "קניות" }, { value: "sell", label: "מכירות" }]}
         value=${filter} onChange=${setFilter} />
     </div>
-    <p class="muted small">מחיר: מחיר הנכס ביום הפעולה${cur === "ILS" ? " בשקלים (ומתחתיו בדולרים)" : ""}. בקנייה, הרווח הוא תשואת המחיר מהקנייה ועד שהנכס יצא מהתיק או עד סוף התקופה, לפני דמי ניהול ומס.
+    <p class="muted small">מחיר: מחיר הנכס ביום הפעולה${cur === "ILS" ? " בשקלים (ומתחתיו בדולרים)" : ""}.
+      "החשבון" ו"השוואה": שווי החשבון ${word} באותו חודש, ולידו אותה תוכנית בתשואה קבועה של ${p}% לשנה (הקו המקווקו בגרף שלמעלה).
+      ${hasExit ? " בקנייה, הרווח הוא תשואת המחיר מהקנייה ועד שהנכס יצא מהתיק או עד סוף התקופה, לפני דמי ניהול ומס." : ""}
       ${res.plan.real ? " הסכומים בכסף של היום." : ""}</p>
     <div class="journal-wrap"><table class="data journal-table">
-      <thead><tr><th>תאריך</th><th>פעולה</th><th>נכס</th><th>מחיר</th><th>סכום</th><th>יחידות</th><th>מס</th><th>רווח עד היציאה</th><th>שנתי</th></tr></thead>
+      <thead><tr><th>תאריך</th><th>פעולה</th><th>נכס</th><th>מחיר</th><th>סכום</th>${hasTax ? html`<th>מס</th>` : null}
+        <th>החשבון (${word})</th><th>השוואה ${p}%</th>${hasExit ? html`<th>רווח עד היציאה</th><th>שנתי</th>` : null}</tr></thead>
       <tbody onMouseLeave=${() => setHl(null)}>
         ${rows.slice(0, limit).map((t) => html`<tr class=${t.kind}
             onMouseEnter=${() => setHl({ date: t.date, kind: t.kind })}>
@@ -205,10 +233,12 @@ function Journal({ data, res, setHl }) {
           <td dir="ltr">${assetName(t.asset)}</td>
           <td dir="ltr">${money(t.price, cur, { decimals: 2 })}${cur === "ILS" ? html`<div class="muted small">$${t.price_usd?.toFixed(2)}</div>` : null}</td>
           <td dir="ltr">${money(t.amount, cur)}</td>
-          <td dir="ltr">${t.units?.toLocaleString("en-US", { maximumFractionDigits: 4 })}</td>
-          <td dir="ltr">${t.tax > 0.005 ? money(t.tax, cur) : "—"}</td>
+          ${hasTax ? html`<td dir="ltr">${t.tax > 0.005 ? money(t.tax, cur) : "—"}</td>` : null}
+          <td dir="ltr">${money(account[t.m], cur)}</td>
+          <td dir="ltr" class=${benchPath ? cls(account[t.m] - benchPath[t.m]) : ""} title=${benchPath ? `החשבון ${account[t.m] >= benchPath[t.m] ? "מעל" : "מתחת"} ההשוואה ב-${money(Math.abs(account[t.m] - benchPath[t.m]), cur)}` : ""}>${benchPath ? money(benchPath[t.m], cur) : "…"}</td>
+          ${hasExit ? html`
           <td dir="ltr" class=${cls(t.return_pct)} title=${t.exit_date ? `עד ${dateHe(t.exit_date)} · שווי ${money(t.value_exit, cur)}` : ""}>${ret(t.return_pct)}</td>
-          <td dir="ltr" class=${cls(t.annual_pct)}>${ret(t.annual_pct)}</td>
+          <td dir="ltr" class=${cls(t.annual_pct)}>${ret(t.annual_pct)}</td>` : null}
         </tr>`)}
       </tbody>
     </table></div>
@@ -233,7 +263,7 @@ function BasketChart({ data, themeKey, hl }) {
     if (!ref.current) return;
     const { data: traces, layout } = basketFigure({ basket: data.basket, buys: data.buys, sells: data.sells,
       stages: data.stages, useFx: useFx && data.has_fx, highlight });
-    window.Plotly.react(ref.current, traces, layout, PLOT_CONFIG);
+    window.Plotly.react(ref.current, traces, layout, ZOOM_CONFIG);
   }, [data, useFx, highlight, themeKey]);
   useEffect(() => {
     const gd = ref.current;
@@ -250,7 +280,7 @@ function BasketChart({ data, themeKey, hl }) {
     </div>
     <p class="muted small">צירוף לינארי של מחירי הנכסים בכל שלב, עם המשקלים כשברים:
       ${formula.map((x) => html`<span class="formula-item">${data.stages.length > 1 ? `${x.name}: ` : ""}<bdi dir="ltr" class="formula">${x.f}</bdi></span>`)}.
-      נכס ממונף מוצג כסדרה הממונפת שבאמת נקנתה. נקודות אדומות: תאריכי קנייה${data.sells.dates.length ? ", מעוינים כתומים: מכירות" : ""}. ריחוף על שורה ביומן מסמן אותה בגרף, וגרירה על הגרף מגדילה טווח (לחיצה כפולה מחזירה).</p>
+      נכס ממונף מוצג כסדרה הממונפת שבאמת נקנתה. נקודות אדומות: תאריכי קנייה${data.sells.dates.length ? ", מעוינים כתומים: מכירות" : ""}. ריחוף על שורה ביומן מסמן אותה בגרף. הגדלה: גלגלת העכבר, גרירה על הגרף או כפתורי הפלוס והמינוס בפינה. לחיצה כפולה מחזירה את התצוגה.</p>
     <div ref=${ref} class="plot plot-basket"></div>
   </section>`;
 }

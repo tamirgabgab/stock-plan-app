@@ -5,7 +5,11 @@ import os
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-CACHE_DIR = Path(os.environ.get("STOCKPLAN_CACHE_DIR", ROOT_DIR / "data_cache"))
+
+# Hosted on Vercel (the platform sets VERCEL=1): only /tmp is writable there.
+ON_VERCEL = bool(os.environ.get("VERCEL"))
+CACHE_DIR = Path(os.environ.get("STOCKPLAN_CACHE_DIR",
+                                "/tmp/stockplan-cache" if ON_VERCEL else ROOT_DIR / "data_cache"))
 
 # Price data younger than this is considered fresh and is not re-fetched.
 CACHE_TTL_HOURS = float(os.environ.get("STOCKPLAN_CACHE_TTL_HOURS", "12"))

@@ -330,11 +330,16 @@ input:disabled { background: var(--surface-2); }
 
 .table-wrap { overflow-x: auto; }
 table.data { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
-table.data th { text-align: start; font-weight: 500; color: var(--text-secondary); border-bottom: 1px solid var(--border); white-space: nowrap; }
+/* Headers and cells share one physical alignment: numeric cells are dir="ltr", so "start"
+   would put them on the left while the (rtl) headers sit on the right. */
+table.data th { text-align: right; font-weight: 500; color: var(--text-secondary); border-bottom: 1px solid var(--border); white-space: nowrap; }
 table.data th button { font: inherit; color: inherit; background: none; border: 0; padding: 6px 8px; cursor: pointer; }
-table.data td { padding: 5px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; text-align: start; }
+table.data td { padding: 5px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; text-align: right; }
 table.data tbody tr { cursor: pointer; }
-.results { padding-bottom: 64px; }
+.results-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.results-bar .field { flex-direction: row; align-items: center; gap: 8px; }
+.date-pick { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+.date-pick input[type="date"] { width: auto; }
 table.data tbody tr:hover, table.data tbody tr.active { background: var(--surface-2); }
 table.data tbody tr.pinned { box-shadow: inset -3px 0 0 var(--series-7); }
 .pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 8px; font-size: 12px; }
@@ -577,17 +582,7 @@ body.modal-open { overflow: hidden; }
   .modal-head { flex-direction: column; }
 }
 
-/* ------------------------------------------------------------ pinned bar */
-.pin-bar {
-  position: fixed; z-index: 70; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; gap: 12px; align-items: center;
-  padding: 8px 10px 8px 14px; background: var(--surface-1); border: 1px solid var(--accent); border-radius: 999px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18); font-size: 13px; max-width: calc(100vw - 32px); flex-wrap: wrap; justify-content: center;
-}
-table.data tbody tr { cursor: pointer; }
-.results { padding-bottom: 64px; }
 .segmented button:disabled { cursor: not-allowed; }
-@media (max-width: 640px) { .pin-bar { border-radius: 14px; bottom: 8px; gap: 6px 10px; } }
-
 /* ------------------------------------------------ apartment vs. capital market */
 .pswatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-inline-end: 6px; vertical-align: -1px; flex: none; }
 .kind-tag { font-size: 11px; color: var(--text-secondary); background: var(--surface-2); border-radius: 99px; padding: 1px 7px; flex: none; }
@@ -645,3 +640,8 @@ table.data.compact td, table.data.compact th { padding: 4px 8px; }
 .yearly { margin-top: 8px; }
 .yearly > summary { cursor: pointer; font-size: 13px; color: var(--accent); }
 .btn.link.apply { margin-inline-start: 8px; }
+
+/* Plotly's mode bar (zoom buttons) on the charts that allow zooming. */
+.js-plotly-plot .modebar { direction: ltr; }
+.js-plotly-plot .modebar-btn path { fill: var(--text-muted) !important; }
+.js-plotly-plot .modebar-btn.active path, .js-plotly-plot .modebar-btn:hover path { fill: var(--text-primary) !important; }

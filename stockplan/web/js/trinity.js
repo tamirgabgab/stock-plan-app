@@ -20,7 +20,7 @@ export function newWithdrawStage(n) {
   return {
     id: newId(), name: `שלב ${n}`, months: 360, rate: 4, amount: 4000, rate_unit: "pct", basis: "initial",
     floor: 0, ceiling: 0, guard_unit: "pct", one_time: 0, one_time_unit: "money",
-    holdings: [{ ticker: "^SP500TR", name: "S&P 500 Total Return", weight: 100, leverage: 1 }],
+    holdings: [{ ticker: "^GSPC", name: "S&P 500", weight: 100, leverage: 1 }],
   };
 }
 

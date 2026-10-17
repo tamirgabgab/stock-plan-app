@@ -13,8 +13,13 @@ date, and every realization in a table. Hover any of them to see that path.
 
 ## Quick start
 
+**In the browser, nothing to install:**
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/tamirgabgab/stock-plan-app?quickstart=1)
+— the link opens (or resumes) your codespace, updates it to the latest `main`, starts the
+app and opens it in a new tab. Locally:
+
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-local.txt
 python run.py            # opens http://127.0.0.1:8000 in your browser
 ```
 
@@ -50,12 +55,18 @@ the UI — it is not real market history).
   fixed monthly withdrawal, the maximum withdrawal rate (of the start amount or of
   the balance) or the minimum starting amount. Success-rate heat map (withdrawal
   rate × horizon, survival or capital preservation), click a cell to load it.
-- **Realization detail** – click any start date in the table (or use the floating
-  bar of the pinned path): the account value against the same plan at a fixed annual
-  return p (same deposits or withdrawals, fees and tax), and the full trade journal: every buy and sell with date, price (and the USD
-  quote in ILS mode), amount, units, tax, and each purchase's return to exit, total and
-  annualized. Next to it, the weighted basket of raw prices (weights as fractions, per
-  stage; optionally times the USD/ILS rate) with the buy dates marked in red.
+- **Gross or net** – one switch shows the whole accumulation tab either as the market
+  value of the holdings (gross, the default) or after the tax of selling everything (net).
+- **Plan-year cohorts** – for every realization, the annual return (IRR) of each plan
+  year's 12 deposits held to the end; the table shows the best and the worst year.
+- **Realization detail** – click any start date in the table, or pick a date next to the
+  outcome-by-start-date chart: the account value against the same plan at a fixed annual
+  return p (same deposits or withdrawals, fees and tax), and the full trade journal: every
+  buy and sell with date, price (and the USD quote in ILS mode), amount, the account value
+  and the fixed-return comparison at that month, tax, and each purchase's return to exit,
+  total and annualized. Next to it, the weighted basket of raw prices (weights as
+  fractions, per stage; optionally times the USD/ILS rate) with the buy dates marked in
+  red; both charts zoom with the wheel or a drag.
 - **Pleasant to use** – resizable settings panel (charts follow its width), calendar date picker plus a
   timeline range slider for the test window, a name ↔ ticker picker (built-in
   dictionary with Hebrew aliases, Yahoo search for the rest), a one-click
@@ -65,7 +76,6 @@ the UI — it is not real market history).
   missing parameter where one exists and the numerical solver where it does not, plus
   the same equations with the current plan's numbers plugged in, and a live chart
   of the Illinois solver's steps on the current plan.
-
 - **Apartment vs. capital market tab** – a deterministic month-by-month comparison with
   fixed parameters (no market history). One person (equity + a monthly budget, optionally
   CPI-indexed) and any number of scenarios: market portfolios (return, deposit fee,
@@ -81,11 +91,38 @@ the UI — it is not real market history).
   at which two chosen scenarios are equivalent on a metric. The general equations and each
   scenario's equation with its numbers plugged in are shown in the tab.
 
+## GitHub Codespaces
+
+`.devcontainer/` sets up a codespace: dependencies are installed when it is created, and
+every time it is opened `.devcontainer/start.sh` fast-forwards to the latest `main`,
+restarts the app on port 8000 and the port opens in a browser tab. The link
+`https://codespaces.new/tamirgabgab/stock-plan-app?quickstart=1` resumes an existing
+codespace instead of creating a new one. Codespaces stop after 30 idle minutes; the
+personal free quota is 120 core-hours a month (60 hours on the default 2-core machine).
+
+## Hosting (Vercel, paused)
+
+Automatic Vercel deployments are switched off (`"git": {"deploymentEnabled": false}` in
+`vercel.json`); the setup is kept for reference and can be re-enabled there.
+
+- `api/index.py` exposes the FastAPI app; `vercel.json` routes every path to it.
+- Dependencies come from the `[project]` table in `pyproject.toml` (kept in step with
+  `requirements.txt`). pyarrow is left out to fit the function size limit, so the cache
+  falls back to pickle files; `requirements-local.txt` adds pyarrow for local installs.
+- The cache lives in `/tmp` and is per instance, so a cold start downloads data again.
+- Yahoo is probed once per instance; if it does not answer the app switches to demo data
+  and the banner says so (`STOCKPLAN_DEMO_FALLBACK`, on by default when `VERCEL` is set).
+- A data source that fails (timeout, blocked host) is skipped for an hour instead of being
+  retried on every request. `/api/status` lists each source tried by the instance, with
+  timing and errors; API responses carry a `Server-Timing` header.
+- Responses are capped at 4.5 MB, so the hosted app allows fewer realizations × months
+  (monthly sampling works; daily sampling over long histories needs the local app).
+
 ## Data sources
 
 | Data | Source | Notes |
 |---|---|---|
-| Prices | Yahoo Finance (`yfinance`) | Dividend-adjusted closes, cached as Parquet in `data_cache/`, refreshed incrementally |
+| Prices | Yahoo Finance (`yfinance`) | Dividend-adjusted closes, cached in `data_cache/` (Parquet, or pickle without pyarrow), refreshed incrementally |
 | USD/ILS | Bank of Israel, Yahoo `ILS=X`, FRED monthly | First available source wins; FRED extends older history |
 | US CPI | FRED `CPIAUCSL` | |
 | Israel CPI | CBS API, FRED `ISRCPIALLMINMEI` | |
@@ -97,6 +134,7 @@ Put a CSV with columns `date,value` in `data_cache/manual/` (`fx_usd_ils.csv`,
 
 ```
 run.py                 # launcher (FastAPI + browser)
+api/index.py           # Vercel entry point (vercel.json routes everything here)
 stockplan/
   data/                # market data providers + disk cache (Yahoo, demo)
   engine/              # pure numpy simulation engine and solvers

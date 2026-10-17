@@ -294,3 +294,39 @@ def test_trace_illinois_matches_the_vectorized_solver():
     assert tr["converged"] and tr["x"] == pytest.approx(vec[0], rel=1e-6)
     assert [s["phase"] for s in tr["steps"][:2]] == ["start", "expand"]
     assert trace_illinois(f, -100.0, 4.0)["x"] == 0.0        # target already reached at 0
+
+
+# ----------------------------------------------------------------- gross and cohorts
+
+def test_gross_is_before_the_final_tax_and_net_after():
+    data = FakeData({"A": step_series({"2000-06-01": 2.0})})
+    res = one([Stage(months=12, holdings=[Holding("A", 100)])], data, start_amount=1000, tax_rate=25)
+    assert res.final_gross[0] == pytest.approx(2000)
+    assert res.final[0] == pytest.approx(2000 - 0.25 * 1000)
+    assert res.paths_gross[0, -1] == pytest.approx(2000) and res.irr_gross[0] > res.irr[0]
+
+
+def test_plan_year_cohorts_add_up_to_the_gross_final():
+    # Two stages, two assets, fees and a tax-free switch: the closed-form lot growth must agree
+    # with the simulator, and the yearly cohorts must partition the gross final value.
+    from stockplan.engine.market import prepare_market
+    from stockplan.engine.simulate import cohort_values, simulate
+    data = FakeData({"A": exp_series(0.10), "B": step_series({"2001-03-01": 1.5, "2002-02-01": 0.8})})
+    stages = [Stage(months=18, monthly_deposit=100, holdings=[Holding("A", 70), Holding("B", 30)]),
+              Stage(months=18, monthly_deposit=50, holdings=[Holding("B", 100)])]
+    req = plan(stages, start_amount=500, annual_fee=1.0)
+    market = prepare_market(req, data)
+    out = simulate(req, market, record=True)
+    cohorts = cohort_values(req, market, out.deposits, 3)
+    assert cohorts.shape == (1, 3)
+    assert cohorts.sum() == pytest.approx(out.final_gross[0], rel=1e-9)
+
+
+def test_cohort_irr_of_a_fixed_return_asset():
+    # Every year's deposits grow at exactly 10% a year, so each cohort's IRR is 10% gross,
+    # and less than that net of a 25% tax on its gain.
+    data = FakeData({"A": exp_series(0.10)})
+    res = one([Stage(months=36, monthly_deposit=100, holdings=[Holding("A", 100)])], data, tax_rate=25)
+    assert res.year_irr_gross.shape == (1, 3)
+    assert np.allclose(res.year_irr_gross[0], 10.0, atol=0.05)
+    assert (res.year_irr_net[0] < res.year_irr_gross[0]).all()

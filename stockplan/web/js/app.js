@@ -1,7 +1,9 @@
 // App shell: state, persistence, API calls and layout.
 import { html, render, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
+import { postJSON } from "./api.js";
 import { InputsPanel, newId, newStage, toPayload } from "./inputs.js";
 import { MathPage } from "./math.js";
+import { PropertyInputs, PropertyResults, defaultPropertyPlan, usePropertyRunner } from "./property.js";
 import { ACCUMULATION_LABELS, Results } from "./results.js";
 import { columnStats, decodeMatrix } from "./stats.js";
 import { DEFAULT_HEAT, DEFAULT_TPLAN, TrinityInputs, TrinityResults, newWithdrawStage, prepareTrinityResult } from "./trinity.js";
@@ -50,22 +52,11 @@ function loadPlan(hashKey, storageKey, defaults) {
 function initialView() {
   if (location.hash === "#math") return "math";
   if (location.hash.startsWith("#trinity")) return "trinity";
+  if (location.hash.startsWith("#property")) return "property";
   return "plan";
 }
 
 const withIds = (p) => ({ ...p, stages: p.stages.map((s) => ({ ...s, id: s.id || newId() })) });
-
-async function postJSON(url, body, signal) {
-  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
-                               body: JSON.stringify(body), signal });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    let msg = data.detail;
-    if (Array.isArray(msg)) msg = msg.map((d) => `${(d.loc || []).slice(1).join(".")}: ${d.msg}`).join("; ");
-    throw new Error(msg || `שגיאה ${r.status}`);
-  }
-  return data;
-}
 
 // Both views of the result are prepared once: gross (market value of the holdings) and net
 // (after the tax of selling everything). ``withMode`` in results.js picks one.
@@ -162,15 +153,16 @@ function App() {
   const [themeKey, setThemeKey] = useState(0);
   const [view, setViewRaw] = useState(initialView);
   const prevView = useRef(initialView() === "trinity" ? "trinity" : "plan");   // which tab the math page explains first
-  const setView = (v) => { if (v !== "math") prevView.current = v; setViewRaw(v); };
+  const setView = (v) => { if (v !== "math" && v !== "property") prevView.current = v; setViewRaw(v); };
   const [panelW, setPanelW] = useState(() => { try { return Number(localStorage.getItem(PANEL_KEY)) || PANEL_DEFAULT; } catch { return PANEL_DEFAULT; } });
   useEffect(() => { try { localStorage.setItem(PANEL_KEY, String(panelW)); } catch { /* ignore */ } }, [panelW]);
   const [heat, setHeat] = useState(DEFAULT_HEAT);
   const acc = usePlanRunner({ storageKey: STORAGE_KEY, hashKey: "plan", defaults: DEFAULT_PLAN, api: "/api",
-                              prepare: prepareResult, auto, enabled: view !== "trinity" });
+                              prepare: prepareResult, auto, enabled: view === "plan" || view === "math" });
   const tri = usePlanRunner({ storageKey: TSTORAGE_KEY, hashKey: "trinity", defaults: DEFAULT_TPLAN, api: "/api/trinity",
                               prepare: prepareTrinityResult, auto, enabled: view === "trinity" });
-  const cur = view === "trinity" ? tri : acc;
+  const prop = usePropertyRunner({ auto, enabled: view === "property" });
+  const cur = view === "trinity" ? tri : view === "property" ? prop : acc;
   const { plan, setPlan, range, rangeError, res, error, busy, ui, setUi, run } = cur;
 
   useEffect(() => { fetch("/api/meta").then((r) => r.json()).then(setMeta).catch(() => {}); }, []);
@@ -190,14 +182,17 @@ function App() {
 
   const share = async () => {
     const { id, ...rest } = plan;
-    const enc = btoa(unescape(encodeURIComponent(JSON.stringify(toPayload(rest)))));
-    const url = `${location.origin}${location.pathname}#${view === "trinity" ? "trinity" : "plan"}=${enc}`;
+    const body = view === "property" ? plan : toPayload(rest);
+    const enc = btoa(unescape(encodeURIComponent(JSON.stringify(body))));
+    const key = view === "trinity" ? "trinity" : view === "property" ? "property" : "plan";
+    const url = `${location.origin}${location.pathname}#${key}=${enc}`;
     history.replaceState(null, "", url);
     try { await navigator.clipboard.writeText(url); alert("הקישור הועתק"); } catch { prompt("העתק את הקישור:", url); }
   };
   const reset = () => {
     if (!confirm("לאפס את כל ההגדרות של הלשונית הזו?")) return;
     if (view === "trinity") setPlan({ ...DEFAULT_TPLAN, stages: [newWithdrawStage(1)] });
+    else if (view === "property") setPlan(defaultPropertyPlan());
     else setPlan({ ...DEFAULT_PLAN, stages: [newStage(1)] });
   };
   const nextTheme = { auto: "light", light: "dark", dark: "auto" }[theme];
@@ -212,6 +207,8 @@ function App() {
           onClick=${() => setView("plan")}>צבירה</button>
         <button class=${"tab" + (view === "trinity" ? " on" : "")} aria-current=${view === "trinity" ? "page" : null}
           onClick=${() => setView("trinity")}>טריניטי (משיכות)</button>
+        <button class=${"tab" + (view === "property" ? " on" : "")} aria-current=${view === "property" ? "page" : null}
+          onClick=${() => setView("property")}>דירה נגד שוק ההון</button>
         <button class=${"tab" + (view === "math" ? " on" : "")} aria-current=${view === "math" ? "page" : null}
           onClick=${() => setView("math")}>הסבר מתמטי</button>
       </nav>
@@ -229,6 +226,7 @@ function App() {
     <main class="layout" style=${`--panel-w:${panelW}px`}>
       ${view === "trinity"
         ? html`<${TrinityInputs} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} />`
+        : view === "property" ? html`<${PropertyInputs} plan=${plan} setPlan=${setPlan} res=${res} />`
         : html`<${InputsPanel} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} />`}
       <${PanelResizer} width=${panelW} setWidth=${setPanelW} />
       <div class=${"main" + (busy ? " is-busy" : "")}>
@@ -236,6 +234,9 @@ function App() {
         ${busy ? html`<div class="busy" role="status"><span class="spinner"></span>מחשב...</div>` : null}
         ${view === "math" ? html`<${MathPage} plan=${acc.plan} res=${acc.res} tplan=${tri.plan} tres=${tri.res}
                                       initial=${prevView.current === "trinity" ? "withdrawals" : "deposits"} />`
+          : view === "property"
+            ? (res ? html`<${PropertyResults} res=${res} plan=${plan} setPlan=${setPlan} themeKey=${themeKey} stale=${prop.stale} />`
+                   : !error ? html`<div class="empty">${busy ? "מחשב..." : "הגדר תרחישים כדי לראות תוצאות"}</div>` : null)
           : view === "trinity"
             ? (res ? html`<${TrinityResults} key=${res.id} res=${res} ui=${ui} setUi=${setUi} themeKey=${themeKey}
                         plan=${plan} setPlan=${setPlan} payload=${toPayload(plan)} heat=${heat} setHeat=${setHeat} />`

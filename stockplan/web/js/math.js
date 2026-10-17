@@ -9,7 +9,7 @@ import { Segmented } from "./ui.js";
 
 const S = String.raw;
 
-function Tex({ tex, display }) {
+export function Tex({ tex, display }) {
   const ref = useRef(null);
   useEffect(() => {
     if (!ref.current) return;

@@ -15,6 +15,11 @@
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-7: #6250d6;
+  --series-3: #168f7c;
+  --series-4: #c2412f;
+  --series-5: #2f8f3a;
+  --series-6: #b07d10;
+  --series-8: #c4429b;
   --rep-lo: #c2412f;
   --rep-mid: #168f7c;
   --rep-hi: #2f8f3a;
@@ -45,6 +50,11 @@
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-7: #9085e9;
+    --series-3: #3fc2ad;
+    --series-4: #ef7a68;
+    --series-5: #6cc474;
+    --series-6: #e2b440;
+    --series-8: #e47cc4;
     --rep-lo: #ef7a68;
     --rep-mid: #3fc2ad;
     --rep-hi: #6cc474;
@@ -73,6 +83,11 @@
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-7: #9085e9;
+  --series-3: #3fc2ad;
+  --series-4: #ef7a68;
+  --series-5: #6cc474;
+  --series-6: #e2b440;
+  --series-8: #e47cc4;
   --rep-lo: #ef7a68;
   --rep-mid: #3fc2ad;
   --rep-hi: #6cc474;
@@ -568,6 +583,64 @@ body.modal-open { overflow: hidden; }
 }
 
 .segmented button:disabled { cursor: not-allowed; }
+/* ------------------------------------------------ apartment vs. capital market */
+.pswatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-inline-end: 6px; vertical-align: -1px; flex: none; }
+.kind-tag { font-size: 11px; color: var(--text-secondary); background: var(--surface-2); border-radius: 99px; padding: 1px 7px; flex: none; }
+.stage-card.scenario.is-hidden { opacity: 0.6; }
+.stage-card.scenario .stage-name { flex: 1; min-width: 0; }
+details.sub { border-top: 1px solid var(--grid); padding-top: 6px; display: flex; flex-direction: column; gap: 8px; }
+details.sub > summary { cursor: pointer; font-size: 13px; font-weight: 500; color: var(--text-secondary); list-style: none; display: flex; gap: 6px; align-items: center; }
+details.sub > summary::-webkit-details-marker { display: none; }
+details.sub > summary::before { content: "▾"; color: var(--text-muted); font-size: 11px; }
+details.sub:not([open]) > summary::before { content: "◂"; }
+details.sub[open] > summary { margin-bottom: 6px; }
+details.sub > * + * { margin-top: 6px; }
+.tracks { display: flex; flex-direction: column; gap: 6px; }
+.track { border: 1px solid var(--border); border-radius: 10px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.track .stage-name { flex: 1; min-width: 0; }
+.track-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.track-grid .mini-field input { min-width: 0; }
+.track-opts { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.cost-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto auto; gap: 6px; align-items: center; font-size: 13px; }
+.cost-row.static { grid-template-columns: 1fr auto; padding: 4px 6px; background: var(--surface-2); border-radius: 8px; }
+.cost-row .input-wrap input { min-width: 0; width: 100%; }
+.chk { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+.brackets { display: flex; flex-direction: column; gap: 4px; }
+.bracket-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 0.8fr) auto; gap: 6px; align-items: end; font-size: 12px; }
+.bracket-row > .muted { padding-bottom: 8px; }
+.select { font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1);
+  color: var(--text-primary); max-width: 100%; }
+.mini.grow .select { flex: 1; min-width: 0; }
+.legend-values { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; margin-top: 4px; }
+.legend-values span { display: inline-flex; align-items: center; gap: 2px; }
+table.data.metrics tbody tr, table.data.compact tbody tr { cursor: default; }
+table.data.metrics tbody tr { cursor: pointer; }
+table.data.metrics td.best { font-weight: 700; color: var(--accent); }
+table.data td .sub { font-size: 11px; font-weight: 400; }
+table.data td.pos { color: #2f8f3a; }
+table.data td.neg { color: #c23434; }
+table.data.compact td, table.data.compact th { padding: 4px 8px; }
+.verdict { margin: 8px 0; padding: 8px 12px; background: var(--band); border-radius: 8px; font-size: 14px; }
+.h3 { font-size: 14px; margin: 14px 0 6px; display: flex; gap: 6px; align-items: center; }
+.cross-list { margin: 4px 0; padding-inline-start: 20px; font-size: 13px; line-height: 1.7; }
+.solve { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 2px; }
+.solve .controls { margin-top: 6px; }
+.solve .mini input[type="number"] { width: 120px; }
+.plot-scan { height: 280px; }
+.math-inline .subtabs { display: flex; gap: 6px; margin: 4px 0 8px; }
+.math-inline .subtabs button {
+  font: inherit; font-size: 13px; padding: 6px 14px; border-radius: 99px; border: 1px solid var(--border);
+  background: var(--surface-1); color: var(--text-secondary); cursor: pointer;
+}
+.math-inline .subtabs button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 500; }
+.eqs p { margin: 6px 0; line-height: 1.7; font-size: 14px; }
+.eqs h3 { font-size: 14px; margin: 14px 0 4px; }
+.eqs .note { background: var(--surface-2); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.eqs .note.warn { border-inline-start: 3px solid var(--series-2); }
+.yearly { margin-top: 8px; }
+.yearly > summary { cursor: pointer; font-size: 13px; color: var(--accent); }
+.btn.link.apply { margin-inline-start: 8px; }
+
 /* Plotly's mode bar (zoom buttons) on the charts that allow zooming. */
 .js-plotly-plot .modebar { direction: ltr; }
 .js-plotly-plot .modebar-btn path { fill: var(--text-muted) !important; }

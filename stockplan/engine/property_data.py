@@ -14,7 +14,7 @@ The start dates are those for which every chosen series covers the whole horizon
 """
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -33,15 +33,13 @@ SERIES_LABELS = {
 }
 
 
-def _portfolios(req: PropertyRequest) -> Dict[str, list]:
+def _portfolios(scenarios: List[dict]) -> Dict[str, list]:
     out: Dict[str, list] = {}
-    for sc in req.scenarios:
-        params = [sc.market] if sc.kind == "market" else [sc.side]
-        for p in params:
-            hs = [h for h in p.holdings if h.weight > 0]
-            if not hs:
-                raise ValueError(f"{sc.name or 'תרחיש'}: אין נכסים בתיק")
-            out[holdings_key(hs)] = hs
+    for sc in scenarios:
+        hs = [h for h in sc["market"]["holdings"] if h["weight"] > 0]
+        if not hs:
+            raise ValueError(f"{sc['name'] or 'תרחיש'}: אין נכסים בתיק")
+        out[holdings_key(hs)] = hs
     return out
 
 
@@ -56,7 +54,8 @@ def _monthly_values(s: pd.Series, months: np.ndarray) -> np.ndarray:
     return s.reindex(flat).to_numpy(dtype=float).reshape(months.shape)
 
 
-def build_paths(req: PropertyRequest, md) -> Paths:
+def build_paths(req: PropertyRequest, md, scenarios: Optional[List[dict]] = None) -> Paths:
+    """The paths of ``scenarios`` (dumped scenario dicts; default: all of the request's)."""
     c = req.common
     T = months_of(c.years)
     if c.mode != "history":
@@ -85,11 +84,13 @@ def build_paths(req: PropertyRequest, md) -> Paths:
 
     raw: Dict[str, pd.Series] = {}
     fx = None
-    ports = _portfolios(req) if flags.market else {}
+    if scenarios is None:
+        scenarios = req.model_dump()["scenarios"]
+    ports = _portfolios(scenarios) if flags.market else {}
     if ports:
         for hs in ports.values():
             for h in hs:
-                t = h.ticker.strip().upper()
+                t = h["ticker"].strip().upper()
                 if t not in raw:
                     raw[t] = md.prices(t).dropna()
                     ranges[t] = (raw[t].index[0], raw[t].index[-1])
@@ -132,19 +133,19 @@ def build_paths(req: PropertyRequest, md) -> Paths:
         day_idx = np.clip((grid - np.datetime64(cal[0].date(), "D")).astype(np.int64), 0, len(cal) - 1)
         cache: Dict[tuple, np.ndarray] = {}
         for key, hs in ports.items():
-            total = sum(h.weight for h in hs)
+            total = sum(h["weight"] for h in hs)
             g = np.zeros((R, T + 1))
             for h in hs:
-                k = (h.ticker.strip().upper(), h.leverage)
+                k = (h["ticker"].strip().upper(), h["leverage"])
                 if k not in cache:
-                    s = apply_leverage(raw[k[0]], h.leverage, c.leverage_cost)
+                    s = apply_leverage(raw[k[0]], h["leverage"], c.leverage_cost)
                     p = s.reindex(s.index.union(cal)).ffill().reindex(cal).to_numpy() * fx_d
                     at = p[day_idx]
                     ratio = np.ones((R, T + 1))
                     with np.errstate(all="ignore"):
                         ratio[:, 1:] = at[:, 1:] / at[:, :-1]
                     cache[k] = np.nan_to_num(ratio, nan=1.0, posinf=1.0)
-                g += h.weight / total * cache[k]
+                g += h["weight"] / total * cache[k]
             g[:, 0] = 1.0
             paths.growth[key] = g
 

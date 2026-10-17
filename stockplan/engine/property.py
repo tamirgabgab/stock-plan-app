@@ -1,10 +1,18 @@
-"""Apartment vs. capital market: a month-by-month model on fixed parameters or on history.
+"""Apartment and capital market: a month-by-month model on fixed parameters or on history.
 
 Every scenario starts from the same person: an equity ``E0`` at month 0 and a monthly budget
-``B_m`` for months 1..T. A *market* scenario invests both. An *apartment* scenario buys the
-apartment at month 0 (down payment, purchase tax and one-time costs come out of the equity),
-pays the mortgage tracks and the running costs from the budget, receives the rent, and puts
-whatever is left over (or takes what is missing) in a *side account* invested in the market.
+``B_m`` for months 1..T, and splits the equity: ``alloc`` percent goes to an apartment and the
+rest to a market account. With ``alloc = 0`` the scenario is market only: the account gets the
+whole equity and the budget. Otherwise the apartment is bought at month 0 (purchase tax and
+one-time costs come out of the apartment's share, the rest of that share is the down payment
+and the rest of the price is the mortgage); the mortgage tracks and the running costs are paid
+from the budget, the rent comes in, and whatever is left over (or missing) goes to the market
+account (the *side account*).
+
+``check_common`` and ``check_scenario`` reject inputs that cannot happen (the apartment's share
+does not cover the purchase tax and costs, or is more than the apartment costs, a mortgage mix
+that does not add up to 100%, a budget that does not cover the first month...) and warn about
+unlikely ones.
 
 The value of a scenario at month t is its **net worth on realization**: everything sold at t,
 after selling costs, early-repayment fees, capital-gains tax (side account / portfolio) and
@@ -40,8 +48,9 @@ Conventions (all rates are annual, in percent, as entered):
 from __future__ import annotations
 
 import copy
+import math
 from dataclasses import dataclass, field
-from typing import Annotated, Dict, List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -114,20 +123,20 @@ class Cost(BaseModel):
     deductible: bool = True                          # recognised expense for mas shevach
 
 
-class MarketScenario(BaseModel):
-    kind: Literal["market"] = "market"
+class Scenario(BaseModel):
+    """One way to split the person's money between an apartment and the market.
+
+    ``alloc`` percent of the equity goes to the apartment: it pays the purchase tax and the
+    one-time costs, and the rest is the equity in the apartment (the down payment). The rest
+    of the price is the mortgage. The other ``100 - alloc`` percent starts the market account,
+    which also receives the monthly surplus. With ``alloc = 0`` there is no apartment and the
+    apartment fields are ignored.
+    """
     id: str = ""
     name: str = ""
-    market: MarketParams = Field(default_factory=MarketParams)
-
-
-class ApartmentScenario(BaseModel):
-    kind: Literal["apartment"] = "apartment"
-    id: str = ""
-    name: str = ""
-    price: float = Field(gt=0)
+    alloc: float = Field(100.0, ge=0, le=100)        # percent of the equity put into the apartment
+    price: float = Field(2_000_000.0, gt=0)
     status: Literal["single", "additional"] = "single"
-    ltv: float = Field(70.0, ge=0, le=100)
     tracks: List[Track] = Field(default_factory=list)
     costs: List[Cost] = Field(default_factory=list)
     usage: Literal["rent", "live"] = "rent"
@@ -143,10 +152,7 @@ class ApartmentScenario(BaseModel):
     selling_cost_pct: float = Field(2.36, ge=0, le=50)
     prepay_fee_pct: float = Field(0.0, ge=0, le=50)
     debt_rate: float = Field(6.0, ge=0, le=100)
-    side: MarketParams = Field(default_factory=MarketParams)
-
-
-Scenario = Annotated[Union[MarketScenario, ApartmentScenario], Field(discriminator="kind")]
+    market: MarketParams = Field(default_factory=MarketParams)
 
 
 class HistoryFlags(BaseModel):
@@ -358,7 +364,8 @@ def simulate(sc: dict, c: dict, taxes: dict, paths: Paths, shape=None, full: boo
         base = paths.rate[:, m - 1] if paths.rate is not None else (schedule_at(c["rate_path"], (m - 1) / 12) or 0.0)
         return base + np.asarray(c["rate_shift"])
 
-    apartment = sc["kind"] == "apartment"
+    alloc = np.asarray(sc["alloc"], dtype=float)
+    apartment = bool(np.any(alloc > 0))
     pays_rent = not apartment or sc["usage"] == "rent"
     bc = lambda v: np.broadcast_to(np.asarray(v, dtype=float), S)
     rec: Dict[str, list] = {}
@@ -373,13 +380,15 @@ def simulate(sc: dict, c: dict, taxes: dict, paths: Paths, shape=None, full: boo
     summary: dict = {}
 
     if not apartment:
-        acc = Account(sc["market"], paths, C, S)
+        acc = Account(sc["market"], paths, C, S, debt_rate=sc["debt_rate"])
         acc.flow(c["equity"], 0)
         for m in range(T + 1):
             if m:
                 acc.grow(m)
                 b, h = budget(m), housing(m)
                 acc.flow(b - h, m)
+                if m == 1:
+                    out_first = bc(b - h)
                 if full:
                     put("budget_f", b), put("housing", h), put("invested", b - h)
             elif full:
@@ -390,6 +399,8 @@ def simulate(sc: dict, c: dict, taxes: dict, paths: Paths, shape=None, full: boo
             if full:
                 put("portfolio", acc.V), put("portfolio_tax", acc.tax_due(m)), put("debt", acc.D)
         out = _stack(rec)
+        out["feasible"] = np.ones(S, dtype=bool)
+        out["first_short"] = out_first < -0.5
         if full:
             out["parts"] = {k: out.pop(k) for k in ("portfolio", "portfolio_tax", "debt")}
             out["flows"] = {"budget": out.pop("budget_f"), "housing": out.pop("housing"), "invested": out.pop("invested")}
@@ -397,25 +408,32 @@ def simulate(sc: dict, c: dict, taxes: dict, paths: Paths, shape=None, full: boo
             if np.any(neg):
                 warnings.append(_rows("שכר הדירה גבוה מהתקציב החודשי, ונוצר חוב בתיק", neg, acc.first_debt))
             summary = {"start_invested": np.asarray(c["equity"]) * (1 - acc.delta), "q": acc.r * acc.fee,
-                       "tax_paid": acc.tax_paid}
+                       "tax_paid": acc.tax_paid, "first_flow": out_first}
         out["summary"], out["warnings"] = summary, warnings
         return out
 
     P0 = np.asarray(sc["price"], dtype=float)
-    loan = P0 * np.asarray(sc["ltv"]) / 100
+    brackets = taxes["purchase_single"] if sc["status"] == "single" else taxes["purchase_additional"]
+    ptax = bracket_tax(P0, brackets)
+    costs_total = sum(x["amount"] for x in sc["costs"])
+    deductible = ptax + sum(x["amount"] for x in sc["costs"] if x["deductible"])
+    to_home = alloc / 100 * np.asarray(c["equity"], dtype=float)    # the apartment's share of the equity
+    down = to_home - ptax - costs_total                               # equity in the apartment
+    loan = P0 - down
+    upfront = to_home
+    side_start = np.asarray(c["equity"]) - to_home
     tracks = [t for t in sc["tracks"] if float(t["share"]) > 0]
     total_share = sum(float(t["share"]) for t in tracks)
-    if np.any(loan > 0) and not tracks:
-        raise ValueError(f"{sc['name'] or 'דירה'}: יש משכנתא ({sc['ltv']}%) אבל אין מסלולים בתמהיל")
-    if tracks and abs(total_share - 100) > 0.01 and full:
-        warnings.append(f"סכום החלקים בתמהיל הוא {total_share:g}%, והוא נורמל ל-100%.")
+    # Values that cannot happen (only reachable here through the solver's trial values; the
+    # entered values are checked by check_scenario) are computed anyway and marked.
+    feasible = np.broadcast_to((alloc > 0) & (down >= -0.5) & (loan >= -0.5), S)
+    if not tracks:
+        feasible = feasible & np.broadcast_to(loan <= 0.5, S)
     tr = []
     for t in tracks:
-        L = loan * float(t["share"]) / total_share
+        L = np.maximum(loan, 0.0) * float(t["share"]) / total_share
         tr.append({"t": t, "L": L, "n": months_of(t["years"]), "bal": np.array(bc(L)), "cur": None,
                    "first": None, "first_rate": None, "interest": np.zeros(S), "paid": np.zeros(S)})
-        if t["years"] > 30 and full:
-            warnings.append(f"מסלול \"{t['name'] or 'ללא שם'}\" ארוך מ-30 שנה, התקופה המקסימלית שבנק ישראל מתיר.")
 
     def track_rate(s, m, b):
         t = s["t"]
@@ -430,14 +448,7 @@ def simulate(sc: dict, c: dict, taxes: dict, paths: Paths, shape=None, full: boo
             return (t["rate"] if v is None else v) + np.asarray(c["rate_shift"])
         return np.asarray(t["rate"], dtype=float)
 
-    brackets = taxes["purchase_single"] if sc["status"] == "single" else taxes["purchase_additional"]
-    ptax = bracket_tax(P0, brackets)
-    costs_total = sum(x["amount"] for x in sc["costs"])
-    deductible = ptax + sum(x["amount"] for x in sc["costs"] if x["deductible"])
-    down = P0 - loan
-    upfront = down + ptax + costs_total
-    side_start = np.asarray(c["equity"]) - upfront
-    acc = Account(sc["side"], paths, C, S, debt_rate=sc["debt_rate"])
+    acc = Account(sc["market"], paths, C, S, debt_rate=sc["debt_rate"])
     acc.flow(side_start, 0)
 
     a_g = (1 + np.asarray(sc["appreciation"]) / 100) ** (1 / 12)
@@ -495,6 +506,8 @@ def simulate(sc: dict, c: dict, taxes: dict, paths: Paths, shape=None, full: boo
             b_m, h_m = budget(m), housing(m)
             flow = b_m - h_m - pay - running + rent - rent_tax
             acc.flow(flow, m)
+            if m == 1:
+                first_flow = bc(flow)
             if full:
                 for k_, v in (("budget_f", b_m), ("housing", h_m), ("payment", pay), ("interest", interest),
                               ("rent", rent), ("rent_tax", rent_tax), ("running", running), ("flow", flow),
@@ -525,23 +538,17 @@ def simulate(sc: dict, c: dict, taxes: dict, paths: Paths, shape=None, full: boo
                 put(k_, v)
 
     out = _stack(rec)
+    out["feasible"] = np.array(feasible)
+    out["first_short"] = first_flow < -0.5
     if full:
         out["parts"] = {k: out.pop(k) for k in ("home", "mortgage", "side", "side_tax", "side_debt", "sale_costs",
                                                  "prepay", "shevach")}
         out["flows"] = {k: out.pop(k) for k in ("housing", "payment", "interest", "rent", "rent_tax", "running", "flow", "boi")}
         out["flows"]["budget"] = out.pop("budget_f")
-        short_start = side_start < 0
-        if np.any(short_start):
-            warnings.append(_rows(f"ההון העצמי קטן מהנדרש לרכישה; ההפרש נרשם כחוב בריבית {sc['debt_rate']:g}% לשנה",
-                                  np.broadcast_to(short_start, S)))
-        later = (acc.first_debt > 0) & ~np.broadcast_to(short_start, S)
+        later = acc.first_debt > 0
         if np.any(later):
             warnings.append(_rows(f"ההוצאות על הדירה גבוהות מהתקציב, וחשבון הצד נכנס לחוב בריבית {sc['debt_rate']:g}% לשנה",
                                   later, acc.first_debt))
-        ltv_cap = 75 if sc["status"] == "single" else 50
-        if np.any(np.asarray(sc["ltv"]) > ltv_cap + 1e-9):
-            kind = "לדירה יחידה" if sc["status"] == "single" else "לדירה נוספת"
-            warnings.append(f"אחוז המימון {float(np.max(sc['ltv'])):g}% גבוה מהמקסימום של בנק ישראל {kind} ({ltv_cap}%).")
         if c["income"] > 0 and np.any(pti_max > 0.40):
             warnings.append(f"ההחזר החודשי מגיע ל-{float(np.max(pti_max)) * 100:.0f}% מההכנסה. בנק ישראל מגביל "
                             "ל-50%, ובנקים בדרך כלל מאשרים עד כ-40%.")
@@ -550,7 +557,8 @@ def simulate(sc: dict, c: dict, taxes: dict, paths: Paths, shape=None, full: boo
             warnings.append(f"בסוף התקופה נשארת יתרת משכנתא (₪{float(np.median(end_bal)):,.0f}"
                             f"{' בחציון' if end_bal.size > 1 else ''}); היא מנוכה מהשווי.")
         summary = {
-            "loan": loan, "down_payment": down, "purchase_tax": ptax,
+            "loan": loan, "down_payment": down, "purchase_tax": ptax, "to_home": to_home,
+            "ltv": loan / P0 * 100, "equity_share": down / P0 * 100,
             "purchase_tax_rows": purchase_tax_rows(float(np.ravel(P0)[0]), brackets),
             "costs_total": costs_total, "deductible": deductible, "upfront": upfront, "side_start": side_start,
             "tracks": [{"name": s["t"]["name"], "kind": s["t"]["kind"], "loan": s["L"], "months": s["n"],
@@ -579,6 +587,177 @@ def _rows(msg: str, mask, first=None) -> str:
             return f"{msg} (מחודש {int(np.ravel(first)[0])})."
         return msg + "."
     return f"{msg}, ב-{int(mask.sum())} מתוך {mask.size} ריאליזציות."
+
+
+# ---------------------------------------------------------------------------- checks
+
+Issue = Dict[str, str]          # {"field": dotted path, "msg": Hebrew text}
+
+
+class InputError(ValueError):
+    """Inputs that cannot happen. ``errors`` lists them with the field each one belongs to."""
+
+    def __init__(self, errors: List[Issue]):
+        super().__init__(" ".join(e["msg"] for e in errors))
+        self.errors = errors
+
+
+def _ils(v) -> str:
+    return f"₪{float(v):,.0f}"
+
+
+def _issue(field: str, msg: str) -> Issue:
+    return {"field": field, "msg": msg}
+
+
+def check_common(d: dict) -> Tuple[List[Issue], List[str]]:
+    """Errors and warnings of the shared inputs (``d`` is ``PropertyRequest.model_dump()``)."""
+    c, taxes = d["common"], d["taxes"]
+    errors: List[Issue] = []
+    warnings: List[str] = []
+    if c["equity"] <= 0 and c["budget"] <= 0:
+        errors.append(_issue("common.equity", "אין הון עצמי ואין סכום חודשי להשקעה, כך שאין מה להשקיע."))
+    for key, label in (("purchase_single", "דירה יחידה"), ("purchase_additional", "דירה נוספת")):
+        rows = taxes[key]
+        tops = [b["up_to"] for b in rows if b["up_to"] is not None]
+        if sum(b["up_to"] is None for b in rows) != 1:
+            errors.append(_issue(f"taxes.{key}", f"במדרגות מס הרכישה ל{label} צריכה להיות בדיוק מדרגה עליונה אחת בלי תקרה (\"ומעלה\")."))
+        if len(set(tops)) != len(tops):
+            errors.append(_issue(f"taxes.{key}", f"במדרגות מס הרכישה ל{label} יש שתי מדרגות עם אותה תקרה."))
+    history_rate = c["mode"] == "history" and c["history"]["rate"]
+    years = [p["year"] for p in c["rate_path"]]
+    if not history_rate and len(set(years)) != len(years):
+        errors.append(_issue("common.rate_path", "בלוח ריבית בנק ישראל יש שתי שורות לאותה שנה."))
+    if c["income"] > 0 and c["budget"] > c["income"]:
+        warnings.append(f"הסכום החודשי להשקעה ({_ils(c['budget'])}) גבוה מההכנסה החודשית נטו ({_ils(c['income'])}).")
+    return errors, warnings
+
+
+def alloc_bounds(sc: dict, c: dict, taxes: dict) -> Tuple[float, float, float]:
+    """The purchase tax plus one-time costs, and the smallest and largest feasible ``alloc``
+    (percent of the equity): the apartment's share must pay the tax and the costs, and cannot
+    be more than the price plus them (that is no mortgage at all)."""
+    brackets = taxes["purchase_single"] if sc["status"] == "single" else taxes["purchase_additional"]
+    need = float(bracket_tax(float(sc["price"]), brackets)) + sum(x["amount"] for x in sc["costs"])
+    E = float(c["equity"])
+    if E <= 0:
+        return need, float("inf"), float("inf")
+    return need, need / E * 100, (sc["price"] + need) / E * 100
+
+
+def check_scenario(sc: dict, c: dict, taxes: dict) -> Tuple[List[Issue], List[str]]:
+    """Errors (with the scenario field they belong to) and warnings of one scenario."""
+    errors: List[Issue] = []
+    warnings: List[str] = []
+    hist = c["mode"] == "history"
+    H = lambda k: hist and c["history"][k]
+    mk = sc["market"]
+    if H("market"):
+        if not any(h["weight"] > 0 and h["ticker"].strip() for h in mk["holdings"]):
+            errors.append(_issue("market.holdings", "אין נכסים בתיק של שוק ההון."))
+    else:
+        if mk["annual_fee"] >= mk["annual_return"]:
+            warnings.append(f"דמי הניהול ({mk['annual_fee']:g}%) גבוהים מהתשואה ({mk['annual_return']:g}%), "
+                            "ולכן התיק מאבד מערכו כל שנה.")
+        if mk["annual_return"] > 20:
+            warnings.append(f"תשואה שנתית של {mk['annual_return']:g}% בשוק ההון גבוהה מאוד לאורך זמן.")
+    if sc["alloc"] <= 0:
+        return errors, warnings
+
+    E = float(c["equity"])
+    P = float(sc["price"])
+    to_home = sc["alloc"] / 100 * E
+    need, lo, hi = alloc_bounds(sc, c, taxes)
+    if need > E + 0.5:
+        errors.append(_issue("alloc", f"ההון העצמי ({_ils(E)}) קטן ממס הרכישה וההוצאות החד-פעמיות ({_ils(need)}). "
+                                      "הם משולמים מההון ולא מהמשכנתא, ולכן אי אפשר לקנות את הדירה הזו בלי הון נוסף."))
+        return errors, warnings
+    if to_home < need - 0.5:
+        errors.append(_issue("alloc", f"החלק לדירה ({_ils(to_home)}) לא מכסה את מס הרכישה וההוצאות החד-פעמיות "
+                                      f"({_ils(need)}). המינימום הוא {math.ceil(lo * 10) / 10:g}% מההון העצמי."))
+        return errors, warnings
+    if to_home > P + need + 0.5:
+        errors.append(_issue("alloc", f"החלק לדירה ({_ils(to_home)}) גדול מכל העלות שלה: מחיר, מס רכישה והוצאות "
+                                      f"({_ils(P + need)}). המקסימום הוא {math.floor(hi * 10) / 10:g}% מההון העצמי, "
+                                      "ואז אין משכנתא."))
+        return errors, warnings
+
+    down = to_home - need
+    loan = P - down
+    tracks = [(i, t) for i, t in enumerate(sc["tracks"]) if t["share"] > 0]
+    if loan > 0.5:
+        total = sum(t["share"] for _, t in tracks)
+        if not tracks:
+            errors.append(_issue("tracks", f"יש משכנתא של {_ils(loan)}, אבל אין מסלולים בתמהיל."))
+        elif abs(total - 100) > 0.05:
+            errors.append(_issue("tracks", f"סכום החלקים בתמהיל הוא {total:g}%, וצריך להיות 100%."))
+        cap = 25 if sc["status"] == "single" else 50
+        share = down / P * 100
+        if share < cap - 1e-9:
+            kind = "לדירה יחידה" if sc["status"] == "single" else "לדירה נוספת"
+            warnings.append(f"ההון העצמי בדירה הוא {share:.1f}% ממחירה ({_ils(down)}), פחות מ-{cap}% שבנק ישראל דורש {kind}. "
+                            f"ההלוואה ({_ils(loan)}, מימון {100 - share:.1f}%) גדולה ועלולה לגרום להחזר חודשי גבוה, "
+                            "ובנק בדרך כלל לא יאשר אותה.")
+        b0 = None if H("rate") else (schedule_at(c["rate_path"], 0) or 0.0) + c["rate_shift"]
+        for i, t in tracks:
+            name = t["name"] or f"מסלול {i + 1}"
+            if t["years"] > 30:
+                warnings.append(f"מסלול \"{name}\" ארוך מ-30 שנה, התקופה המקסימלית שבנק ישראל מתיר.")
+            if t["kind"] == "variable" and t["reset_years"] >= t["years"]:
+                warnings.append(f"מסלול \"{name}\" משתנה כל {t['reset_years']:g} שנים, לא פחות מאורכו ({t['years']:g} שנים), "
+                                "ולכן הריבית שלו לא משתנה אף פעם.")
+            if t["kind"] == "schedule":
+                ys = [p["year"] for p in t["schedule"]]
+                if len(set(ys)) != len(ys):
+                    errors.append(_issue(f"tracks.{i}.schedule", f"בלוח הריבית של מסלול \"{name}\" יש שתי שורות לאותה שנה."))
+            r0 = (b0 + c["prime_spread"] + t["margin"] if t["kind"] == "prime" else b0 + t["margin"]) \
+                if t["kind"] in ("prime", "variable") and b0 is not None else None
+            if r0 is not None and r0 < 0:
+                warnings.append(f"הריבית ההתחלתית של מסלול \"{name}\" שלילית ({r0:.2f}%), והיא נחשבת כ-0.")
+    if sc["usage"] == "rent":
+        if sc["rent"] <= 0:
+            warnings.append("הדירה מושכרת, אבל השכירות החודשית היא 0.")
+        elif sc["vacancy_months"] >= 12:
+            warnings.append("הדירה ריקה 12 חודשים בשנה, כך שאין הכנסה משכירות.")
+        elif sc["rent"] * 12 / P > 0.10:
+            warnings.append(f"תשואת שכירות ברוטו של {sc['rent'] * 12 / P * 100:.1f}% בשנה גבוהה מאוד "
+                            "(בישראל בדרך כלל 2.5%–4%).")
+    if not H("housing") and sc["appreciation"] > 15:
+        warnings.append(f"עליית ערך של {sc['appreciation']:g}% בשנה לדירה גבוהה מאוד לאורך זמן.")
+    return errors, warnings
+
+
+def check_result(sc: dict, c: dict, r: dict) -> Tuple[List[Issue], List[str]]:
+    """Checks that need the simulation: the first month's cash flow and the outputs."""
+    errors: List[Issue] = []
+    warnings: List[str] = []
+    short = np.asarray(r["first_short"])
+    med = lambda v: float(np.median(np.asarray(v)[1]))
+    if short.all():
+        f = r["flows"]
+        many = " (בחציון על תאריכי ההתחלה)" if short.size > 1 else ""
+        if "payment" in f:
+            gap = -med(f["flow"])
+            parts = f"החזר המשכנתא ({_ils(med(f['payment']))}) והוצאות הדירה ({_ils(med(f['running']))})"
+            if med(f["housing"]) > 0:
+                parts += f" ושכר הדירה ({_ils(med(f['housing']))})"
+            rent = med(f["rent"]) - med(f["rent_tax"])
+            errors.append(_issue("monthly", f"התקציב החודשי ({_ils(med(f['budget']))}) לא מכסה את החודש הראשון{many}: "
+                                            f"{parts}{f', פחות השכירות נטו ({_ils(rent)})' if rent > 0 else ''}. "
+                                            f"חסרים {_ils(gap)} בחודש. אפשר להגדיל את התקציב, לשים חלק גדול יותר "
+                                            "מההון בדירה (משכנתא קטנה יותר) או להאריך את המסלולים."))
+        else:
+            errors.append(_issue("monthly", f"התקציב החודשי ({_ils(med(f['budget']))}) קטן משכר הדירה "
+                                            f"({_ils(med(f['housing']))}){many}: חסרים {_ils(-med(f['invested']))} בחודש."))
+    elif short.any():
+        warnings.append(f"בחודש הראשון התקציב לא מכסה את ההוצאות ב-{int(short.sum())} מתוך {short.size} תאריכי "
+                        f"התחלה; ההפרש נרשם כחוב בריבית {sc['debt_rate']:g}% לשנה.")
+    net = np.asarray(r["net"])
+    if not np.all(np.isfinite(net)):
+        errors.append(_issue("", "החישוב נתן ערך לא מוגדר. בדוק שהפרמטרים בטווח סביר."))
+    elif np.median(net[-1]) < 0:
+        warnings.append(f"השווי נטו בסוף התקופה שלילי{' בחציון' if net.shape[-1] > 1 else ''}: ההתחייבויות גדולות מהנכסים.")
+    return errors, warnings
 
 
 # --------------------------------------------------------------------------- metrics
@@ -659,18 +838,44 @@ def metrics(res: dict, c: dict, paths: Paths, which=None) -> dict:
 
 
 def run_property(req: PropertyRequest, md=None) -> dict:
-    """Every scenario on the request's paths (fixed: one row; history: one row per start date)."""
+    """Every scenario on the request's paths (fixed: one row; history: one row per start date).
+
+    Shared inputs that cannot happen raise ``InputError``. A scenario whose own inputs (or first
+    month) cannot happen is not simulated: it goes to ``failed`` with its errors, and the
+    others still run.
+    """
     from .property_data import build_paths   # data loading is only needed in history mode
-    paths = build_paths(req, md)
     d = req.model_dump()
-    out = []
+    errors, warnings = check_common(d)
+    if errors:
+        raise InputError(errors)
+    c, taxes = d["common"], d["taxes"]
+    failed: List[dict] = []
+    valid = []
     for sc in d["scenarios"]:
-        r = simulate(sc, d["common"], d["taxes"], paths)
-        r["metrics"] = metrics(r, d["common"], paths)
-        r["display"] = display(r, d["common"], paths)
-        r["id"], r["name"], r["kind"] = sc["id"], sc["name"], sc["kind"]
+        errs, warns = check_scenario(sc, c, taxes)
+        if errs:
+            failed.append({"id": sc["id"], "name": sc["name"], "errors": errs})
+        else:
+            valid.append((sc, warns))
+    paths = build_paths(req, md, [sc for sc, _ in valid]) if valid else None
+    out = []
+    for sc, warns in valid:
+        r = simulate(sc, c, taxes, paths)
+        errs, more = check_result(sc, c, r)
+        if errs:
+            failed.append({"id": sc["id"], "name": sc["name"], "errors": errs})
+            continue
+        r["warnings"] = warns + r["warnings"] + more
+        r["metrics"] = metrics(r, c, paths)
+        r["display"] = display(r, c, paths)
+        r["id"], r["name"] = sc["id"], sc["name"]
+        r["kind"] = "apartment" if sc["alloc"] > 0 else "market"
         out.append(r)
-    return {"months": paths.T, "paths": paths, "scenarios": out}
+    order = {sc["id"]: i for i, sc in enumerate(d["scenarios"])}
+    failed.sort(key=lambda f: order.get(f["id"], 0))
+    return {"months": months_of(c["years"]), "paths": paths, "scenarios": out, "failed": failed,
+            "warnings": warnings}
 
 
 # Backwards-compatible single-scenario helper (fixed mode).
@@ -791,28 +996,42 @@ def solve_equal(req: PropertyRequest, a: str, b: str, metric: str, scope: str, k
         raise ValueError("בחר שני תרחישים שונים להשוואה")
     if not hi > lo:
         raise ValueError("הגבול העליון חייב להיות גדול מהתחתון")
-    paths = build_paths(req, md)
     d = req.model_dump()
     path = _param_path(d, scope, key)
     ia = next((i for i, s in enumerate(d["scenarios"]) if s["id"] == a), None)
     ib = next((i for i, s in enumerate(d["scenarios"]) if s["id"] == b), None)
     if ia is None or ib is None:
         raise ValueError("תרחיש לא קיים")
+    errors, _ = check_common(d)
+    for i in (ia, ib):
+        sc = d["scenarios"][i]
+        errors += [{**e, "msg": f"{sc['name'] or 'תרחיש'}: {e['msg']}"} for e in check_scenario(sc, d["common"], d["taxes"])[0]]
+    if errors:
+        raise InputError(errors)
+    paths = build_paths(req, md, [d["scenarios"][ia], d["scenarios"][ib]])
     touch = lambda i: scope == "common" or d["scenarios"][i]["id"] == scope
     R = paths.R
 
-    def metric_of(dd, i, shape):
+    def metric_of(dd, i, shape, rowwise=False):
+        """The metric, NaN where the trial value cannot happen: the purchase does not add up,
+        or (for a row of the statistic scan) the budget misses the first month in every
+        realization. Rows of the per-realization grid carry their own values, so there only
+        the purchase is checked, as a single run would."""
         r = simulate(dd["scenarios"][i], dd["common"], dd["taxes"], paths, shape=shape, full=False)
-        return np.asarray(metrics(r, dd["common"], paths, which=metric)[metric], dtype=float)
+        v = np.asarray(metrics(r, dd["common"], paths, which=metric)[metric], dtype=float)
+        ok = np.broadcast_to(r["feasible"], shape)
+        if not rowwise:
+            ok = ok & ~np.broadcast_to(np.all(r["first_short"], axis=-1, keepdims=True), shape)
+        return np.where(ok, v, np.nan)
 
     fixed = {i: metric_of(d, i, (R,)) for i in (ia, ib) if not touch(i)}
 
-    def both(xval):
+    def both(xval, rowwise=False):
         x = np.asarray(xval, dtype=float)
         shape = np.broadcast_shapes(x.shape, (R,))
         dd = _with(d, path, x)
-        va = metric_of(dd, ia, shape) if touch(ia) else np.broadcast_to(fixed[ia], shape)
-        vb = metric_of(dd, ib, shape) if touch(ib) else np.broadcast_to(fixed[ib], shape)
+        va = metric_of(dd, ia, shape, rowwise) if touch(ia) else np.broadcast_to(fixed[ia], shape)
+        vb = metric_of(dd, ib, shape, rowwise) if touch(ib) else np.broadcast_to(fixed[ib], shape)
         return va, vb
 
     current = d
@@ -852,7 +1071,7 @@ def solve_equal(req: PropertyRequest, a: str, b: str, metric: str, scope: str, k
         i0 = np.where(has, first, 0)
         x0, x1 = xs[i0], xs[np.minimum(i0 + 1, n_grid)]
         grid = x0[None, :] + (x1 - x0)[None, :] * np.linspace(0, 1, n_grid + 1)[:, None]   # (G+1, R)
-        ga, gb = both(grid)
+        ga, gb = both(grid, rowwise=True)
         gd = ga - gb
         gs = np.sign(gd)
         gchange = (gs[:-1] * gs[1:] <= 0) & np.isfinite(gs[:-1]) & np.isfinite(gs[1:])
@@ -871,7 +1090,7 @@ def solve_equal(req: PropertyRequest, a: str, b: str, metric: str, scope: str, k
     return out
 
 
-__all__ = ["PropertyRequest", "Common", "TaxTables", "MarketParams", "Track", "Cost", "MarketScenario",
-           "ApartmentScenario", "Bracket", "HistoryFlags", "RatePoint", "Paths", "bracket_tax", "annuity",
+__all__ = ["PropertyRequest", "Common", "TaxTables", "MarketParams", "Track", "Cost", "Scenario",
+           "InputError", "check_common", "check_scenario", "check_result", "alloc_bounds", "Bracket", "HistoryFlags", "RatePoint", "Paths", "bracket_tax", "annuity",
            "run_property", "simulate", "simulate_scenario", "solve_equal", "irr_monthly", "metrics", "display",
            "row_of", "METRICS", "STATS"]

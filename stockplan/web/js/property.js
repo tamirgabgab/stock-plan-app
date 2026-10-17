@@ -1,7 +1,8 @@
-// "Apartment vs. capital market" tab: market portfolios and apartments with a mortgage mix,
-// on fixed parameters or on history (every start date a realization), their net worth on
-// realization over time, decision metrics, pairwise break-even solving for any parameter, and
-// the equations behind every line.
+// "Apartment vs. capital market" tab: every scenario splits the same equity between an apartment
+// (with a mortgage mix) and the market, on fixed parameters or on history (every start date a
+// realization); their net worth on realization over time, decision metrics, pairwise break-even
+// solving for any parameter, the equations behind every line, and the checks that reject
+// inputs that cannot happen (marked on the field they belong to).
 import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
 import { postJSON } from "./api.js";
 import { breakdownFigure, observeResize, outcomeByStartFigure, propertyFigure, rootHistFigure, scanFigure, withNetLine,
@@ -37,7 +38,7 @@ const MARKET_DEFAULTS = () => ({ annual_return: 7, deposit_fee: 0, annual_fee: 0
                                  holdings: DEFAULT_HOLDINGS() });
 const HISTORY_ALL = { market: true, cpi: true, housing: true, rent: true, rate: true };
 const SERIES = [
-  { key: "market", label: "תשואות שוק ההון", hint: "התיק של כל תרחיש שוק ושל חשבון הצד, לפי טבלת הנכסים, בשקלים לפי שער הדולר של כל יום." },
+  { key: "market", label: "תשואות שוק ההון", hint: "התיק של שוק ההון בכל תרחיש, לפי טבלת הנכסים, בשקלים לפי שער הדולר של כל יום." },
   { key: "cpi", label: "אינפלציה (מדד המחירים)", hint: "הצמדות, תקציב צמוד, מסלולים צמודים, מס ריאלי ותצוגה ריאלית לפי המדד בפועל." },
   { key: "housing", label: "מחירי דירות", hint: "שווי הדירה לפי מדד מחירי הדירות של הלמ\"ס, במקום עליית ערך קבועה." },
   { key: "rent", label: "שכר דירה", hint: "השכירות ושכר הדירה שהאדם משלם, לפי רכיב שכר הדירה במדד, במקום קצב קבוע." },
@@ -49,21 +50,19 @@ export const newTrack = (name = "מסלול", share = 100, years = 25, rate = 5,
      schedule: [{ year: 0, rate }] });
 export const newCost = (name = "הוצאה", amount = 0, deductible = true) => ({ id: newId(), name, amount, deductible });
 
-export function newMarketScenario(name = "שוק ההון") {
-  return { id: newId(), kind: "market", name, visible: true, open: true, market: MARKET_DEFAULTS() };
-}
-
-export function newApartmentScenario(name = "דירה") {
+// One scenario: ``alloc`` percent of the equity goes to the apartment (0 = market only), the
+// rest and the monthly surplus to the market.
+export function newScenario(name = "דירה", alloc = 100) {
   return {
-    id: newId(), kind: "apartment", name, visible: true, open: true,
-    price: 2_200_000, status: "single", ltv: 70,
+    id: newId(), name, visible: true, open: true, alloc,
+    price: 2_200_000, status: "single",
     tracks: [newTrack("פריים", 33.3, 30, 5.5, false, "prime", -0.5), newTrack("קבועה לא צמודה", 33.3, 25, 5.0),
              newTrack("קבועה צמודה", 33.4, 20, 3.5, true)],
     costs: [newCost("עורך דין (0.5% + מע\"מ)", 12_980), newCost("תיווך (2% + מע\"מ)", 51_920),
             newCost("יועץ משכנתאות", 8_000, false), newCost("שיפוץ", 50_000), newCost("שמאי ופתיחת תיק", 3_000, false)],
     usage: "rent", rent: 5_500, rent_growth: 2.5, vacancy_months: 0.5, rent_tax: "exempt", marginal_rate: 31,
     appreciation: 3, maintenance_pct: 0.5, insurance: 150, other_monthly: 0,
-    selling_cost_pct: 2.36, prepay_fee_pct: 0, debt_rate: 6, side: MARKET_DEFAULTS(),
+    selling_cost_pct: 2.36, prepay_fee_pct: 0, debt_rate: 6, market: MARKET_DEFAULTS(),
   };
 }
 
@@ -75,8 +74,8 @@ const DEFAULT_COMMON = () => ({
 });
 
 export function defaultPropertyPlan() {
-  const mk = newMarketScenario("שוק ההון");
-  const ap = newApartmentScenario("דירה מושכרת");
+  const mk = newScenario("שוק ההון", 0);
+  const ap = newScenario("דירה מושכרת", 100);
   return {
     common: DEFAULT_COMMON(), taxes: DEFAULT_TAXES(), scenarios: [mk, ap],
     compare: { a: mk.id, b: ap.id, metric: "final" },
@@ -93,14 +92,27 @@ function normalize(p) {
                  solve: { ...d.solve, ...(p.solve || {}) } };
   const mkt = (x) => ({ ...MARKET_DEFAULTS(), ...(x || {}) });
   const src = Array.isArray(p.scenarios) && p.scenarios.length ? p.scenarios : d.scenarios;
-  plan.scenarios = src.map((s) => {
-    if (s.kind === "market") return { ...newMarketScenario(), ...s, id: s.id || newId(), market: mkt(s.market) };
-    const base = newApartmentScenario();
-    return { ...base, ...s, id: s.id || newId(), side: mkt(s.side),
+  plan.scenarios = src.map((s0) => {
+    const s = migrate(s0, plan.common.equity, plan.taxes);
+    const base = newScenario();
+    return { ...base, ...s, id: s.id || newId(), market: mkt(s.market),
              tracks: (s.tracks || base.tracks).map((t) => ({ ...newTrack(), schedule: [{ year: 0, rate: t.rate ?? 5 }], ...t, id: t.id || newId() })),
              costs: (s.costs || base.costs).map((c) => ({ ...newCost(), ...c, id: c.id || newId() })) };
   });
   return fixRefs(plan);
+}
+
+// Plans saved before v0.12 had two kinds: "market" (now alloc 0) and "apartment" with a
+// financing percent (ltv) and a side account; the apartment's share of the equity is what the
+// purchase took then (down payment, purchase tax and costs).
+function migrate(s, equity, taxes) {
+  if (s.alloc !== undefined) return s;
+  const { kind, ltv = 70, side, ...rest } = s;
+  if (kind === "market") return { ...rest, alloc: 0 };
+  const sc = { ...newScenario(), ...rest };
+  const { need } = purchaseOf(sc, taxes, equity);
+  const share = equity > 0 ? (sc.price * (1 - ltv / 100) + need) / equity * 100 : 100;
+  return { ...rest, alloc: Math.max(0, Math.min(100, Math.round(share * 10) / 10)), market: side };
 }
 
 function fixRefs(plan) {
@@ -132,13 +144,30 @@ export function propertyPayload(p) {
   return {
     common: p.common, taxes: p.taxes, detail_start: p.common.mode === "history" ? p.detail || null : null,
     scenarios: p.scenarios.map(({ visible, open, tracks, costs, ...s }) => ({
-      ...s,
-      ...(s.market ? { market: cleanMarket(s.market) } : {}),
-      ...(s.side ? { side: cleanMarket(s.side) } : {}),
-      ...(tracks ? { tracks: tracks.map(({ id, ...t }) => t) } : {}),
-      ...(costs ? { costs: costs.map(({ id, ...c }) => c) } : {}),
+      ...s, market: cleanMarket(s.market),
+      tracks: tracks.map(({ id, ...t }) => t), costs: costs.map(({ id, ...c }) => c),
     })),
   };
+}
+
+// Field errors keyed "common.equity", "taxes.purchase_single" or "<scenario id>:<field>", from a
+// rejected request (400 with fields, or 422 from the models) or from the scenarios that failed.
+function errorsOf(fields, payload) {
+  const out = {};
+  for (const f of fields || []) {
+    let key = f.field;
+    if (f.loc) {
+      const [head, idx, ...rest] = f.loc;
+      key = head === "scenarios" && payload.scenarios[idx] ? `${payload.scenarios[idx].id}:${rest.join(".")}` : f.loc.join(".");
+    }
+    if (key !== undefined && !(key in out)) out[key] = f.msg;
+  }
+  return out;
+}
+function failedErrors(failed) {
+  const out = {};
+  for (const f of failed || []) for (const e of f.errors) out[`${f.id}:${e.field}`] = e.msg;
+  return out;
 }
 
 export function usePropertyRunner({ auto, enabled }) {
@@ -146,6 +175,7 @@ export function usePropertyRunner({ auto, enabled }) {
   const setPlan = (fn) => setPlanRaw((p) => fixRefs(typeof fn === "function" ? fn(p) : fn));
   const [res, setRes] = useState(null);
   const [error, setError] = useState(null);
+  const [rejected, setRejected] = useState(null);
   const [busy, setBusy] = useState(false);
   const ctrl = useRef(null);
   const ranKey = useRef(null);
@@ -166,8 +196,12 @@ export function usePropertyRunner({ auto, enabled }) {
     try {
       const raw = await postJSON("/api/property/simulate", payload, c.signal);
       setRes({ raw, plan: p, key: ranKey.current, id: Math.random() });
+      setRejected(null);
     } catch (e) {
-      if (e.name !== "AbortError") setError(e.message);
+      if (e.name === "AbortError") return;
+      const fields = errorsOf(e.fields, payload);
+      setRejected(Object.keys(fields).length ? fields : null);
+      setError(e.status === 422 ? "יש ערכים מחוץ לטווח המותר. הם מסומנים באדום בהגדרות." : e.message);
     } finally {
       if (ctrl.current === c) setBusy(false);
     }
@@ -180,7 +214,8 @@ export function usePropertyRunner({ auto, enabled }) {
     return () => clearTimeout(id);
   }, [key, auto, enabled]);
 
-  return { plan, setPlan, res, error, busy, run, stale: res && res.key !== key };
+  const fieldErrors = useMemo(() => rejected || failedErrors(res?.raw?.failed), [rejected, res]);
+  return { plan, setPlan, res, error, busy, run, stale: res && res.key !== key, fieldErrors };
 }
 
 // ----------------------------------------------------------------------- helpers
@@ -196,11 +231,20 @@ export function bracketTax(amount, brackets) {
   return tax;
 }
 
-function upfrontOf(sc, taxes) {
+// The purchase of a scenario: the apartment's share of the equity pays the purchase tax and the
+// one-time costs, the rest of it is the equity in the apartment, and the rest of the price is
+// the mortgage. ``lo``/``hi`` are the feasible shares (percent of the equity), as the engine's
+// alloc_bounds.
+function purchaseOf(sc, taxes, equity) {
   const ptax = bracketTax(sc.price, sc.status === "single" ? taxes.purchase_single : taxes.purchase_additional);
   const costs = sc.costs.reduce((a, c) => a + (Number(c.amount) || 0), 0);
-  const down = sc.price * (1 - sc.ltv / 100);
-  return { ptax, costs, down, total: down + ptax + costs, loan: sc.price * sc.ltv / 100 };
+  const need = ptax + costs;
+  const toHome = (sc.alloc || 0) / 100 * equity;
+  const down = toHome - need;
+  const loan = sc.price - down;
+  return { ptax, costs, need, toHome, down, loan, toMarket: equity - toHome,
+           ltv: loan / sc.price * 100, share: down / sc.price * 100, cap: sc.status === "single" ? 25 : 50,
+           lo: equity > 0 ? need / equity * 100 : Infinity, hi: equity > 0 ? (sc.price + need) / equity * 100 : Infinity };
 }
 
 const scheduleAt = (pts, years) => {
@@ -286,15 +330,15 @@ function Select({ value, onChange, children, label }) {
 
 // ------------------------------------------------------------------------- inputs
 
-export function PropertyInputs({ plan, setPlan, res }) {
+export function PropertyInputs({ plan, setPlan, res, errors = {} }) {
   const c = plan.common;
   const hist = c.mode === "history";
   const H = (k) => hist && c.history[k];
   const setC = (k) => (v) => setPlan((p) => ({ ...p, common: { ...p.common, [k]: v } }));
   const setSc = (id, fn) => setPlan((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === id ? fn(s) : s)) }));
-  const add = (kind) => setPlan((p) => {
-    const n = p.scenarios.filter((s) => s.kind === kind).length + 1;
-    const sc = kind === "market" ? newMarketScenario(`שוק ההון ${n}`) : newApartmentScenario(`דירה ${n}`);
+  const add = (alloc) => setPlan((p) => {
+    const n = p.scenarios.filter((s) => (s.alloc > 0) === (alloc > 0)).length + 1;
+    const sc = newScenario(alloc > 0 ? `דירה ${n}` : `שוק ההון ${n}`, alloc);
     return { ...p, scenarios: [...p.scenarios, sc], focus: sc.id };
   });
   const dup = (id) => setPlan((p) => {
@@ -331,12 +375,15 @@ export function PropertyInputs({ plan, setPlan, res }) {
 
     <details open class="section">
       <summary>האדם (משותף לכל התרחישים)</summary>
-      <p class="muted small">כל תרחיש מתחיל מאותו אדם: הון עצמי שכבר יש לו, וסכום חודשי שהוא מייעד להשקעה. מה שנשאר מהתקציב בתרחיש דירה עובר לחשבון צד בשוק ההון.${hist ? " במצב היסטורי כל הסכומים הם בכסף של היום, ומוקטנים לרמת המחירים של כל תאריך התחלה." : ""}</p>
+      <p class="muted small">כל תרחיש מתחיל מאותו אדם: הון עצמי שכבר יש לו, וסכום חודשי שהוא מייעד להשקעה. כל תרחיש מחלק את ההון העצמי בין דירה לשוק ההון, וממה שנשאר מהתקציב אחרי ההוצאות על הדירה מפקידים בשוק ההון.${hist ? " במצב היסטורי כל הסכומים הם בכסף של היום, ומוקטנים לרמת המחירים של כל תאריך התחלה." : ""}</p>
       <div class="grid-2">
-        <${NumberField} label="הון עצמי" value=${c.equity} onChange=${setC("equity")} step=${10000} suffix=${SYM} note=${m(c.equity)} />
+        <${NumberField} label="הון עצמי" value=${c.equity} onChange=${setC("equity")} step=${10000} suffix=${SYM} note=${m(c.equity)}
+          error=${errors["common.equity"]} />
         <${NumberField} label="סכום חודשי להשקעה" value=${c.budget} onChange=${setC("budget")} step=${100} suffix=${SYM}
-          hint="התקציב החודשי שהאדם מייעד: בשוק ההון הוא מופקד כולו, ובדירה ממנו משלמים את ההחזר וההוצאות, והעודף (או הגירעון) עובר לחשבון הצד." />
+          error=${errors["common.budget"]}
+          hint="התקציב החודשי שהאדם מייעד: אם אין דירה הוא מופקד כולו בשוק ההון, ואם יש, ממנו משלמים את ההחזר וההוצאות, והעודף (או הגירעון) עובר לשוק ההון." />
         <${NumberField} label="תקופת ההשקעה" value=${c.years} onChange=${setC("years")} step=${1} min=${1} max=${60} suffix="שנים"
+          error=${errors["common.years"]}
           hint="נקודת הזמן T שבה מסתיימת ההשוואה. בכל חודש עד T מחושב השווי נטו אם היו מממשים הכול באותו רגע." />
         <${NumberField} label="אינפלציה שנתית" value=${c.inflation} onChange=${setC("inflation")} step=${0.1} min=${-20} suffix="%"
           disabled=${H("cpi")} note=${H("cpi") ? "מהיסטוריה" : null} />
@@ -360,21 +407,22 @@ export function PropertyInputs({ plan, setPlan, res }) {
         hint="רשות. אם ממלאים, מוצגת אזהרה כשההחזר החודשי עולה על 40% מההכנסה. 0 = בלי בדיקה." />
     </details>
 
-    <${RateSection} c=${c} setPlan=${setPlan} fromHistory=${H("rate")} />
+    <${RateSection} c=${c} setPlan=${setPlan} fromHistory=${H("rate")} error=${errors["common.rate_path"]} />
 
     <section class="section stages" aria-label="תרחישים">
       <div class="section-head"><h2>תרחישים</h2>
         <div class="pin-actions">
-          <button type="button" class="btn ghost small" disabled=${full} onClick=${() => add("market")}>+ שוק ההון</button>
-          <button type="button" class="btn ghost small" disabled=${full} onClick=${() => add("apartment")}>+ דירה</button>
+          <button type="button" class="btn ghost small" disabled=${full} onClick=${() => add(0)}>+ שוק ההון</button>
+          <button type="button" class="btn ghost small" disabled=${full} onClick=${() => add(100)}>+ דירה</button>
         </div></div>
-      <p class="muted small">אפשר להוסיף כמה תרחישים שרוצים (עד ${MAX_SCENARIOS}), ולשכפל תרחיש כדי לבדוק אותו עם פרמטרים אחרים. כל תרחיש הוא קו בגרף.</p>
+      <p class="muted small">כל תרחיש הוא חלוקה של ההון העצמי: אחוז לדירה, והשאר לשוק ההון (0% = שוק ההון בלבד). אפשר להוסיף עד ${MAX_SCENARIOS} תרחישים ולשכפל תרחיש כדי לבדוק אותו עם פרמטרים אחרים. כל תרחיש הוא קו בגרף.</p>
       ${plan.scenarios.map((s, i) => html`<${ScenarioCard} key=${s.id} sc=${s} index=${i} count=${plan.scenarios.length}
           common=${c} taxes=${plan.taxes} summary=${summaries[s.id]} onChange=${(fn) => setSc(s.id, fn)}
-          onDup=${() => dup(s.id)} onRemove=${() => remove(s.id)} full=${full} H=${H} />`)}
+          onDup=${() => dup(s.id)} onRemove=${() => remove(s.id)} full=${full} H=${H}
+          E=${(k) => errors[`${s.id}:${k}`]} />`)}
     </section>
 
-    <${TaxTablesSection} taxes=${plan.taxes} setTaxes=${(fn) => setPlan((p) => ({ ...p, taxes: fn(p.taxes) }))} />
+    <${TaxTablesSection} taxes=${plan.taxes} setTaxes=${(fn) => setPlan((p) => ({ ...p, taxes: fn(p.taxes) }))} errors=${errors} />
   </aside>`;
 }
 
@@ -388,7 +436,7 @@ const RATE_PRESETS = [
                                                  { year: 7, rate: Math.max(0.25, r - 1) }, { year: 10, rate: r }] },
 ];
 
-function RateSection({ c, setPlan, fromHistory }) {
+function RateSection({ c, setPlan, fromHistory, error }) {
   const setC = (k) => (v) => setPlan((p) => ({ ...p, common: { ...p.common, [k]: v } }));
   const r0 = c.rate_path[0]?.rate ?? 4.5;
   return html`<details class="section">
@@ -404,6 +452,7 @@ function RateSection({ c, setPlan, fromHistory }) {
       ? html`<p class="callout">ריבית בנק ישראל באה מההיסטוריה, ולכן הלוח לא בשימוש.</p>`
       : html`<div class="holdings-title">לוח ריבית בנק ישראל (משנה X והלאה) <${Hint} text="פונקציית מדרגות: הריבית של כל שורה חלה מהשנה שלה עד השורה הבאה. התבניות מתחילות מהריבית של השורה הראשונה." /></div>
         <${PointsEditor} rows=${c.rate_path} onChange=${(rows) => setC("rate_path")(rows)} />
+        ${error ? html`<p class="field-error">${error}</p>` : null}
         <div class="preset-row">${RATE_PRESETS.map((p) => html`<button type="button" class="chip" onClick=${() => setC("rate_path")(p.build(r0))}>${p.label}</button>`)}</div>`}
   </details>`;
 }
@@ -424,30 +473,68 @@ function PointsEditor({ rows, onChange }) {
   </div>`;
 }
 
-function ScenarioCard({ sc, index, count, common, taxes, summary, onChange, onDup, onRemove, full, H }) {
+const allocTag = (a) => (a > 0 ? (a >= 100 ? "דירה" : `דירה ${+a.toFixed(1)}%`) : "שוק ההון");
+const fmtShare = (v) => `${+(Math.round(v * 10) / 10).toFixed(1)}%`;
+
+function ScenarioCard({ sc, index, count, common, taxes, summary, onChange, onDup, onRemove, full, H, E }) {
   const set = (k) => (v) => onChange((s) => ({ ...s, [k]: v }));
-  return html`<div class=${"stage-card scenario" + (sc.visible === false ? " is-hidden" : "")}>
+  const pu = purchaseOf(sc, taxes, common.equity);
+  const apt = sc.alloc > 0;
+  const fatal = [E(""), E("monthly")].filter(Boolean);
+  return html`<div class=${"stage-card scenario" + (sc.visible === false ? " is-hidden" : "") + (fatal.length || E("alloc") ? " has-error" : "")}>
     <div class="stage-head">
       <${Swatch} color=${index} />
-      <span class="kind-tag">${sc.kind === "market" ? "שוק" : "דירה"}</span>
+      <span class="kind-tag">${allocTag(sc.alloc)}</span>
       <input class="stage-name" value=${sc.name} aria-label="שם התרחיש" onInput=${(e) => set("name")(e.currentTarget.value)} />
       <${IconButton} title=${sc.visible === false ? "הצג בגרף" : "הסתר מהגרף"} onClick=${() => set("visible")(sc.visible === false)}>${sc.visible === false ? "◌" : "◉"}</${IconButton}>
       <${IconButton} title="שכפל" disabled=${full} onClick=${onDup}>⧉</${IconButton}>
       <${IconButton} title=${sc.open ? "כווץ" : "פתח"} onClick=${() => set("open")(!sc.open)}>${sc.open ? "▾" : "◂"}</${IconButton}>
       <${IconButton} title="מחק תרחיש" danger disabled=${count === 1} onClick=${onRemove}>✕</${IconButton}>
     </div>
-    ${sc.open ? (sc.kind === "market"
-      ? html`<${MarketFields} p=${sc.market} onChange=${(fn) => onChange((s) => ({ ...s, market: fn(s.market) }))} fromHistory=${H("market")} />
-             <p class="field-note">כל ההון העצמי (${m(common.equity)}) והתקציב החודשי מושקעים בתיק.</p>`
-      : html`<${ApartmentFields} sc=${sc} common=${common} taxes=${taxes} summary=${summary} onChange=${onChange} H=${H} />`) : null}
+    ${fatal.map((msg) => html`<p class="callout error">התרחיש לא חושב: ${msg}</p>`)}
+    ${sc.open ? html`
+      <${AllocField} sc=${sc} pu=${pu} equity=${common.equity} set=${set("alloc")} error=${E("alloc")} />
+      <fieldset class="apt-fields" disabled=${!apt}>
+        ${apt ? null : html`<p class="field-note">0% לדירה: בתרחיש הזה אין דירה, ולכן השדות שלה לא בשימוש.</p>`}
+        <${ApartmentFields} sc=${sc} pu=${pu} common=${common} taxes=${taxes} summary=${apt ? summary : null} onChange=${onChange} H=${H} E=${E} />
+      </fieldset>
+      <details open class="sub">
+        <summary>שוק ההון</summary>
+        <p class="field-note">${!apt ? `מקבל את כל ההון העצמי (${m(common.equity)}) ואת כל התקציב החודשי.`
+          : pu.toMarket > 0.5 ? `מקבל ${m(pu.toMarket)} מההון העצמי, ובכל חודש את מה שנשאר מהתקציב אחרי ההוצאות על הדירה.`
+          : "כל ההון העצמי בדירה, ולכן שוק ההון מקבל רק את מה שנשאר מהתקציב בכל חודש אחרי ההוצאות על הדירה (אם נשאר)."}</p>
+        <${MarketFields} p=${sc.market} onChange=${(fn) => onChange((s) => ({ ...s, market: fn(s.market) }))} fromHistory=${H("market")}
+          error=${E("market.holdings")} />
+        <${NumberField} label="ריבית על גירעון" value=${sc.debt_rate} onChange=${set("debt_rate")} step=${0.25} max=${100} suffix="%"
+          hint="אם בהמשך התקופה ההוצאות גבוהות מהתקציב (למשל כשהריבית עולה) והתיק ריק, ההפרש נרשם כחוב בריבית הזו." />
+      </details>` : null}
   </div>`;
 }
 
-function MarketFields({ p, onChange, fromHistory }) {
+// The share of the equity that goes to the apartment, with the split and the feasible range.
+function AllocField({ sc, pu, equity, set, error }) {
+  const lo = Math.ceil(pu.lo * 10) / 10, hi = Math.min(100, Math.floor(pu.hi * 10) / 10);
+  const possible = Number.isFinite(lo) && lo <= 100;
+  const note = sc.alloc > 0
+    ? `לדירה ${m(pu.toHome)} · לשוק ההון ${m(pu.toMarket)}${possible ? ` · אפשרי: ${fmtShare(lo)}–${fmtShare(hi)}` : ""}`
+    : `כל ההון העצמי (${m(equity)}) בשוק ההון`;
+  return html`<div class="alloc">
+    <${NumberField} label="אחוז מההון העצמי לדירה" value=${sc.alloc} onChange=${set} step=${1} max=${100} suffix="%" note=${note} error=${error}
+      hint="החלק מההון העצמי שהולך לדירה. ממנו משולמים מס הרכישה וההוצאות החד-פעמיות, והשאר הוא ההון העצמי בדירה; את שאר המחיר מממנת המשכנתא. החלק המשלים הולך לשוק ההון. 0% = שוק ההון בלבד." />
+    <div class="preset-row">
+      <button type="button" class=${"chip" + (sc.alloc === 0 ? " on" : "")} onClick=${() => set(0)}>שוק ההון בלבד</button>
+      ${possible ? html`<button type="button" class="chip" onClick=${() => set(lo)}>מינימום (${fmtShare(lo)})</button>
+        <button type="button" class="chip" onClick=${() => set(hi)}>${hi >= 100 ? "כל ההון (100%)" : `מקסימום, בלי משכנתא (${fmtShare(hi)})`}</button>` : null}
+    </div>
+  </div>`;
+}
+
+function MarketFields({ p, onChange, fromHistory, error }) {
   const set = (k) => (v) => onChange((x) => ({ ...x, [k]: v }));
   const stage = { holdings: p.holdings || [] };
   return html`
     ${fromHistory ? html`<${HoldingsTable} stage=${stage} onChange=${(fn) => onChange((x) => ({ ...x, holdings: fn({ holdings: x.holdings || [] }).holdings }))} />
+      ${error ? html`<p class="field-error">${error}</p>` : null}
       <p class="field-note">במצב היסטורי התשואה החודשית היא של הנכסים בפועל, בשקלים, עם איזון חודשי למשקלים.</p>` : null}
     <div class="grid-2">
       <${NumberField} label="תשואה שנתית" value=${p.annual_return} onChange=${set("annual_return")} step=${0.25} min=${-50} suffix="%"
@@ -465,7 +552,7 @@ function MarketFields({ p, onChange, fromHistory }) {
 const TRACK_KINDS = [{ value: "fixed", label: "קבועה" }, { value: "prime", label: "פריים" },
                      { value: "variable", label: "משתנה" }, { value: "schedule", label: "לוח" }];
 
-function TrackCard({ t, sc, common, loanPart, sum, onSet, onRemove, canRemove, H }) {
+function TrackCard({ t, sc, common, loanPart, sum, onSet, onRemove, canRemove, H, error }) {
   const b0 = H("rate") ? null : (scheduleAt(common.rate_path, 0) ?? 0) + common.rate_shift;
   const startRate = t.kind === "fixed" ? t.rate : t.kind === "prime" ? (b0 === null ? null : b0 + common.prime_spread + t.margin)
     : t.kind === "variable" ? (b0 === null ? null : b0 + t.margin) : (scheduleAt(t.schedule, 0) ?? t.rate) + common.rate_shift;
@@ -484,6 +571,7 @@ function TrackCard({ t, sc, common, loanPart, sum, onSet, onRemove, canRemove, H
     </div>
     ${t.kind === "variable" ? html`<label class="mini-field"><span>הריבית משתנה כל</span><${NumberInput} value=${t.reset_years} step=${1} min=${1} max=${30} suffix="שנים" onChange=${(v) => onSet("reset_years", v)} /></label>` : null}
     ${t.kind === "schedule" ? html`<${PointsEditor} rows=${t.schedule.length ? t.schedule : [{ year: 0, rate: t.rate }]} onChange=${(rows) => onSet("schedule", rows)} />` : null}
+    ${error ? html`<p class="field-error">${error}</p>` : null}
     <div class="track-opts">
       <${Toggle} label="צמוד למדד" checked=${t.indexed} onChange=${(v) => onSet("indexed", v)} />
       <${Segmented} small options=${[{ value: "spitzer", label: "שפיצר" }, { value: "equal", label: "קרן שווה" }]}
@@ -493,19 +581,21 @@ function TrackCard({ t, sc, common, loanPart, sum, onSet, onRemove, canRemove, H
   </div>`;
 }
 
-function ApartmentFields({ sc, common, taxes, summary, onChange, H }) {
+function ApartmentFields({ sc, pu, common, taxes, summary, onChange, H, E }) {
   const set = (k) => (v) => onChange((s) => ({ ...s, [k]: v }));
-  const up = upfrontOf(sc, taxes);
-  const left = common.equity - up.total;
-  const cap = sc.status === "single" ? 75 : 50;
   const shareSum = sc.tracks.reduce((a, t) => a + (Number(t.share) || 0), 0);
   const setTrack = (id, k, v) => onChange((s) => ({ ...s, tracks: s.tracks.map((t) => (t.id === id ? { ...t, [k]: v } : t)) }));
   const setCost = (id, k, v) => onChange((s) => ({ ...s, costs: s.costs.map((x) => (x.id === id ? { ...x, [k]: v } : x)) }));
   const trackSum = summary?.tracks || [];
   const active = sc.tracks.filter((t) => Number(t.share) > 0);
+  const valid = sc.alloc > 0 && pu.down >= -0.5 && pu.loan >= -0.5;
+  const hasLoan = !valid || pu.loan > 0.5;
+  const low = valid && hasLoan && pu.share < pu.cap;
+  const tracksErr = E("tracks");
   return html`
     <div class="grid-2">
-      <${NumberField} label="מחיר הדירה" value=${sc.price} onChange=${set("price")} step=${10000} min=${1} suffix=${SYM} note=${m(sc.price)} />
+      <${NumberField} label="מחיר הדירה" value=${sc.price} onChange=${set("price")} step=${10000} min=${1} suffix=${SYM} note=${m(sc.price)}
+        error=${E("price")} />
       <${Segmented} label="סוג הדירה" small options=${[{ value: "single", label: "דירה יחידה" }, { value: "additional", label: "דירה נוספת" }]}
         value=${sc.status} onChange=${set("status")}
         hint="קובע את מדרגות מס הרכישה, את הפטור ממס שבח ואת אחוז המימון המקסימלי (75% ליחידה, 50% לנוספת). דירה יחידה יכולה להיות גם מושכרת." />
@@ -513,24 +603,26 @@ function ApartmentFields({ sc, common, taxes, summary, onChange, H }) {
 
     <details open class="sub">
       <summary>מימון ותמהיל המשכנתא</summary>
-      <${NumberField} label="אחוז המשכנתא (מימון)" value=${sc.ltv} onChange=${set("ltv")} step=${1} max=${100} suffix="%"
-        note=${`משכנתא ${m(up.loan)} · הון עצמי בדירה ${m(up.down)}${sc.ltv > cap ? ` · מעל ${cap}% המותרים` : ""}`} />
-      ${sc.ltv > 0 ? html`<div class="tracks">
-        ${sc.tracks.map((t) => html`<${TrackCard} key=${t.id} t=${t} sc=${sc} common=${common} H=${H}
-            loanPart=${up.loan * (Number(t.share) || 0) / (shareSum || 1)} sum=${trackSum[active.indexOf(t)]}
-            onSet=${(k, v) => setTrack(t.id, k, v)} canRemove=${sc.tracks.length > 1}
+      ${valid ? html`<p class=${"callout" + (low ? " warn" : "")}>משכנתא <b>${m(Math.max(0, pu.loan))}</b> (מימון ${fmtShare(Math.max(0, pu.ltv))}) · הון עצמי בדירה ${m(pu.down)} (${fmtShare(pu.share)} מהמחיר)
+          ${low ? html`<br />ההון העצמי בדירה פחות מ-${pu.cap}% מהמחיר, המינימום שבנק ישראל דורש ל${sc.status === "single" ? "דירה יחידה" : "דירה נוספת"}. ההלוואה גדולה ועלולה לגרום להחזר חודשי גבוה. החישוב ממשיך, אבל בנק בדרך כלל לא יאשר משכנתא כזו.` : null}</p>`
+        : sc.alloc > 0 ? html`<p class="muted small">המשכנתא תחושב כשאחוז ההון לדירה יהיה בטווח האפשרי.</p>` : null}
+      ${hasLoan ? html`<div class="tracks">
+        ${sc.tracks.map((t, i) => html`<${TrackCard} key=${t.id} t=${t} sc=${sc} common=${common} H=${H}
+            loanPart=${Math.max(0, pu.loan) * (Number(t.share) || 0) / (shareSum || 1)} sum=${trackSum[active.indexOf(t)]}
+            onSet=${(k, v) => setTrack(t.id, k, v)} canRemove=${sc.tracks.length > 1} error=${E(`tracks.${i}.schedule`)}
             onRemove=${() => onChange((s) => ({ ...s, tracks: s.tracks.filter((x) => x.id !== t.id) }))} />`)}
         <div class="stage-foot">
           <button type="button" class="btn link" onClick=${() => onChange((s) => ({ ...s, tracks: [...s.tracks, newTrack(`מסלול ${s.tracks.length + 1}`, 0)] }))}>+ הוסף מסלול</button>
-          <span class=${"weight-sum" + (Math.abs(shareSum - 100) > 0.01 ? " warn" : "")}>סה"כ ${shareSum.toFixed(1)}%${Math.abs(shareSum - 100) > 0.01 ? " (יתנרמל ל-100%)" : ""}</span>
+          <span class=${"weight-sum" + (Math.abs(shareSum - 100) > 0.05 ? " bad" : "")}>סה"כ ${shareSum.toFixed(1)}%${Math.abs(shareSum - 100) > 0.05 ? " (צריך 100%)" : ""}</span>
         </div>
+        ${tracksErr ? html`<p class="field-error">${tracksErr}</p>` : null}
         ${summary ? html`<p class="field-note">החזר חודשי ראשון כולל: <b>${m(summary.first_payment ?? 0)}</b></p>` : null}
-      </div>` : null}
+      </div>` : html`<p class="field-note">כל המחיר משולם מההון העצמי, בלי משכנתא.</p>`}
     </details>
 
     <details open class="sub">
       <summary>עלויות רכישה (חד-פעמיות)</summary>
-      <div class="cost-row static"><span>מס רכישה (${sc.status === "single" ? "דירה יחידה" : "דירה נוספת"})</span><b dir="ltr">${m(up.ptax)}</b></div>
+      <div class="cost-row static"><span>מס רכישה (${sc.status === "single" ? "דירה יחידה" : "דירה נוספת"})</span><b dir="ltr">${m(pu.ptax)}</b></div>
       ${sc.costs.map((x) => html`<div class="cost-row" key=${x.id}>
         <input class="stage-name" value=${x.name} aria-label="שם ההוצאה" onInput=${(e) => setCost(x.id, "name", e.currentTarget.value)} />
         <${NumberInput} value=${x.amount} step=${1000} suffix=${SYM} onChange=${(v) => setCost(x.id, "amount", v)} />
@@ -542,8 +634,7 @@ function ApartmentFields({ sc, common, taxes, summary, onChange, H }) {
         <button type="button" class="btn link" onClick=${() => onChange((s) => ({ ...s, costs: [...s.costs, newCost()] }))}>+ הוסף הוצאה</button>
         <span class="muted">"מוכר" = מנוכה בחישוב מס שבח <${Hint} text="שכר טרחת עורך דין, תיווך, שיפוץ (השבחה) ומס הרכישה מנוכים מהשבח. ייעוץ משכנתאות ושמאות לצורך הלוואה בדרך כלל לא." /></span>
       </div>
-      <p class=${"callout" + (left < 0 ? " warn" : "")}>הון נדרש לרכישה: <b>${m(up.total)}</b> (הון עצמי בדירה ${m(up.down)}, מס רכישה ${m(up.ptax)}, הוצאות ${m(up.costs)}).
-        <br />${left >= 0 ? html`נשאר לחשבון הצד: <b>${m(left)}</b>` : html`חסרים <b>${m(-left)}</b>: הם יירשמו כחוב בריבית ${sc.debt_rate}%.`}</p>
+      <p class="callout">מס הרכישה וההוצאות: <b>${m(pu.need)}</b>. הם משולמים מהחלק של ההון שהולך לדירה (${m(pu.toHome)}), ולא מהמשכנתא${valid ? `, ונשארים ${m(pu.down)} הון עצמי בדירה` : ""}.</p>
     </details>
 
     <details open class="sub">
@@ -556,7 +647,7 @@ function ApartmentFields({ sc, common, taxes, summary, onChange, H }) {
           <${NumberField} label="עליית שכירות" value=${sc.rent_growth} onChange=${set("rent_growth")} step=${0.1} min=${-50} suffix="% לשנה"
             disabled=${H("rent")} note=${H("rent") ? "מהיסטוריה" : null} />
           <${NumberField} label="חודשי ריקות בשנה" value=${sc.vacancy_months} onChange=${set("vacancy_months")} step=${0.25} max=${12}
-            hint="חודשים בשנה בממוצע שבהם הדירה עומדת ריקה. ההכנסה מוכפלת ב-(1 − חודשים/12)." />
+            error=${E("vacancy_months")} hint="חודשים בשנה בממוצע שבהם הדירה עומדת ריקה. ההכנסה מוכפלת ב-(1 − חודשים/12)." />
           <${NumberField} label="מס שולי" value=${sc.marginal_rate} onChange=${set("marginal_rate")} step=${1} max=${100} suffix="%"
             hint="שיעור המס השולי של האדם. משמש במסלול הפטור (על החלק שמעל התקרה) ובמסלול הרגיל." />
         </div>
@@ -581,27 +672,23 @@ function ApartmentFields({ sc, common, taxes, summary, onChange, H }) {
     </details>
 
     <details class="sub">
-      <summary>מכירה וחשבון הצד</summary>
+      <summary>מכירה</summary>
       <div class="grid-2">
         <${NumberField} label="עלויות מכירה" value=${sc.selling_cost_pct} onChange=${set("selling_cost_pct")} step=${0.1} max=${50} suffix="%"
           hint="תיווך ועורך דין במכירה, כולל מע״מ, כאחוז ממחיר המכירה. מנוכות מהשבח." />
         <${NumberField} label="עמלת פירעון מוקדם" value=${sc.prepay_fee_pct} onChange=${set("prepay_fee_pct")} step=${0.1} max=${50} suffix="%"
           hint="אחוז מיתרת המשכנתא שמשולם כשמוכרים לפני סוף ההלוואה (הערכה פשוטה)." />
-        <${NumberField} label="ריבית על גירעון" value=${sc.debt_rate} onChange=${set("debt_rate")} step=${0.25} max=${100} suffix="%"
-          hint="אם ההון העצמי לא מספיק, או שההוצאות גבוהות מהתקציב וחשבון הצד ריק, ההפרש נרשם כחוב בריבית הזו." />
       </div>
-      <p class="field-note">חשבון הצד מקבל את יתרת ההון העצמי ואת העודף החודשי, ומושקע בשוק ההון לפי:</p>
-      <${MarketFields} p=${sc.side} onChange=${(fn) => onChange((s) => ({ ...s, side: fn(s.side) }))} fromHistory=${H("market")} />
     </details>`;
 }
 
-function TaxTablesSection({ taxes, setTaxes }) {
+function TaxTablesSection({ taxes, setTaxes, errors }) {
   const setK = (k) => (v) => setTaxes((t) => ({ ...t, [k]: v }));
   return html`<details class="section">
     <summary>מדרגות מס ותקרות</summary>
     <p class="muted small">ערכי ברירת המחדל: מדרגות מס הרכישה המוקפאות עד 15/01/2028, ותקרות הפטור של 2025. כדאי לוודא מול רשות המסים. במצב היסטורי הם מוקטנים יחד עם שאר הסכומים לרמת המחירים של תאריך ההתחלה.</p>
-    <${BracketsEditor} label="מס רכישה: דירה יחידה" rows=${taxes.purchase_single} onChange=${setK("purchase_single")} />
-    <${BracketsEditor} label="מס רכישה: דירה נוספת" rows=${taxes.purchase_additional} onChange=${setK("purchase_additional")} />
+    <${BracketsEditor} label="מס רכישה: דירה יחידה" rows=${taxes.purchase_single} onChange=${setK("purchase_single")} error=${errors["taxes.purchase_single"]} />
+    <${BracketsEditor} label="מס רכישה: דירה נוספת" rows=${taxes.purchase_additional} onChange=${setK("purchase_additional")} error=${errors["taxes.purchase_additional"]} />
     <div class="grid-2">
       <${NumberField} label="מס שבח" value=${taxes.shevach_rate} onChange=${setK("shevach_rate")} step=${1} max=${100} suffix="%"
         hint="על השבח הריאלי: מחיר המכירה פחות עלויות המכירה, פחות מחיר הקנייה וההוצאות המוכרות צמודים למדד." />
@@ -613,7 +700,7 @@ function TaxTablesSection({ taxes, setTaxes }) {
   </details>`;
 }
 
-function BracketsEditor({ label, rows, onChange }) {
+function BracketsEditor({ label, rows, onChange, error }) {
   const set = (i, k, v) => onChange(rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   return html`<div class="brackets">
     <div class="holdings-title">${label}</div>
@@ -630,6 +717,7 @@ function BracketsEditor({ label, rows, onChange }) {
       const top = finiteRows.length ? finiteRows[finiteRows.length - 1].up_to : 0;
       onChange([...finiteRows, { up_to: Math.round(top * 1.5 || 1_000_000), rate: 0 }, ...rows.filter((r) => r.up_to === null)]);
     }}>+ הוסף מדרגה</button>
+    ${error ? html`<p class="field-error">${error}</p>` : null}
   </div>`;
 }
 
@@ -650,14 +738,22 @@ export const METRIC_DEFS = [
 const fmtMetric = (def, v) => (v === null || v === undefined || !Number.isFinite(v) ? "—" : def.money ? m(v) : pct(v, 2));
 
 // Decode every scenario's (R x T+1) net-worth matrix once per result.
+// Colours follow the scenario's place in the settings, so they match its card even when a
+// scenario before it failed its checks and is missing from the results.
 function prepare(raw, plan) {
   const R = raw.n, T1 = raw.months + 1;
   return raw.scenarios.map((s, i) => {
     const M = decodeMatrix(s.net_b64, R, T1);
     const cs = R > 1 ? columnStats(M) : null;
-    const visible = plan.scenarios.find((x) => x.id === s.id)?.visible !== false;
-    return { ...s, color: i, M, cs, visible };
+    const at = plan.scenarios.findIndex((x) => x.id === s.id);
+    const visible = plan.scenarios[at]?.visible !== false;
+    return { ...s, color: at >= 0 ? at : i, M, cs, visible };
   });
+}
+
+function Problems({ raw }) {
+  return html`${(raw.failed || []).map((f) => html`<p class="callout error"><b>${f.name || "תרחיש"}</b> לא חושב: ${f.errors.map((e) => e.msg).join(" ")}</p>`)}
+    ${(raw.warnings || []).map((w) => html`<p class="callout warn">${w}</p>`)}`;
 }
 // The statistic's path over time (fixed mode: the one path), and the 10-90 band.
 const statPath = (s, stat) => (!s.cs ? s.net : stat === "mean" ? Array.from(s.cs.mean) : s.cs.sorted.map((c) => quantileSorted(c, 50)));
@@ -665,6 +761,18 @@ const bandOf = (s) => (s.cs ? { lo: s.cs.sorted.map((c) => quantileSorted(c, 10)
 const metricAgg = (s, key, stat) => agg(s.metrics[key], stat);
 
 export function PropertyResults({ res, plan, setPlan, themeKey, stale }) {
+  const raw = res.raw;
+  if (!raw.scenarios.length) {
+    return html`<div class="results property">
+      ${stale ? html`<p class="callout muted">ההגדרות השתנו מאז החישוב האחרון. התוצאות יתעדכנו כשהחישוב יסתיים.</p>` : null}
+      <${Problems} raw=${raw} />
+      <div class="empty">אף תרחיש לא עבר את הבדיקות. תקן את השדות שמסומנים באדום בהגדרות.</div>
+    </div>`;
+  }
+  return html`<${PropertyResultsBody} res=${res} plan=${plan} setPlan=${setPlan} themeKey=${themeKey} stale=${stale} />`;
+}
+
+function PropertyResultsBody({ res, plan, setPlan, themeKey, stale }) {
   const raw = res.raw;
   const T = raw.months;
   const hist = raw.mode === "history";
@@ -682,6 +790,7 @@ export function PropertyResults({ res, plan, setPlan, themeKey, stale }) {
   const detailDate = hist ? raw.start_dates[raw.detail_row] : null;
   return html`<div class="results property">
     ${stale ? html`<p class="callout muted">ההגדרות השתנו מאז החישוב האחרון. התוצאות יתעדכנו כשהחישוב יסתיים.</p>` : null}
+    <${Problems} raw=${raw} />
     ${warnings.map(({ name, w }) => html`<p class="callout warn"><b>${name}:</b> ${w}</p>`)}
     ${hist ? html`<div class="stat-bar"><span>${raw.n} ריאליזציות, תאריכי התחלה ${dateHe(raw.start_dates[0])}–${dateHe(raw.start_dates[raw.n - 1])}.</span>
       <${Segmented} small label="הסטטיסטיקה בגרף ובטבלאות" options=${[{ value: "median", label: "חציון" }, { value: "mean", label: "ממוצע" }]}
@@ -793,15 +902,18 @@ const UNUSED_IN_HISTORY = { market: ["annual_return"], cpi: ["inflation"], housi
 const usedParams = (params, H) => params.filter((p) => !Object.entries(UNUSED_IN_HISTORY)
   .some(([k, keys]) => H(k) && keys.includes(p.key.split(".").pop())));
 
-function scenarioParams(sc) {
+function scenarioParams(sc, plan) {
   if (!sc) return [];
-  if (sc.kind === "market") return marketParams("market");
+  const pu = purchaseOf(sc, plan.taxes, plan.common.equity);
+  const lo = Number.isFinite(pu.lo) ? Math.min(100, Math.ceil(pu.lo * 10) / 10) : 0;
+  const alloc = { key: "alloc", label: "אחוז ההון לדירה", unit: "pct", lo, hi: Math.max(lo, Math.min(100, Math.floor(pu.hi * 10) / 10)) };
+  if (!(sc.alloc > 0)) return [alloc, ...marketParams("market")];
   const trackParam = (t, i) => (t.kind === "prime" || t.kind === "variable"
     ? { key: `tracks.${i}.margin`, label: `מרווח מסלול "${t.name || i + 1}"`, unit: "pct", lo: -3, hi: 5 }
     : { key: `tracks.${i}.rate`, label: `ריבית מסלול "${t.name || i + 1}"`, unit: "pct", lo: 0, hi: 15 });
   return [
+    alloc,
     { key: "price", label: "מחיר הדירה", unit: "money", lo: Math.round(sc.price * 0.3), hi: Math.round(sc.price * 3) },
-    { key: "ltv", label: "אחוז המשכנתא", unit: "pct", lo: 0, hi: 100 },
     { key: "appreciation", label: "תשואה שנתית של הדירה", unit: "pct", lo: -5, hi: 15 },
     { key: "rent", label: "שכירות חודשית", unit: "money", lo: 0, hi: 30_000 },
     { key: "rent_growth", label: "עליית שכירות", unit: "pct", lo: -5, hi: 15 },
@@ -814,7 +926,7 @@ function scenarioParams(sc) {
     { key: "debt_rate", label: "ריבית על גירעון", unit: "pct", lo: 0, hi: 20 },
     { key: "marginal_rate", label: "מס שולי על שכירות", unit: "pct", lo: 0, hi: 50 },
     ...sc.tracks.map(trackParam),
-    ...marketParams("side", " (חשבון הצד)"),
+    ...marketParams("market", " (שוק ההון)"),
   ];
 }
 const fmtUnit = (unit, v) => (!Number.isFinite(v) ? "—" : unit === "money" ? m(v) : unit === "pct" ? pct(v, 3) : v.toFixed(3));
@@ -825,7 +937,13 @@ function CompareCard({ plan, setPlan, byId, list, T, themeKey, hist, stat, raw }
   const setCmp = (k) => (v) => setPlan((p) => ({ ...p, compare: { ...p.compare, [k]: v } }));
   const def = METRIC_DEFS.find((d) => d.key === cmp.metric) || METRIC_DEFS[0];
   if (!A || !B || A.id === B.id) {
-    return html`<section class="card"><h2>השוואה בין שתי החלטות</h2><p class="muted">צריך לפחות שני תרחישים כדי להשוות.</p></section>`;
+    const missing = [cmp.a, cmp.b].map((id) => (raw.failed || []).find((f) => f.id === id)).filter(Boolean);
+    return html`<section class="card"><h2>השוואה בין שתי החלטות</h2><p class="muted">${missing.length
+      ? `"${missing[0].name}" לא חושב בגלל שגיאה בנתונים, ולכן אי אפשר להשוות אותו. תקן את השדות שמסומנים באדום, או בחר תרחיש אחר.`
+      : "צריך לפחות שני תרחישים כדי להשוות."}</p>
+      ${list.length > 1 && missing.length ? html`<div class="controls">
+        <label class="mini">A <${Select} label="תרחיש A" value=${cmp.a} onChange=${setCmp("a")}>${list.map((s) => html`<option value=${s.id}>${s.name}</option>`)}</${Select}></label>
+        <label class="mini">B <${Select} label="תרחיש B" value=${cmp.b} onChange=${setCmp("b")}>${list.map((s) => html`<option value=${s.id}>${s.name}</option>`)}</${Select}></label></div>` : null}</section>`;
   }
   const cross = crossings(A.path, B.path);
   const va = metricAgg(A, def.key, stat), vb = metricAgg(B, def.key, stat);
@@ -872,8 +990,8 @@ function SolvePanel({ plan, setPlan, A, B, def, themeKey, hist }) {
   const scA = plan.scenarios.find((s) => s.id === A.id), scB = plan.scenarios.find((s) => s.id === B.id);
   const groups = [
     { scope: "common", title: "משותף", params: usedParams(COMMON_PARAMS, H) },
-    { scope: "a", title: `A: ${A.name}`, params: usedParams(scenarioParams(scA), H) },
-    { scope: "b", title: `B: ${B.name}`, params: usedParams(scenarioParams(scB), H) },
+    { scope: "a", title: `A: ${A.name}`, params: usedParams(scenarioParams(scA, plan), H) },
+    { scope: "b", title: `B: ${B.name}`, params: usedParams(scenarioParams(scB, plan), H) },
   ];
   const group = groups.find((g) => g.scope === sv.scope) || groups[0];
   const param = group.params.find((p) => p.key === sv.key) || group.params[0];
@@ -932,7 +1050,7 @@ function SolvePanel({ plan, setPlan, A, B, def, themeKey, hist }) {
   const pr = out?.per_row;
   const prVals = pr ? pr.roots.filter((v) => v !== null) : [];
   return html`<div class="solve">
-    <h3 class="h3">פתרון נעלם: מתי שתי ההחלטות שקולות? <${Hint} text="בוחרים פרמטר אחד (משותף, או של A או של B) ומחפשים את הערכים שבהם המדד של A שווה למדד של B. החיפוש סורק את הטווח ב-48 נקודות (כולן בסימולציה אחת), ומעדן כל החלפת סימן בסריקה צפופה יותר ובאינטרפולציה, כך שגם כמה פתרונות נמצאים." /></h3>
+    <h3 class="h3">פתרון נעלם: מתי שתי ההחלטות שקולות? <${Hint} text="בוחרים פרמטר אחד (משותף, או של A או של B) ומחפשים את הערכים שבהם המדד של A שווה למדד של B. החיפוש סורק את הטווח ב-48 נקודות (כולן בסימולציה אחת), ומעדן כל החלפת סימן בסריקה צפופה יותר ובאינטרפולציה, כך שגם כמה פתרונות נמצאים. ערכים שבהם התרחיש לא אפשרי (למשל החלק לדירה לא מכסה את מס הרכישה, או שהתקציב לא מכסה את החודש הראשון) מדולגים, ונראים כחורים בגרף." /></h3>
     <div class="controls">
       <label class="mini grow">נעלם <${Select} label="הפרמטר הנעלם" value=${`${group.scope}|${param.key}`} onChange=${choose}>
         ${groups.map((g) => html`<optgroup label=${g.title}>${g.params.map((p) => html`<option value=${`${g.scope}|${p.key}`}>${p.label}</option>`)}</optgroup>`)}
@@ -1057,7 +1175,8 @@ function GeneralEquations() {
     ${D_(S`N_t = V_t - \tau\,\max(0,\; V_t - K_t) - D_t`)}
     <p>כש-${T_(S`c_m < 0`)} מוכרים חלק יחסי עם gross-up: ${T_(S`s = \frac{|c_m|}{1 - \tau\,(1 - K/V)}`)}, והבסיס קטן באותו יחס. מה שאי אפשר לכסות נצבר כחוב ${T_(S`D_t`)} בריבית ${T_(S`d`)}: ${T_(S`D_m = D_{m-1}(1+d)^{1/12} + \text{shortfall}_m`)}.</p>
     <h3>דירה</h3>
-    <p>מחיר ${T_(S`P`)}, מימון ${T_(S`\lambda`)}: ${T_(S`P_t = P\,I^P_t`)} כאשר ${T_(S`I^P_t = (1+a)^{t/12}`)} או מדד מחירי הדירות ביחס להתחלה. הלוואה ${T_(S`L = \lambda P`)} שמחולקת למסלולים ${T_(S`L_k = s_k L`)}.</p>
+    <p>כל תרחיש מחלק את ההון העצמי: חלק ${T_(S`\alpha`)} לדירה, ${T_(S`A = \alpha E_0`)}, והשאר לשוק ההון. ב-${T_(S`\alpha = 0`)} אין דירה, והתרחיש הוא חשבון שוק בלבד.
+      מחיר ${T_(S`P`)}: ${T_(S`P_t = P\,I^P_t`)} כאשר ${T_(S`I^P_t = (1+a)^{t/12}`)} או מדד מחירי הדירות ביחס להתחלה. מ-${T_(S`A`)} משולמים מס הרכישה וההוצאות, והשאר הוא ההון העצמי בדירה ${T_(S`D`)}. ההלוואה היא שאר המחיר, ${T_(S`L = P - D`)} (מימון ${T_(S`\lambda = L/P`)}), והיא מחולקת למסלולים ${T_(S`L_k = s_k L`)}.</p>
     <p><b>הריבית של מסלול בחודש m.</b> עם ריבית בנק ישראל ${T_(S`b_m`)} (מהלוח או מההיסטוריה, ועוד הזזת הריבית ${T_(S`\Delta`)}):</p>
     ${D_(S`r_k(m) = \begin{cases} r_k & \text{fixed} \\ b_m + s_p + \mu_k & \text{prime} \\ b_{m_j} + \mu_k,\;\; m_j = 1 + 12N\lfloor (m-1)/12N \rfloor & \text{variable} \\ \mathrm{sched}_k\big(\tfrac{m-1}{12}\big) + \Delta & \text{schedule} \end{cases}`)}
     <p>(${T_(S`s_p`)} מרווח הפריים, ${T_(S`\mu_k`)} מרווח המסלול, ${T_(S`N`)} שנים בין שינויים.) <b>שפיצר:</b> בכל חודש ההחזר מחושב על היתרה והתקופה שנשארה, ${T_(S`n_k - m + 1`)} חודשים, בריבית החודשית ${T_(S`\rho = r_k(m)/12`)}:</p>
@@ -1065,8 +1184,11 @@ function GeneralEquations() {
     <p>כשהריבית קבועה ההחזר לא משתנה, והיתרה בנוסחה סגורה: ${T_(S`\mathrm{Bal}_k(t) = L_k\,\frac{(1+\rho)^{n_k} - (1+\rho)^{t}}{(1+\rho)^{n_k} - 1}`)}.
       <b>קרן שווה:</b> ${T_(S`\mathrm{Bal}_k(m) = \mathrm{Bal}_k(m-1)\big(1 - \tfrac{1}{n_k-m+1}\big)`)} והריבית על היתרה.
       <b>מסלול צמוד:</b> לפני כל חישוב היתרה מוכפלת ב-${T_(S`C_m / C_{m-1}`)}.</p>
-    <p><b>רכישה.</b> מס הרכישה לפי מדרגות ${T_(S`(b_{i-1}, b_i]`)} בשיעורים ${T_(S`\sigma_i`)}, וההון הנדרש:</p>
-    ${D_(S`\mathcal{S}(P) = \sum_i \sigma_i\,\max\!\big(0,\;\min(P, b_i) - b_{i-1}\big), \qquad U = (1-\lambda)P + \mathcal{S}(P) + \sum_j e_j, \qquad c_0 = E_0 - U`)}
+    <p><b>רכישה.</b> מס הרכישה לפי מדרגות ${T_(S`(b_{i-1}, b_i]`)} בשיעורים ${T_(S`\sigma_i`)}, והוצאות חד-פעמיות ${T_(S`e_j`)}:</p>
+    ${D_(S`\mathcal{S}(P) = \sum_i \sigma_i\,\max\!\big(0,\;\min(P, b_i) - b_{i-1}\big), \qquad D = \alpha E_0 - \mathcal{S}(P) - \sum_j e_j, \qquad L = P - D, \qquad c_0 = (1-\alpha)E_0`)}
+    <p><b>תנאים.</b> תרחיש אפשרי רק אם החלק לדירה מכסה את מס הרכישה וההוצאות, ולא עולה על כל העלות (אחרת אין צורך בכל ההון הזה), ואם התקציב מכסה את החודש הראשון:</p>
+    ${D_(S`\mathcal{S}(P) + \sum_j e_j \;\le\; \alpha E_0 \;\le\; P + \mathcal{S}(P) + \sum_j e_j, \qquad c_1 \ge 0`)}
+    <p>כשאחד מהם לא מתקיים התרחיש לא מחושב, והשדה מסומן באדום. כש-${T_(S`D/P`)} קטן מ-25% (דירה יחידה) או מ-50% (דירה נוספת), המינימום של בנק ישראל, מוצגת אזהרה והחישוב ממשיך. גירעון בחודשים מאוחרים יותר (למשל כשהריבית עולה) נרשם כחוב בריבית ${T_(S`d`)}, עם אזהרה.</p>
     <p><b>כל חודש</b> העודף (או הגירעון) עובר לחשבון הצד, עם תחזוקה ${T_(S`\mu`)} משווי הדירה, ביטוח והוצאות קבועות ${T_(S`F`)}, שכירות ${T_(S`R`)} עם מדד ${T_(S`I^R`)} (קצב קבוע ${T_(S`\gamma`)} או מדד שכר הדירה), ו-${T_(S`v`)} חודשי ריקות בשנה:</p>
     ${D_(S`c_m = B_m - H_m - \sum_k A_k(m) - \underbrace{\big(\tfrac{\mu}{12}P_{m-1} + F\,C_{m-1}\big)}_{O_m} + \underbrace{R\,I^R_{m-1}\big(1-\tfrac{v}{12}\big)}_{R_m} - \mathrm{Tax}^R_m`)}
     <p>בדירה שגרים בה ${T_(S`R_m = 0`)} ו-${T_(S`H_m = 0`)}. מס השכירות ${T_(S`\mathrm{Tax}^R_m`)}: במסלול הפטור ${T_(S`\theta\cdot\{0 \text{ if } R_m\le X;\; 2(R_m - X) \text{ if } X<R_m<2X;\; R_m\}`)} (${T_(S`X`)} תקרה צמודה, ${T_(S`\theta`)} מס שולי); במסלול 10%: ${T_(S`0.1R_m`)}; במסלול הרגיל: ${T_(S`\theta\max(0, R_m - O_m - \text{interest}_m)`)}.</p>
@@ -1156,11 +1278,12 @@ function ApartmentEquations({ sc, s, plan, raw, t }) {
     return S`A_{${i + 1}} = ${nx(L)}\,\frac{${nx(rho, 6)}}{1-(1+${nx(rho, 6)})^{-${n}}} = ${nx(k.first_payment / (k.indexed ? raw.cpi[1] : 1), 2)}, \quad \mathrm{Bal}_{${i + 1}}(${t}) = ${nx(L)}\,\frac{${nx(a, 4)} - ${nx(b, 4)}}{${nx(a, 4)} - 1}${k.indexed ? S`\cdot ${nx(C, 4)}` : ""} = ${nx(bal * (k.indexed ? C : 1))}`;
   };
   return html`<div class="eqs">
-    <p>תרחיש <b>${sc.name}</b>: ${sc.status === "single" ? "דירה יחידה" : "דירה נוספת"}, ${sc.usage === "rent" ? "מושכרת" : "גרים בה"}, מימון ${sc.ltv}%.</p>
+    <p>תרחיש <b>${sc.name}</b>: ${nx(sc.alloc, 1)}% מההון העצמי לדירה, ${sc.status === "single" ? "דירה יחידה" : "דירה נוספת"}, ${sc.usage === "rent" ? "מושכרת" : "גרים בה"}, מימון ${nx(sm.ltv, 1)}%.</p>
     <h3>רכישה (חודש 0)</h3>
+    ${D_(S`A = ${rate(sc.alloc)}\cdot ${nx(c.equity)} = ${nx(sm.to_home)}, \qquad c_0 = ${nx(c.equity)} - ${nx(sm.to_home)} = ${nx(sm.side_start)}`)}
     ${D_(S`\mathcal{S}(${nx(P)}) = ${rowsTex} = ${nx(sm.purchase_tax)}`)}
-    ${D_(S`U = ${nx(sm.down_payment)} + ${nx(sm.purchase_tax)} + ${nx(sm.costs_total)} = ${nx(sm.upfront)}, \qquad c_0 = ${nx(c.equity)} - ${nx(sm.upfront)} = ${nx(sm.side_start)}`)}
-    <h3>המשכנתא: ${T_(S`L = ${rate(sc.ltv)}\cdot ${nx(P)} = ${nx(sm.loan)}`)}</h3>
+    ${D_(S`D = ${nx(sm.to_home)} - ${nx(sm.purchase_tax)} - ${nx(sm.costs_total)} = ${nx(sm.down_payment)}, \qquad D / P = ${nx(sm.equity_share, 1)}\%`)}
+    <h3>המשכנתא: ${T_(S`L = P - D = ${nx(P)} - ${nx(sm.down_payment)} = ${nx(sm.loan)}`)}</h3>
     ${sm.tracks.map((k, i) => html`<p>מסלול ${i + 1} (${k.name || "ללא שם"}): ${KIND_HE[k.kind] || ""}, ${k.method === "equal" ? "קרן שווה" : "שפיצר"}${k.indexed ? ", צמוד למדד" : ""}, ${k.months} חודשים${k.kind !== "fixed" ? ". הריבית משתנה, ולכן ההחזר מחושב מחדש בכל חודש על היתרה והתקופה שנשארה" : ""}</p>${D_(trackTex(k, i))}`)}
     <p>סך יתרת המשכנתא בזמן ${T_(S`t = ${t}`)}: ${T_(S`${nx(at("mortgage"))}`)}.</p>
     <h3>התזרים בחודש הראשון</h3>

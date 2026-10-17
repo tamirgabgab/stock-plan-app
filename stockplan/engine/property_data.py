@@ -21,7 +21,7 @@ import pandas as pd
 
 from ..data.base import DataError
 from .market import apply_leverage, month_grid
-from .property import Paths, PropertyRequest, fixed_paths, holdings_key, months_of
+from .property import Paths, PropertyRequest, fixed_paths, holdings_key, months_of, synthetic_paths
 
 SERIES_LABELS = {
     "market": "מחירי הנכסים ושער הדולר",
@@ -58,6 +58,8 @@ def build_paths(req: PropertyRequest, md, scenarios: Optional[List[dict]] = None
     """The paths of ``scenarios`` (dumped scenario dicts; default: all of the request's)."""
     c = req.common
     T = months_of(c.years)
+    if c.mode == "synthetic":
+        return synthetic_paths(c.model_dump(), T)
     if c.mode != "history":
         return fixed_paths(T)
     if md is None:
@@ -158,4 +160,83 @@ def build_paths(req: PropertyRequest, md, scenarios: Optional[List[dict]] = None
     return paths
 
 
-__all__ = ["build_paths", "SERIES_LABELS"]
+__all__ = ["build_paths", "calibrate", "SERIES_LABELS"]
+
+
+# ------------------------------------------------------------- synthetic calibration
+
+def _monthly(s: pd.Series) -> pd.Series:
+    """Last value of each month, on a month-start index, forward-filled over gaps."""
+    s = s.dropna()
+    s = s.groupby(pd.DatetimeIndex(s.index).to_period("M")).last()
+    s.index = s.index.to_timestamp()
+    return s.reindex(pd.date_range(s.index[0], s.index[-1], freq="MS")).ffill()
+
+
+def _portfolio_monthly(holdings: List[dict], md, leverage_cost: float) -> pd.Series:
+    """Monthly log return of a portfolio in shekels, rebalanced monthly to its weights."""
+    hs = [h for h in holdings if h["weight"] > 0]
+    if not hs:
+        raise ValueError("אין נכסים בתיק")
+    fx = _monthly(md.fx_usd_ils())
+    total = sum(h["weight"] for h in hs)
+    parts = []
+    for h in hs:
+        px = _monthly(apply_leverage(md.prices(h["ticker"].strip().upper()).dropna(), h["leverage"], leverage_cost))
+        ils = (px * fx).dropna()
+        parts.append(h["weight"] / total * (ils / ils.shift(1)))
+    gross = pd.concat(parts, axis=1, sort=True).dropna().sum(axis=1)
+    return np.log(gross)
+
+
+def _psd_corr(M: np.ndarray) -> np.ndarray:
+    """The nearest valid correlation matrix (eigenvalues clipped), shrunk until it stays valid
+    after rounding to two decimals."""
+    w, V = np.linalg.eigh(M)
+    A = V @ np.diag(np.maximum(w, 1e-6)) @ V.T
+    d = np.sqrt(np.diag(A))
+    A = A / np.outer(d, d)
+    for k in range(20):
+        B = np.round(np.eye(len(A)) + (A - np.eye(len(A))) * (1 - 0.02 * k), 2)
+        if np.linalg.eigvalsh(B).min() > -1e-9:
+            return B
+    return np.eye(len(A))
+
+
+def calibrate(req: PropertyRequest, md) -> dict:
+    """Geometric means, annual volatilities and correlations of the monthly changes of the
+    historical series, for the synthetic mode's parameters."""
+    from .property import SYN_SERIES
+    d = req.model_dump()
+    changes: Dict[str, pd.Series] = {}
+    ranges: Dict[str, List[str]] = {}
+    getters = {"cpi": lambda: md.cpi("IL"), "housing": md.housing_index, "rent": md.rent_index, "rate": md.boi_rate}
+    for name, get in getters.items():
+        s = _monthly(get())
+        changes[name] = (s.diff() if name == "rate" else np.log(s / s.shift(1))).dropna()
+    markets = {}
+    for sc in d["scenarios"]:
+        r = _portfolio_monthly(sc["market"]["holdings"], md, d["common"]["leverage_cost"])
+        markets[sc["id"]] = {"annual_return": round(float(np.expm1(r.mean() * 12)) * 100, 2),
+                             "volatility": round(float(r.std() * np.sqrt(12)) * 100, 2)}
+        changes.setdefault("market", r)
+    for name, s in changes.items():
+        ranges[SERIES_LABELS[name]] = [s.index[0].strftime("%Y-%m-%d"), s.index[-1].strftime("%Y-%m-%d")]
+    geo = lambda s: round(float(np.expm1(s.mean() * 12)) * 100, 2)
+    vol = lambda s: round(float(s.std() * np.sqrt(12)) * 100, 2)
+    n = len(SYN_SERIES)
+    M = np.eye(n)
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = changes[SYN_SERIES[i]], changes[SYN_SERIES[j]]
+            both = pd.concat([a, b], axis=1, sort=True).dropna()
+            M[i, j] = M[j, i] = float(both.iloc[:, 0].corr(both.iloc[:, 1])) if len(both) > 24 else 0.0
+    M = _psd_corr(np.nan_to_num(M))
+    corr = {f"{SYN_SERIES[i]}|{SYN_SERIES[j]}": float(M[i, j]) + 0.0 for i in range(n) for j in range(i + 1, n)}
+    return {
+        "inflation": geo(changes["cpi"]), "cpi_vol": vol(changes["cpi"]),
+        "housing": geo(changes["housing"]), "housing_vol": vol(changes["housing"]),
+        "rent": geo(changes["rent"]), "rent_vol": vol(changes["rent"]),
+        "rate_vol": round(float(changes["rate"].std() * np.sqrt(12)), 2),
+        "corr": corr, "markets": markets, "ranges": ranges,
+    }

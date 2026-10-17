@@ -419,9 +419,9 @@ def _input_error(exc: InputError) -> HTTPException:
 
 def _detail_row(plan: PropertyRequest, res: dict) -> int:
     paths = res["paths"]
-    if not paths.history:
+    if paths.R == 1:
         return 0
-    if plan.detail_start:
+    if paths.history and plan.detail_start:
         hit = np.where(paths.start_dates == pd.Timestamp(plan.detail_start))[0]
         if len(hit):
             return int(hit[0])
@@ -482,6 +482,17 @@ def property_simulate(plan: PropertyRequest):
         "scale": float(paths.scale[row]) if paths.scale is not None else 1.0,
         "scenarios": out, "failed": res["failed"], "warnings": res["warnings"],
     }
+
+
+@app.post("/api/property/calibrate")
+def property_calibrate(plan: PropertyRequest):
+    """Synthetic-mode parameters estimated from the historical series (and each scenario's
+    portfolio): geometric means, annual volatilities and correlations of monthly changes."""
+    from .engine.property_data import calibrate
+    try:
+        return _jsonable(calibrate(plan, get_market_data()))
+    except (DataError, ValueError) as exc:
+        raise _bad_request(exc)
 
 
 @app.post("/api/property/solve")

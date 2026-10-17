@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -192,3 +193,146 @@ def test_api_simulate_and_solve():
     bad = client.post("/api/property/solve", json={"plan": plan, "a": "m", "b": "m", "metric": "final",
                                                    "scope": "a", "key": "price", "lo": 1, "hi": 2})
     assert bad.status_code == 400
+
+
+# ------------------------------------------------------------ variable rates
+
+from stockplan.data import DemoMarketData
+from stockplan.engine.property import fixed_paths, metrics, months_of, simulate
+from stockplan.engine.property_data import build_paths
+
+
+def test_prime_track_equals_fixed_when_the_rate_is_flat():
+    prime = request([apartment(tracks=[{"share": 100, "years": 20, "kind": "prime", "margin": -0.5}])],
+                    rate_path=[{"year": 0, "rate": 4.5}], prime_spread=1.5)
+    fixed = request([apartment(tracks=[{"share": 100, "years": 20, "rate": 5.5}])])
+    a = simulate_scenario(prime.scenarios[0], prime.common, prime.taxes)
+    b = simulate_scenario(fixed.scenarios[0], fixed.common, fixed.taxes)
+    assert np.allclose(a["flows"]["payment"], b["flows"]["payment"])
+
+
+def test_rate_change_recomputes_the_payment_on_the_remaining_term():
+    req = request([apartment(tracks=[{"share": 100, "years": 20, "kind": "prime", "margin": 0}])],
+                  rate_path=[{"year": 0, "rate": 3.5}, {"year": 5, "rate": 5.5}], prime_spread=1.5)
+    r = simulate_scenario(req.scenarios[0], req.common, req.taxes)
+    bal60 = r["parts"]["mortgage"][60]
+    assert r["flows"]["payment"][60] == pytest.approx(annuity(1_000_000, 0.05 / 12, 240))
+    assert r["flows"]["payment"][61] == pytest.approx(annuity(bal60, 0.07 / 12, 180))
+
+
+def test_variable_track_resets_every_n_years():
+    req = request([apartment(tracks=[{"share": 100, "years": 20, "kind": "variable", "margin": 1, "reset_years": 5}])],
+                  rate_path=[{"year": 0, "rate": 3}, {"year": 2, "rate": 6}, {"year": 5, "rate": 2}])
+    r = simulate_scenario(req.scenarios[0], req.common, req.taxes)
+    rates = r["summary"]["tracks"][0]["rates"]
+    assert rates[1] == pytest.approx(4) and rates[60] == pytest.approx(4)    # fixed until the reset
+    assert rates[61] == pytest.approx(3)                                       # BoI 2% + 1% at year 5
+
+
+def test_schedule_track_and_rate_shift():
+    sched = [{"year": 0, "rate": 4}, {"year": 3, "rate": 6}]
+    req = request([apartment(tracks=[{"share": 100, "years": 20, "kind": "schedule", "schedule": sched}])], rate_shift=1)
+    r = simulate_scenario(req.scenarios[0], req.common, req.taxes)
+    rates = r["summary"]["tracks"][0]["rates"]
+    assert rates[36] == pytest.approx(5) and rates[37] == pytest.approx(7)
+
+
+def test_solve_rate_shift_break_even():
+    m = {"kind": "market", "id": "m", "market": {"annual_return": 3}}
+    req = request([m, apartment(rent=5000, appreciation=3,
+                                tracks=[{"share": 100, "years": 20, "kind": "prime", "margin": 0}])],
+                  rate_path=[{"year": 0, "rate": 3}])
+    out = solve_equal(req, "m", "a", "final", "common", "rate_shift", -2, 10)
+    assert len(out["roots"]) == 1
+    req.common.rate_shift = out["roots"][0]
+    fm, fa = (s["metrics"]["final"][0] for s in run_property(req)["scenarios"])
+    assert fm == pytest.approx(fa, rel=1e-5)
+
+
+def test_array_parameters_match_scalar_runs():
+    req = request([apartment(rent=5000)])
+    d = req.model_dump()
+    T = months_of(d["common"]["years"])
+    xs = np.array([1.0, 3.0, 5.0])
+    sc = dict(d["scenarios"][0], appreciation=xs[:, None])
+    r = simulate(sc, d["common"], d["taxes"], fixed_paths(T), shape=(3, 1), full=False)
+    for i, x in enumerate(xs):
+        one = simulate(dict(d["scenarios"][0], appreciation=x), d["common"], d["taxes"], fixed_paths(T))
+        assert r["net"][-1][i, 0] == pytest.approx(one["net"][-1][0])
+
+
+# --------------------------------------------------------------------- history
+
+MD = DemoMarketData(end="2026-01-01")
+
+
+def hist_request(years=10, **flags):
+    plan = {"common": {"years": years, "equity": 900_000, "budget": 8000, "mode": "history", "real": True,
+                       "history": {"market": True, "cpi": True, "housing": True, "rent": True, "rate": True, **flags}},
+            "scenarios": [{"kind": "market", "id": "m", "name": "שוק"},
+                          apartment(price=2_000_000, ltv=60, rent=5000,
+                                    tracks=[{"share": 50, "years": 20, "kind": "prime", "margin": -0.5},
+                                            {"share": 50, "years": 20, "rate": 4.5, "indexed": True}])]}
+    return PropertyRequest.model_validate(plan)
+
+
+def test_history_paths_cover_every_start():
+    req = hist_request()
+    paths = build_paths(req, MD)
+    assert paths.R > 12 and paths.start_dates[0] >= pd.Timestamp("1994-01-01")
+    assert np.allclose(paths.cpi[:, 0], 1) and np.allclose(paths.home[:, 0], 1)
+    assert paths.rate.shape == (paths.R, 121)
+    # Fewer historical series -> a longer range (the market data start in 1985).
+    short = build_paths(hist_request(housing=False, rent=False, rate=False), MD)
+    assert short.R > paths.R
+
+
+def test_history_market_matches_the_portfolio_returns():
+    req = hist_request()
+    req.scenarios[0].market.annual_fee = 0
+    req.scenarios[0].market.tax_rate = 0
+    req.common.index_budget = False
+    paths = build_paths(req, MD)
+    d = req.model_dump()
+    r = simulate(d["scenarios"][0], d["common"], d["taxes"], paths)
+    g = next(iter(paths.growth.values()))
+    v = np.full(paths.R, 900_000.0)
+    for m in range(1, paths.T + 1):
+        v = v * g[:, m] + 8000
+    assert np.allclose(r["net"][-1], v)
+
+
+def test_history_run_and_too_long_horizon():
+    res = run_property(hist_request(), MD)
+    s = res["scenarios"][1]
+    assert s["net"].shape == (121, res["paths"].R)
+    assert np.isfinite(s["metrics"]["irr"]).any()
+    with pytest.raises(Exception, match="אין תאריכי התחלה"):
+        build_paths(hist_request(years=40), MD)
+
+
+def test_history_solve_per_row():
+    req = hist_request()
+    out = solve_equal(req, "m", "a", "final", "a", "appreciation", -10, 20, stat="median", md=MD)
+    rows = out["per_row"]["roots"]
+    assert len(rows) == build_paths(req, MD).R
+    # With the housing index on history, appreciation is unused: switch it off to solve on it.
+    req.common.history.housing = False
+    out = solve_equal(req, "m", "a", "final", "a", "appreciation", -10, 20, stat="median", md=MD)
+    assert out["roots"]
+    i = next(i for i, x in enumerate(out["per_row"]["roots"]) if x is not None)
+    req.scenarios[1].appreciation = out["per_row"]["roots"][i]
+    res = run_property(req, MD)
+    fm, fa = (sc["metrics"]["final"][i] for sc in res["scenarios"])
+    assert fm == pytest.approx(fa, rel=1e-4)
+
+
+def test_api_history(monkeypatch):
+    import stockplan.data as data_mod
+    monkeypatch.setattr(data_mod, "_provider", MD)
+    body = client.post("/api/property/simulate", json=hist_request().model_dump()).json()
+    assert body["mode"] == "history" and body["n"] == len(body["start_dates"]) > 1
+    assert len(body["scenarios"][0]["metrics"]["final"]) == body["n"]
+    pick = body["start_dates"][3]
+    plan = hist_request().model_dump() | {"detail_start": pick}
+    assert client.post("/api/property/simulate", json=plan).json()["detail_row"] == 3

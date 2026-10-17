@@ -645,3 +645,14 @@ table.data.compact td, table.data.compact th { padding: 4px 8px; }
 .js-plotly-plot .modebar { direction: ltr; }
 .js-plotly-plot .modebar-btn path { fill: var(--text-muted) !important; }
 .js-plotly-plot .modebar-btn.active path, .js-plotly-plot .modebar-btn:hover path { fill: var(--text-primary) !important; }
+
+/* history mode and floating-rate tracks */
+.series-flags { display: flex; flex-direction: column; gap: 6px; }
+.stat-bar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 16px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 14px; font-size: 13px; }
+.points { display: flex; flex-direction: column; gap: 4px; }
+.point-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 6px; align-items: end; }
+.point-row .mini-field input { min-width: 0; }
+.preset-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.small-inline { font-size: 11px; margin-inline-start: 4px; }
+.plot.hidden { display: none; }

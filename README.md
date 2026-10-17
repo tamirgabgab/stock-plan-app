@@ -76,8 +76,13 @@ the UI — it is not real market history).
   missing parameter where one exists and the numerical solver where it does not, plus
   the same equations with the current plan's numbers plugged in, and a live chart
   of the Illinois solver's steps on the current plan.
-- **Apartment vs. capital market tab** – a deterministic month-by-month comparison with
-  fixed parameters (no market history). One person (equity + a monthly budget, optionally
+- **Apartment vs. capital market tab** – a month-by-month comparison on fixed parameters
+  or on history: in history mode every start month is a realization, and each chosen series
+  (portfolio returns from a holdings table, Israeli CPI, the housing price index, the rent
+  index, the Bank of Israel rate) runs on the data, with the median, a 10–90 band and the
+  probability that A beats B. Mortgage tracks can be fixed, prime, variable every N years or
+  follow their own rate schedule; in fixed mode the Bank of Israel rate follows an editable
+  step path with presets, and a parallel rate shift can be solved for. One person (equity + a monthly budget, optionally
   CPI-indexed) and any number of scenarios: market portfolios (return, deposit fee,
   management fee, capital-gains tax on real or nominal gains) and apartments (price,
   single/additional apartment, LTV, a mortgage mix of tracks with term, rate, CPI-linking

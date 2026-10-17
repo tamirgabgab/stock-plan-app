@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List, Literal, Optional
 
 import numpy as np
+import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -21,7 +22,7 @@ from .data import DataError, demo_reason, get_market_data
 from .data.search import lookup, search
 from .engine import (Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range,
                      benchmark_path, realization_detail, run_plan, run_trinity, solve_trace, trinity_heatmap)
-from .engine.property import METRICS, PropertyRequest, run_property, solve_equal
+from .engine.property import METRICS, STATS, PropertyRequest, row_of, run_property, solve_equal
 
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -390,14 +391,11 @@ class PropertySolveIn(BaseModel):
     a: str
     b: str
     metric: Literal[METRICS] = "final"
+    stat: Literal[STATS] = "median"
     scope: str                       # "common" or a scenario id
     key: str = Field(min_length=1, max_length=80)
     lo: float
     hi: float
-
-
-def _series(d: dict) -> dict:
-    return {k: _floats(v) for k, v in d.items()}
 
 
 def _jsonable(v):
@@ -405,6 +403,8 @@ def _jsonable(v):
         return {k: _jsonable(x) for k, x in v.items()}
     if isinstance(v, (list, tuple)):
         return [_jsonable(x) for x in v]
+    if isinstance(v, np.ndarray):
+        return _jsonable(v.tolist())
     if isinstance(v, (float, np.floating)):
         return float(v) if math.isfinite(v) else None
     if isinstance(v, np.integer):
@@ -412,38 +412,74 @@ def _jsonable(v):
     return v
 
 
+def _detail_row(plan: PropertyRequest, res: dict) -> int:
+    paths = res["paths"]
+    if not paths.history:
+        return 0
+    if plan.detail_start:
+        hit = np.where(paths.start_dates == pd.Timestamp(plan.detail_start))[0]
+        if len(hit):
+            return int(hit[0])
+    final = np.asarray(res["scenarios"][0]["metrics"]["final"], dtype=float)
+    med = np.nanmedian(final)
+    return int(np.nanargmin(np.abs(final - med)))
+
+
 @app.post("/api/property/simulate")
 def property_simulate(plan: PropertyRequest):
-    """Every scenario's net worth on realization per month, its parts and flows, and metrics.
+    """Every scenario's net worth on realization per month and its metrics, for every
+    realization (one in fixed mode), plus the parts, flows and summary of one detailed row.
 
-    Money series are in display units: today's money (divided by the CPI) in real mode.
+    Money series are in display units: today's money (real) or the shekels of the time
+    (nominal). The summary stays in input units (the money of the start date).
     """
     try:
-        res = run_property(plan)
-    except ValueError as exc:
+        res = run_property(plan, get_market_data())
+    except (DataError, ValueError) as exc:
         raise _bad_request(exc)
-    cpi = np.asarray(res["cpi"])
-    k = 1 / cpi if plan.common.real else np.ones_like(cpi)
+    except Exception as exc:  # unexpected: log with traceback, still answer in JSON
+        log.exception("property simulation failed")
+        raise HTTPException(status_code=500, detail=f"שגיאה פנימית: {exc}")
+    paths = res["paths"]
+    T, R = paths.T, paths.R
+    if R * (T + 1) * len(res["scenarios"]) > MAX_CELLS:
+        raise HTTPException(status_code=400, detail="יותר מדי נקודות. קצר את התקופה או הפחת תרחישים")
+    row = _detail_row(plan, res)
+    real = plan.common.real
     out = []
     for r in res["scenarios"]:
+        cpi = r["cpi"][:, row]
+        k = 1 / cpi if real else np.full(T + 1, paths.scale[row] if paths.scale is not None else 1.0)
+        disp = r["display"]                                   # (T+1, R)
         out.append({
             "id": r["id"], "name": r["name"], "kind": r["kind"],
-            "net": _floats(r["net"] * k),
-            "parts": _series({n: v * k for n, v in r["parts"].items()}),
-            "flows": _series({n: v * k for n, v in r["flows"].items()}),
-            "summary": _jsonable(r["summary"]),
-            "metrics": _jsonable(r["metrics"]),
+            "net_b64": _matrix_b64(disp.T),
+            "net": _floats(disp[:, row]),
+            "parts": {n: _floats(v[:, row] * k) for n, v in r["parts"].items()},
+            "flows": {n: _floats(v[:, row] * (1 if n == "boi" else k)) for n, v in r["flows"].items()},
+            "summary": _jsonable(row_of(r["summary"], row)),
+            "metrics": {n: _floats(np.ravel(v)) for n, v in r["metrics"].items()},
             "warnings": r["warnings"],
         })
-    return {"months": res["months"], "real": plan.common.real, "cpi": _floats(cpi), "scenarios": out}
+    first = res["scenarios"][0]
+    return {
+        "months": T, "real": real, "mode": plan.common.mode, "n": R, "detail_row": row,
+        "start_dates": [d.strftime("%Y-%m-%d") for d in paths.start_dates] if paths.history else None,
+        "history": paths.info or None,
+        "cpi": _floats(first["cpi"][:, row]),
+        "scale": float(paths.scale[row]) if paths.scale is not None else 1.0,
+        "scenarios": out,
+    }
 
 
 @app.post("/api/property/solve")
 def property_solve(body: PropertySolveIn):
-    """The values of one parameter at which scenarios a and b score the same on a metric."""
+    """The values of one parameter at which scenarios a and b are equivalent on a metric
+    (for a statistic over the realizations, and per realization in history mode)."""
     try:
-        return _jsonable(solve_equal(body.plan, body.a, body.b, body.metric, body.scope, body.key, body.lo, body.hi))
-    except ValueError as exc:
+        return _jsonable(solve_equal(body.plan, body.a, body.b, body.metric, body.scope, body.key, body.lo,
+                                     body.hi, stat=body.stat, md=get_market_data()))
+    except (DataError, ValueError) as exc:
         raise _bad_request(exc)
 
 

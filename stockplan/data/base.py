@@ -22,6 +22,15 @@ class MarketData(Protocol):
     def cpi(self, country: str) -> pd.Series:
         """Monthly consumer price index for ``"US"`` or ``"IL"``, indexed by month start."""
 
+    def housing_index(self) -> pd.Series:
+        """Monthly Israeli housing price index (CBS), indexed by month start."""
+
+    def rent_index(self) -> pd.Series:
+        """Monthly Israeli rent index (the CPI's rent component, CBS), indexed by month start."""
+
+    def boi_rate(self) -> pd.Series:
+        """Monthly Bank of Israel policy rate, annual percent, indexed by month start."""
+
 
 def normalize_daily(series: pd.Series) -> pd.Series:
     """Return a float series with a sorted, unique, tz-naive midnight DatetimeIndex."""

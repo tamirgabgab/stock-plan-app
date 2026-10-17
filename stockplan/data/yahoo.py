@@ -6,7 +6,8 @@ last few days are downloaded and chained onto the stored total-return index, so 
 the first run a refresh costs one tiny request per ticker.
 
 A CSV placed in ``data_cache/manual/`` (``fx_usd_ils.csv``, ``cpi_us.csv``, ``cpi_il.csv``,
-columns ``date,value``) overrides the online source, for offline use or corrections.
+``housing_il.csv``, ``rent_il.csv``, ``boi_rate.csv``; columns ``date,value``) overrides the
+online source, for offline use or corrections.
 """
 from __future__ import annotations
 
@@ -35,9 +36,18 @@ BOI_USD_ILS_URL = (
     "BOI.STATISTICS/EXR/1.0/RER_USD_ILS?format=csv"
 )
 FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
-CBS_CPI_URL = (
-    "https://api.cbs.gov.il/index/data/price?id=120010&format=json&download=false"
+CBS_INDEX_URL = (
+    "https://api.cbs.gov.il/index/data/price?id={code}&format=json&download=false"
     "&startPeriod=01-1951&endPeriod=12-2100&lang=en&PageSize=1000"
+)
+CBS_CPI_URL = CBS_INDEX_URL.format(code=120010)
+# Not yet verified against the live services (the development network blocks them); the
+# manual CSV override (housing_il.csv, rent_il.csv, boi_rate.csv) always takes precedence.
+CBS_HOUSING_CODE = 40010          # dwellings price index
+CBS_RENT_CODE = 120460            # CPI component: rent
+BOI_RATE_URL = (
+    "https://edge.boi.gov.il/FusionEdgeServer/sdmx/v2/data/dataflow/"
+    "BOI.STATISTICS/BR/1.0/MNT_RIB_BOI_D?format=csv"
 )
 
 
@@ -307,15 +317,37 @@ class YahooMarketData:
                                       monthly=True)
         raise ValueError(country)
 
+    # ---------------------------------------------------------- housing market
+    def housing_index(self) -> pd.Series:
+        return self._cached_macro("housing_il", [("CBS", lambda: _cbs_index(CBS_HOUSING_CODE)),
+                                                 ("FRED", lambda: _fred_series("QISN628BIS"))],
+                                  monthly=True)
+
+    def rent_index(self) -> pd.Series:
+        return self._cached_macro("rent_il", [("CBS", lambda: _cbs_index(CBS_RENT_CODE))], monthly=True)
+
+    def boi_rate(self) -> pd.Series:
+        def boi() -> pd.Series:
+            df = pd.read_csv(io.StringIO(_http_get(BOI_RATE_URL).text))
+            s = pd.Series(pd.to_numeric(df["OBS_VALUE"], errors="coerce").values,
+                          index=pd.to_datetime(df["TIME_PERIOD"])).dropna()
+            return s.groupby(s.index.to_period("M")).last().to_timestamp()
+
+        return self._cached_macro("boi_rate", [("Bank of Israel", boi),
+                                               ("FRED", lambda: _fred_series("IRSTCI01ILM156N"))],
+                                  monthly=True)
+
 
 def _cbs_cpi() -> pd.Series:
-    """Israeli CPI (general index, code 120010) from the Central Bureau of Statistics API.
+    """Israeli CPI (general index, code 120010) from the Central Bureau of Statistics API."""
+    return _cbs_index(120010)
 
-    The index is re-based every few years, so it is rebuilt by chaining the monthly
-    percentage changes when they are available.
-    """
+
+def _cbs_index(code: int) -> pd.Series:
+    """A CBS price index by code. The index is re-based every few years, so it is rebuilt by
+    chaining the monthly percentage changes when they are available."""
     rows: list[tuple[pd.Timestamp, Optional[float], Optional[float]]] = []
-    url: Optional[str] = CBS_CPI_URL
+    url: Optional[str] = CBS_INDEX_URL.format(code=code)
     pages = 0
     while url and pages < 50:
         payload = _http_get(url).json()
@@ -337,7 +369,7 @@ def _cbs_cpi() -> pd.Series:
         paging = payload.get("paging", {}) if isinstance(payload, dict) else {}
         url = paging.get("next_url") or None
     if not rows:
-        raise DataError("CBS returned no CPI rows")
+        raise DataError(f"CBS returned no rows for index {code}")
     df = pd.DataFrame(rows, columns=["date", "value", "percent"]).drop_duplicates("date")
     df = df.sort_values("date").set_index("date")
     if df["percent"].notna().all():

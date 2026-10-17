@@ -66,6 +66,21 @@ the UI — it is not real market history).
   the same equations with the current plan's numbers plugged in, and a live chart
   of the Illinois solver's steps on the current plan.
 
+- **Apartment vs. capital market tab** – a deterministic month-by-month comparison with
+  fixed parameters (no market history). One person (equity + a monthly budget, optionally
+  CPI-indexed) and any number of scenarios: market portfolios (return, deposit fee,
+  management fee, capital-gains tax on real or nominal gains) and apartments (price,
+  single/additional apartment, LTV, a mortgage mix of tracks with term, rate, CPI-linking
+  and Spitzer or equal-principal repayment, one-time costs, purchase tax by editable
+  brackets, rent with growth, vacancy and the three Israeli rent-tax tracks, appreciation,
+  maintenance, insurance, selling costs, mas shevach with the single-apartment exemption
+  ceiling). The budget surplus or shortfall of an apartment goes to a side account in the
+  market. Each line is the **net worth on realization** (assets minus liabilities after
+  exit costs and taxes) over time. Metrics: final value, sum over all months, present
+  value, discounted sum, IRR, crossing points. Solve any numeric parameter for the value
+  at which two chosen scenarios are equivalent on a metric. The general equations and each
+  scenario's equation with its numbers plugged in are shown in the tab.
+
 ## Data sources
 
 | Data | Source | Notes |
@@ -85,6 +100,7 @@ run.py                 # launcher (FastAPI + browser)
 stockplan/
   data/                # market data providers + disk cache (Yahoo, demo)
   engine/              # pure numpy simulation engine and solvers
+    property.py        # apartment vs. capital market model (fixed parameters)
   api.py               # FastAPI endpoints, serves the web UI
   web/                 # static UI: Preact + htm + Plotly + KaTeX (vendored, no build step)
 tests/                 # pytest: engine and API

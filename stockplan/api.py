@@ -20,6 +20,7 @@ from .data import DataError, get_market_data
 from .data.search import lookup, search
 from .engine import (Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range,
                      benchmark_path, realization_detail, run_plan, run_trinity, solve_trace, trinity_heatmap)
+from .engine.property import METRICS, PropertyRequest, run_property, solve_equal
 
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -340,5 +341,69 @@ def trinity_heat(body: HeatmapIn):
     except Exception as exc:
         log.exception("heat map failed")
         raise HTTPException(status_code=500, detail=f"שגיאה פנימית: {exc}")
+
+# --------------------------------------------------------- apartment vs. capital market
+
+class PropertySolveIn(BaseModel):
+    plan: PropertyRequest
+    a: str
+    b: str
+    metric: Literal[METRICS] = "final"
+    scope: str                       # "common" or a scenario id
+    key: str = Field(min_length=1, max_length=80)
+    lo: float
+    hi: float
+
+
+def _series(d: dict) -> dict:
+    return {k: _floats(v) for k, v in d.items()}
+
+
+def _jsonable(v):
+    if isinstance(v, dict):
+        return {k: _jsonable(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_jsonable(x) for x in v]
+    if isinstance(v, (float, np.floating)):
+        return float(v) if math.isfinite(v) else None
+    if isinstance(v, np.integer):
+        return int(v)
+    return v
+
+
+@app.post("/api/property/simulate")
+def property_simulate(plan: PropertyRequest):
+    """Every scenario's net worth on realization per month, its parts and flows, and metrics.
+
+    Money series are in display units: today's money (divided by the CPI) in real mode.
+    """
+    try:
+        res = run_property(plan)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    cpi = np.asarray(res["cpi"])
+    k = 1 / cpi if plan.common.real else np.ones_like(cpi)
+    out = []
+    for r in res["scenarios"]:
+        out.append({
+            "id": r["id"], "name": r["name"], "kind": r["kind"],
+            "net": _floats(r["net"] * k),
+            "parts": _series({n: v * k for n, v in r["parts"].items()}),
+            "flows": _series({n: v * k for n, v in r["flows"].items()}),
+            "summary": _jsonable(r["summary"]),
+            "metrics": _jsonable(r["metrics"]),
+            "warnings": r["warnings"],
+        })
+    return {"months": res["months"], "real": plan.common.real, "cpi": _floats(cpi), "scenarios": out}
+
+
+@app.post("/api/property/solve")
+def property_solve(body: PropertySolveIn):
+    """The values of one parameter at which scenarios a and b score the same on a metric."""
+    try:
+        return _jsonable(solve_equal(body.plan, body.a, body.b, body.metric, body.scope, body.key, body.lo, body.hi))
+    except ValueError as exc:
+        raise _bad_request(exc)
+
 
 app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")

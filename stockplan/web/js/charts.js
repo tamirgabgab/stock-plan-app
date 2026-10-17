@@ -21,6 +21,7 @@ export function theme() {
     neutral: v("--neutral-mark"),
     rangeOut: v("--range-out"),
     reps: [v("--rep-lo"), v("--rep-mid"), v("--rep-hi")],
+    palette: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => v(`--series-${i}`)),
   };
 }
 
@@ -311,4 +312,76 @@ export function accountFigure({ dates, account, bench, flow, flowLabel, benchLab
     yaxis: axis(t, { tickprefix: sym, tickformat: "~s", fixedrange: true, rangemode: "tozero" }),
   });
   return { data, layout };
+}
+
+// ------------------------------------------------------------ apartment vs. market
+
+const yearsAxis = (t, T) => axis(t, { title: { text: "שנים" }, range: [0, T / 12], fixedrange: true });
+
+// Net worth on realization of every scenario over time, the selected month and crossings.
+export function propertyFigure({ series, T, timeIdx, crossings = [], sym }) {
+  const t = theme();
+  const x = Array.from({ length: T + 1 }, (_, i) => i / 12);
+  const data = series.map((s) => ({
+    x, y: s.y, mode: "lines", name: s.name, line: { width: s.bold ? 3 : 2.2, color: t.palette[s.color % 8], dash: s.dash },
+    hovertemplate: `${s.name}: ${sym}%{y:,.0f}<extra></extra>`,
+  }));
+  if (crossings.length) {
+    data.push({ x: crossings.map((c) => c.t / 12), y: crossings.map((c) => c.y), mode: "markers", name: "נקודת חיתוך",
+      marker: { size: 11, symbol: "x", color: t.text, line: { width: 1, color: t.surface } }, hoverinfo: "skip" });
+  }
+  const shapes = [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: t.axis, width: 1 } }];
+  if (timeIdx !== null && timeIdx !== undefined) {
+    shapes.push({ type: "line", yref: "paper", y0: 0, y1: 1, x0: timeIdx / 12, x1: timeIdx / 12, line: { color: t.text2, width: 1, dash: "dot" } });
+  }
+  const layout = baseLayout(t, {
+    hovermode: "x unified", dragmode: false, shapes,
+    xaxis: yearsAxis(t, T),
+    yaxis: axis(t, { tickprefix: sym, tickformat: "~s", fixedrange: true }),
+  });
+  return { data, layout };
+}
+
+// One scenario's net worth split into assets (up) and liabilities and exit costs (down).
+export function breakdownFigure({ T, parts, sym }) {
+  const t = theme();
+  const x = Array.from({ length: T + 1 }, (_, i) => i / 12);
+  const data = parts.map((p, i) => ({
+    x, y: p.y, name: p.name, mode: "lines", stackgroup: p.y.some((v) => v < 0) ? "neg" : "pos",
+    line: { width: 0.5, color: t.palette[p.color % 8] }, hovertemplate: `${p.name}: ${sym}%{y:,.0f}<extra></extra>`,
+  }));
+  return { data, layout: baseLayout(t, {
+    hovermode: "x unified", dragmode: false,
+    xaxis: yearsAxis(t, T),
+    yaxis: axis(t, { tickprefix: sym, tickformat: "~s", fixedrange: true }),
+  }) };
+}
+
+export function withNetLine(fig, { T, y, sym }) {
+  const t = theme();
+  const x = Array.from({ length: T + 1 }, (_, i) => i / 12);
+  fig.data.push({ x, y, mode: "lines", name: "שווי נטו", line: { width: 3, color: t.text },
+                  hovertemplate: `שווי נטו: ${sym}%{y:,.0f}<extra></extra>` });
+  return fig;
+}
+
+// The break-even scan: f(x) = metric(A) - metric(B) against the unknown, with the roots.
+export function scanFigure({ xs, ys, roots, current, xLabel, ySuffix = "", yPrefix = "" }) {
+  const t = theme();
+  const data = [
+    { x: xs, y: ys, mode: "lines", line: { width: 2, color: t.blue }, name: "הפרש A − B", connectgaps: false,
+      hovertemplate: `x=%{x:,.4g}<br>${yPrefix}%{y:,.4g}${ySuffix}<extra></extra>` },
+    { x: roots, y: roots.map(() => 0), mode: "markers", name: "שקילות",
+      marker: { size: 12, color: t.orange, line: { width: 2, color: t.surface } }, hoverinfo: "skip" },
+  ];
+  const shapes = [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: t.muted, width: 1, dash: "dash" } }];
+  if (Number.isFinite(current)) {
+    shapes.push({ type: "line", yref: "paper", y0: 0, y1: 1, x0: current, x1: current, line: { color: t.violet, width: 1.5, dash: "dot" } });
+  }
+  return { data, layout: baseLayout(t, {
+    hovermode: "closest", dragmode: false, shapes, showlegend: true,
+    margin: { l: 64, r: 16, t: 8, b: 44 },
+    xaxis: axis(t, { title: { text: xLabel }, fixedrange: true }),
+    yaxis: axis(t, { tickprefix: yPrefix, ticksuffix: ySuffix, tickformat: "~s", fixedrange: true }),
+  }) };
 }

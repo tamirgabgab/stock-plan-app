@@ -656,3 +656,13 @@ table.data.compact td, table.data.compact th { padding: 4px 8px; }
 .preset-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .small-inline { font-size: 11px; margin-inline-start: 4px; }
 .plot.hidden { display: none; }
+
+/* Input checks: a value that cannot happen is red, with the message under the field. */
+.field.has-error input { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
+.field-error { font-size: 11px; color: var(--danger); direction: rtl; margin: 0; }
+.stage-card.scenario.has-error { border-color: var(--danger); }
+.weight-sum.bad { color: var(--danger); font-weight: 600; }
+.alloc { display: flex; flex-direction: column; gap: 6px; }
+.alloc .preset-row { margin: 0; }
+fieldset.apt-fields { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+fieldset.apt-fields:disabled > :not(.field-note) { opacity: 0.45; }

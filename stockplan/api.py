@@ -22,7 +22,7 @@ from .data import DataError, demo_reason, get_market_data
 from .data.search import lookup, search
 from .engine import (Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range,
                      benchmark_path, realization_detail, run_plan, run_trinity, solve_trace, trinity_heatmap)
-from .engine.property import METRICS, STATS, PropertyRequest, row_of, run_property, solve_equal
+from .engine.property import METRICS, STATS, InputError, PropertyRequest, row_of, run_property, solve_equal
 
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -412,6 +412,11 @@ def _jsonable(v):
     return v
 
 
+def _input_error(exc: InputError) -> HTTPException:
+    """400 with the message and the fields it belongs to (the UI marks them)."""
+    return HTTPException(status_code=400, detail={"msg": str(exc), "errors": exc.errors})
+
+
 def _detail_row(plan: PropertyRequest, res: dict) -> int:
     paths = res["paths"]
     if not paths.history:
@@ -420,6 +425,8 @@ def _detail_row(plan: PropertyRequest, res: dict) -> int:
         hit = np.where(paths.start_dates == pd.Timestamp(plan.detail_start))[0]
         if len(hit):
             return int(hit[0])
+    if not res["scenarios"]:
+        return 0
     final = np.asarray(res["scenarios"][0]["metrics"]["final"], dtype=float)
     med = np.nanmedian(final)
     return int(np.nanargmin(np.abs(final - med)))
@@ -435,12 +442,17 @@ def property_simulate(plan: PropertyRequest):
     """
     try:
         res = run_property(plan, get_market_data())
+    except InputError as exc:
+        raise _input_error(exc)
     except (DataError, ValueError) as exc:
         raise _bad_request(exc)
     except Exception as exc:  # unexpected: log with traceback, still answer in JSON
         log.exception("property simulation failed")
         raise HTTPException(status_code=500, detail=f"שגיאה פנימית: {exc}")
     paths = res["paths"]
+    if paths is None or not res["scenarios"]:                 # every scenario failed its checks
+        return {"months": res["months"], "real": plan.common.real, "mode": plan.common.mode, "n": 0,
+                "scenarios": [], "failed": res["failed"], "warnings": res["warnings"]}
     T, R = paths.T, paths.R
     if R * (T + 1) * len(res["scenarios"]) > MAX_CELLS:
         raise HTTPException(status_code=400, detail="יותר מדי נקודות. קצר את התקופה או הפחת תרחישים")
@@ -468,7 +480,7 @@ def property_simulate(plan: PropertyRequest):
         "history": paths.info or None,
         "cpi": _floats(first["cpi"][:, row]),
         "scale": float(paths.scale[row]) if paths.scale is not None else 1.0,
-        "scenarios": out,
+        "scenarios": out, "failed": res["failed"], "warnings": res["warnings"],
     }
 
 
@@ -479,6 +491,8 @@ def property_solve(body: PropertySolveIn):
     try:
         return _jsonable(solve_equal(body.plan, body.a, body.b, body.metric, body.scope, body.key, body.lo,
                                      body.hi, stat=body.stat, md=get_market_data()))
+    except InputError as exc:
+        raise _input_error(exc)
     except (DataError, ValueError) as exc:
         raise _bad_request(exc)
 

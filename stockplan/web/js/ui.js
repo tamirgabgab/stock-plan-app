@@ -21,11 +21,13 @@ export function Hint({ text }) {
   </span>`;
 }
 
-export function Field({ label, hint, children, note, disabled }) {
-  return html`<label class=${"field" + (disabled ? " is-disabled" : "")}>
+// ``error`` marks the field red and shows the message under it (a value that cannot happen).
+export function Field({ label, hint, children, note, disabled, error }) {
+  return html`<label class=${"field" + (disabled ? " is-disabled" : "") + (error ? " has-error" : "")}>
     <span class="field-label">${label}${hint ? html` <${Hint} text=${hint} />` : null}</span>
     ${children}
     ${note ? html`<span class="field-note">${note}</span>` : null}
+    ${error ? html`<span class="field-error" role="alert">${error}</span>` : null}
   </label>`;
 }
 
@@ -40,8 +42,8 @@ export function NumberInput({ value, onChange, step = 1, min = 0, max, disabled,
   </div>`;
 }
 
-export function NumberField({ label, hint, note, value, onChange, step, min, max, disabled, suffix }) {
-  return html`<${Field} label=${label} hint=${hint} note=${note} disabled=${disabled}>
+export function NumberField({ label, hint, note, value, onChange, step, min, max, disabled, suffix, error }) {
+  return html`<${Field} label=${label} hint=${hint} note=${note} disabled=${disabled} error=${error}>
     <${NumberInput} value=${value} onChange=${onChange} step=${step} min=${min} max=${max}
       disabled=${disabled} suffix=${suffix} />
   </${Field}>`;

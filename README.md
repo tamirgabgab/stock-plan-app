@@ -76,16 +76,25 @@ the UI — it is not real market history).
   missing parameter where one exists and the numerical solver where it does not, plus
   the same equations with the current plan's numbers plugged in, and a live chart
   of the Illinois solver's steps on the current plan.
-- **Apartment vs. capital market tab** – should one person, with equity and a monthly
-  budget, buy an apartment or invest in the market? Any number of scenarios, each a line:
+- **Apartment vs. capital market tab** – how should one person, with equity and a monthly
+  budget, split the money between an apartment and the market? Any number of scenarios,
+  each a line, each putting a chosen percent of the equity into the apartment (0% = market
+  only) and the rest, plus the monthly surplus, into the market:
   - *Market:* return (or a holdings table in history mode), deposit fee, management fee,
     capital-gains tax on real or nominal gains.
-  - *Apartment:* price, single or additional apartment, LTV, a mortgage mix (fixed,
+  - *Apartment:* price, single or additional apartment, a mortgage mix (fixed,
     prime, variable every N years or an own rate schedule; CPI-linked or not; Spitzer or
     equal principal), one-time costs, purchase tax by editable brackets, rent with growth,
     vacancy and the three Israeli rent-tax tracks, appreciation, running costs, selling
-    costs and mas shevach with the single-apartment exemption ceiling. The budget surplus
-    or shortfall goes to a side account in the market.
+    costs and mas shevach with the single-apartment exemption ceiling. The apartment's share
+    of the equity pays the purchase tax and the one-time costs; the rest of it is the down
+    payment, and the mortgage is the rest of the price (the LTV is a result).
+  - *Input checks:* inputs that cannot happen are marked red on their field with the reason,
+    and that scenario is left out while the others run: a share that does not cover the
+    purchase tax and costs or is more than the apartment costs (with the feasible range), a
+    mix that does not add up to 100%, a budget that misses the first month, and more.
+    Unlikely inputs (equity in the apartment below the Bank of Israel minimum, 25% or 50%,
+    i.e. a large loan) are warnings.
   - *Net worth on realization* per month: assets minus liabilities after exit costs and
     taxes. Metrics: final value, sum over all months, present value, discounted sum, IRR,
     crossing points.

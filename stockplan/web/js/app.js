@@ -226,7 +226,7 @@ function App() {
     <main class="layout" style=${`--panel-w:${panelW}px`}>
       ${view === "trinity"
         ? html`<${TrinityInputs} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} />`
-        : view === "property" ? html`<${PropertyInputs} plan=${plan} setPlan=${setPlan} res=${res} />`
+        : view === "property" ? html`<${PropertyInputs} plan=${plan} setPlan=${setPlan} res=${res} errors=${prop.fieldErrors} />`
         : html`<${InputsPanel} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} />`}
       <${PanelResizer} width=${panelW} setWidth=${setPanelW} />
       <div class=${"main" + (busy ? " is-busy" : "")}>

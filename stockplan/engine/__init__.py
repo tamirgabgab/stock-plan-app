@@ -1,11 +1,13 @@
 """Simulation engine: pure numpy/pandas, no web or UI code."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 
 from ..data.base import DataError, MarketData
 from .market import Market, available_range, prepare_market
-from .models import (SOLVE_AMOUNT, SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_START,
+from .models import (DEPOSIT_EVERY, REBALANCE_RULES, DepositEvent, SOLVE_AMOUNT, SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_START,
                      TRINITY_SOLVE_MODES, Holding, PlanRequest, SimulationResult, Stage,
                      WithdrawRequest, WithdrawResult, WithdrawStage)
 from .simulate import cohort_values, simulate
@@ -33,6 +35,32 @@ def validate(req: PlanRequest) -> None:
         raise ValueError("שיעור המס חייב להיות בין 0 ל-100")
     if req.solve_for != SOLVE_FINAL and req.target_amount <= 0:
         raise ValueError("סכום סופי (היעד) חייב להיות חיובי")
+    if req.deposit_every not in DEPOSIT_EVERY:
+        raise ValueError("תדירות ההפקדה חייבת להיות כל 1, 3, 6 או 12 חודשים")
+    if not -50 <= req.deposit_growth <= 100:
+        raise ValueError("הצמיחה השנתית של ההפקדה חייבת להיות בין -50% ל-100%")
+    T = req.total_months
+    if not 0 <= req.lump_spread <= T:
+        raise ValueError(f"פריסת הסכום ההתחלתי חייבת להיות בין 0 ל-{T} חודשים (משך התוכנית)")
+    if not -10 <= req.cash_rate <= 50:
+        raise ValueError("הריבית על המזומן חייבת להיות בין -10% ל-50%")
+    _validate_rebalance(req)
+    for k, e in enumerate(req.events, 1):
+        if e.kind not in ("deposit", "withdraw", "pause"):
+            raise ValueError(f"אירוע {k}: סוג לא מוכר ({e.kind})")
+        if not 0 <= e.month < T:
+            raise ValueError(f"אירוע {k}: החודש חייב להיות בתוך התוכנית (שנה 1 עד שנה {(T - 1) // 12 + 1})")
+        if e.amount < 0:
+            raise ValueError(f"אירוע {k}: הסכום לא יכול להיות שלילי")
+        if e.kind == "pause" and e.months < 1:
+            raise ValueError(f"אירוע {k}: הפסקה חייבת להיות של חודש אחד לפחות")
+
+
+def _validate_rebalance(req) -> None:
+    if req.rebalance not in REBALANCE_RULES:
+        raise ValueError(f"כלל איזון לא מוכר: {req.rebalance}")
+    if req.rebalance == "band" and not 0 < req.rebalance_band <= 50:
+        raise ValueError("סף האיזון חייב להיות בין 0 ל-50 נקודות אחוז")
 
 
 def _deflator(req, market: Market, cpi) -> np.ndarray:
@@ -90,11 +118,15 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
     paths = out.paths_net * D
     gross = out.paths_gross * D
     deposits = out.deposits * D
+    withdrawn = out.withdrawn * D
     final = paths[:, T]
     final_gross = gross[:, T]
-    irr = irr_annual(deposits, final)
-    irr_gross = irr_annual(deposits, final_gross)
+    irr = irr_annual(deposits - withdrawn, final)
+    irr_gross = irr_annual(deposits - withdrawn, final_gross)
     year_gross, year_net = _cohort_irr(req, market, out, D)
+    n_unpaid = int((out.unpaid > 1e-6).sum())
+    if n_unpaid:
+        warnings.append(f"ב-{n_unpaid} תקופות לא היה מספיק כסף בתיק לכל המשיכות החד-פעמיות")
 
     unit = simulate(req, market, record=True, unit_growth=True).paths_net * D
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -102,6 +134,16 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
         max_dd = _max_drawdown(unit)
         account_dd = _max_drawdown(paths)
         account_dd_gross = _max_drawdown(gross)
+
+    # The same deposits with no fees, and with the start amount invested at once.
+    x_same = x_run if solved is not None else None
+    final_nofee = final_nofee_gross = final_lump = final_lump_gross = None
+    if req.annual_fee > 0:
+        alt = simulate(replace(req, annual_fee=0.0), market, x=x_same)
+        final_nofee, final_nofee_gross = alt.final_net * D[:, T], alt.final_gross * D[:, T]
+    if req.lump_spread > 0 and (req.start_amount + req.stages[0].initial_deposit > 0 or req.solve_for == SOLVE_START):
+        alt = simulate(replace(req, lump_spread=0), market, x=x_same)
+        final_lump, final_lump_gross = alt.final_net * D[:, T], alt.final_gross * D[:, T]
 
     starts = list(market.start_dates)
     ends = list(market.calendar[market.day_idx[:, -1]])
@@ -111,10 +153,24 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
     return SimulationResult(start_dates=starts, end_dates=ends, months=T, final=final,
                             deposits_total=deposits.sum(axis=1), irr=irr, cagr=cagr,
                             max_drawdown=max_dd, account_drawdown=account_dd, paths=paths,
-                            deposits_path=np.cumsum(deposits, axis=1),
+                            deposits_path=np.cumsum(deposits - withdrawn, axis=1),
                             solved=solved, warnings=warnings,
                             final_gross=final_gross, irr_gross=irr_gross, account_drawdown_gross=account_dd_gross,
-                            paths_gross=gross, year_irr_gross=year_gross, year_irr_net=year_net)
+                            paths_gross=gross, year_irr_gross=year_gross, year_irr_net=year_net,
+                            withdrawn_total=withdrawn.sum(axis=1),
+                            target_month_gross=first_reach(gross, req.target_amount),
+                            target_month_net=first_reach(paths, req.target_amount),
+                            fees_total=(out.fees * D).sum(axis=1), tax_paid=(out.taxes * D).sum(axis=1),
+                            final_nofee=final_nofee, final_nofee_gross=final_nofee_gross,
+                            final_lump=final_lump, final_lump_gross=final_lump_gross)
+
+
+def first_reach(paths: np.ndarray, target: float) -> np.ndarray:
+    """(R,) first month the path is at or above ``target`` (-1 = never, or no target)."""
+    if target <= 0:
+        return np.full(paths.shape[0], -1, dtype=np.int64)
+    hit = paths >= target
+    return np.where(hit.any(axis=1), hit.argmax(axis=1), -1)
 
 
 def _cohort_irr(req: PlanRequest, market: Market, out, D: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -126,7 +182,7 @@ def _cohort_irr(req: PlanRequest, market: Market, out, D: np.ndarray) -> tuple[n
     """
     T = req.total_months
     years = max(T // 12, 1)
-    value = cohort_values(req, market, out.deposits, years) * D[:, T:T + 1]     # display units
+    value = cohort_values(req, market, out, years) * D[:, T:T + 1]     # display units
     deposits = out.deposits * D
     R = deposits.shape[0]
     flows = np.zeros((R, years, 12))
@@ -154,8 +210,8 @@ def _irr_cohorts(flows: np.ndarray, exps: np.ndarray, cost: np.ndarray, value: n
             lo = np.where(above, lo, mid)
     i = 0.5 * (lo + hi)
     out = ((1 + i) ** 12 - 1) * 100
-    out[cost <= 0] = np.nan
     out[value <= 0] = -100.0
+    out[cost <= 0] = np.nan          # a year without deposits (a pause) has no return
     return out
 
 
@@ -179,6 +235,7 @@ def validate_withdraw(req: WithdrawRequest) -> None:
             raise ValueError(f"בשלב {i} המשיכות לא יכולות להיות שליליות")
         if s.ceiling > 0 and s.floor > s.ceiling:
             raise ValueError(f"בשלב {i} הרצפה גדולה מהתקרה")
+    _validate_rebalance(req)
     if not 0 <= req.tax_rate < 100:
         raise ValueError("שיעור המס חייב להיות בין 0 ל-100")
     if req.solve_for == SOLVE_START and req.target_amount <= 0:
@@ -257,7 +314,6 @@ def trinity_heatmap(req: WithdrawRequest, md: MarketData, rates, years) -> dict:
     the start amount, in display units) as percent matrices [year][rate]; None where the
     data is too short for that horizon.
     """
-    from dataclasses import replace
     validate_withdraw(replace(req, solve_for=SOLVE_FINAL))
     rates = np.asarray(rates, dtype=float)
     survival, preserve, counts = [], [], []
@@ -343,6 +399,6 @@ def solve_trace(req, md: MarketData) -> dict:
 
 from .detail import benchmark_path, realization_detail  # noqa: E402  (uses run_plan / run_trinity above)
 
-__all__ = ["benchmark_path", "realization_detail", "Holding", "Stage", "PlanRequest", "SimulationResult", "run_plan", "available_range",
+__all__ = ["DepositEvent", "benchmark_path", "realization_detail", "Holding", "Stage", "PlanRequest", "SimulationResult", "run_plan", "available_range",
            "SOLVE_FINAL", "SOLVE_MONTHLY", "SOLVE_START", "SOLVE_RATE", "SOLVE_AMOUNT",
            "WithdrawStage", "WithdrawRequest", "WithdrawResult", "run_trinity", "trinity_heatmap", "solve_trace"]

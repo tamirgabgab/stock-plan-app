@@ -1,7 +1,7 @@
 """Vectorized withdrawal (Trinity-style) simulator.
 
 Same grid and the same ``Book`` as the accumulation simulator. Per month m: stage
-transition (if a new stage starts), the one-time withdrawal at a stage start, the monthly
+transition (if a new stage starts) or a periodic rebalance, the one-time withdrawal at a stage start, the monthly
 withdrawal, record the path point, then market growth to month m+1. Every withdrawal is a
 pro-rata sale, so the tax on the realized gain is paid at that moment and the net cash is
 the amount the user asked for (the sale is grossed up for the tax).
@@ -18,7 +18,7 @@ import numpy as np
 
 from .market import Market
 from .models import SOLVE_AMOUNT, SOLVE_RATE, SOLVE_START, WithdrawRequest
-from .portfolio import Book
+from .portfolio import Book, rebalance_rows
 from .simulate import month_growth
 
 
@@ -113,6 +113,10 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
             m = m0 + j
             cpi_m = cpi[:, m] if cpi is not None else None
             sc = scale(m)
+            moved = rebalance_rows(book, req.rebalance, req.rebalance_band, w, j)
+            if moved is not None:
+                book.m, book.ctx = m, "rebalance"
+                book.reallocate(w, cpi_m, taxable=req.tax_on_switch, rows=moved)
             want = np.zeros(R)
             if j == 0 and stage.one_time > 0:
                 want += (stage.one_time / 100 * book.total if stage.one_time_unit == "pct"

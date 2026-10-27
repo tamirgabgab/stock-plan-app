@@ -29,11 +29,18 @@ const DEFAULT_PLAN = {
   min_start: null,
   max_start: null,
   step: "M",
+  deposit_every: 1,
+  deposit_growth: 0,
+  events: [],
+  lump_spread: 0,
+  cash_rate: 0,
+  rebalance: "none",
+  rebalance_band: 5,
   stages: [{ ...newStage(1), months: 240, monthly_deposit: 1000 }],
 };
 
 const DEFAULT_UI = { p1: 10, p2: 90, showDeposits: true, showTarget: true, logY: false, timeIdx: null,
-                     bins: 50, histSource: "solved", showReps: false, net: false };
+                     bins: 50, histSource: "solved", showReps: false, net: false, swr: 4 };
 
 function loadPlan(hashKey, storageKey, defaults) {
   try {
@@ -56,7 +63,10 @@ function initialView() {
   return "plan";
 }
 
-const withIds = (p) => ({ ...p, stages: p.stages.map((s) => ({ ...s, id: s.id || newId() })) });
+const withIds = (p) => ({
+  ...p, stages: p.stages.map((s) => ({ ...s, id: s.id || newId() })),
+  ...(p.events ? { events: p.events.map((e) => ({ ...e, id: e.id || newId() })) } : {}),
+});
 
 // Both views of the result are prepared once: gross (market value of the holdings) and net
 // (after the tax of selling everything). ``withMode`` in results.js picks one.
@@ -64,14 +74,16 @@ function prepareResult(raw, plan) {
   const T1 = raw.months + 1;
   const deps = decodeMatrix(raw.deposits_path, raw.n, T1);
   const depMean = Array.from(columnStats(deps).mean);
-  const mode = (pathsB64, final, irr, dd, yearsB64) => {
+  const mode = (pathsB64, final, irr, dd, yearsB64, extra) => {
     const paths = decodeMatrix(pathsB64, raw.n, T1);
     const years = decodeMatrix(yearsB64, raw.n, raw.years);
-    return { paths, cs: columnStats(paths), final, irr, account_drawdown: dd, years, ...bestWorstYear(years) };
+    return { paths, cs: columnStats(paths), final, irr, account_drawdown: dd, years, ...bestWorstYear(years), ...extra };
   };
   const modes = {
-    gross: mode(raw.paths_gross, raw.final_gross, raw.irr_gross, raw.account_drawdown_gross, raw.year_irr_gross),
-    net: mode(raw.paths, raw.final, raw.irr, raw.account_drawdown, raw.year_irr_net),
+    gross: mode(raw.paths_gross, raw.final_gross, raw.irr_gross, raw.account_drawdown_gross, raw.year_irr_gross,
+                { target_month: raw.target_month_gross, final_nofee: raw.final_nofee_gross, final_lump: raw.final_lump_gross }),
+    net: mode(raw.paths, raw.final, raw.irr, raw.account_drawdown, raw.year_irr_net,
+              { target_month: raw.target_month_net, final_nofee: raw.final_nofee, final_lump: raw.final_lump }),
   };
   return { raw, plan, deps, depMean, modes, paths: modes.gross.paths, cs: modes.gross.cs,
            n: raw.n, T: raw.months, id: Math.random(), labels: ACCUMULATION_LABELS };

@@ -3,14 +3,21 @@
 All realizations (start dates) are simulated at once: the state is a matrix of shape
 (R, A) — realizations × assets — and the only Python loop is over months.
 
-Per month m the order is: stage transition (if a new stage starts), deposits, record
-the path point, then market growth to month m+1. Within a stage each deposit is split
-by the stage weights and held (no rebalancing). At a stage transition the portfolio is
-reallocated to the new weights, either tax-free (cost basis carried over, so the tax is
-deferred to the end) or as a taxable sale of the holdings that shrink.
+Per month m the order is: stage transition (if a new stage starts) or a periodic rebalance,
+withdrawal events, deposits, record the path point, then market growth to month m+1. Within
+a stage each deposit is split by the stage weights and held, unless the plan rebalances back
+to the weights (monthly, quarterly, annually or when a weight drifts past a band). A stage
+transition or a rebalance is either tax-free (cost basis carried over, so the tax is
+deferred to the end) or a taxable sale of the holdings that shrink.
 
-Real mode: amounts entered by the user (deposits, target) are in today's money, i.e. the
-CPI of the last data month; see ``deposit_scale``.
+The deposit schedule: the periodic deposit is paid every ``deposit_every`` months from each
+stage start, rises by ``deposit_growth`` percent every plan year, and is skipped during a
+pause event. One-off deposit and withdrawal events are added on top. The start amount can be
+spread over ``lump_spread`` months: it leaves the investor at month 0, waits as cash earning
+``cash_rate`` (taxed), and is invested in equal parts of what is left.
+
+Real mode: amounts entered by the user (deposits, events, target) are in today's money, i.e.
+the CPI of the last data month; see ``deposit_scale``.
 
 The holdings and the tax state live in ``portfolio.Book`` (shared with the withdrawal
 simulator); see there for the tax model.
@@ -23,7 +30,7 @@ from typing import Optional
 import numpy as np
 
 from .market import Market
-from .portfolio import Book
+from .portfolio import Book, rebalance_rows
 from .models import PlanRequest, SOLVE_MONTHLY, SOLVE_START
 
 
@@ -31,10 +38,17 @@ from .models import PlanRequest, SOLVE_MONTHLY, SOLVE_START
 class SimOutput:
     final_net: np.ndarray                     # (R,) nominal, after the tax of selling everything
     paths_net: Optional[np.ndarray] = None    # (R, T+1) nominal net liquidation value
-    deposits: Optional[np.ndarray] = None     # (R, T+1) nominal deposit made at month m
+    deposits: Optional[np.ndarray] = None     # (R, T+1) nominal money put in at month m (the investor's flow)
     cpi: Optional[np.ndarray] = None          # (R, T+1) CPI at each month (if loaded)
     final_gross: Optional[np.ndarray] = None  # (R,) nominal market value of the holdings
     paths_gross: Optional[np.ndarray] = None  # (R, T+1) nominal market value (before the final tax)
+    withdrawn: Optional[np.ndarray] = None    # (R, T+1) nominal net cash taken out by withdrawal events
+    unpaid: Optional[np.ndarray] = None       # (R,) nominal withdrawal events that could not be paid
+    buys: Optional[np.ndarray] = None         # (R, T+1) bought at month m from that month's deposits
+    spread_buys: Optional[np.ndarray] = None  # (R, T+1) bought at month m from the waiting start amount
+    realloc: Optional[np.ndarray] = None      # (R, T+1) bool: the portfolio was moved to the weights at m
+    fees: Optional[np.ndarray] = None         # (R, T+1) nominal fees charged during the month ending at m
+    taxes: Optional[np.ndarray] = None        # (R, T+1) nominal tax paid at month m
 
 
 def _stage_weights(req: PlanRequest, market: Market) -> np.ndarray:
@@ -50,14 +64,44 @@ def _stage_weights(req: PlanRequest, market: Market) -> np.ndarray:
     return W
 
 
+def stage_of_month(req: PlanRequest) -> np.ndarray:
+    """(T+1,) stage index of every plan month (the end month belongs to the last stage)."""
+    starts = np.cumsum([0] + [s.months for s in req.stages])
+    T = int(starts[-1])
+    return np.searchsorted(starts[1:], np.arange(T + 1), side="right").clip(0, len(req.stages) - 1)
+
+
+def deposit_schedule(req: PlanRequest) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per plan month (T,): the multiplier of the periodic deposit (0 when none is due, the
+    yearly growth otherwise), the deposit events and the withdrawal events (input units)."""
+    T = req.total_months
+    starts = np.cumsum([0] + [s.months for s in req.stages])
+    m = np.arange(T)
+    j = m - starts[stage_of_month(req)[:T]]
+    every = max(int(req.deposit_every), 1)
+    factor = np.where(j % every == 0, (1 + req.deposit_growth / 100) ** (m // 12), 0.0)
+    ev_in, ev_out = np.zeros(T), np.zeros(T)
+    for e in req.events:
+        if not 0 <= e.month < T:
+            continue
+        if e.kind == "pause":
+            factor[e.month:e.month + max(int(e.months), 0)] = 0.0
+        elif e.kind == "withdraw":
+            ev_out[e.month] += e.amount
+        else:
+            ev_in[e.month] += e.amount
+    return factor, ev_in, ev_out
+
+
 def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
              rows: Optional[np.ndarray] = None, record: bool = False,
              unit_growth: bool = False, journal: Optional[list] = None) -> SimOutput:
     """Run the plan for the selected realizations.
 
-    ``x`` overrides the solved variable per realization (start amount or the monthly
+    ``x`` overrides the solved variable per realization (start amount or the periodic
     deposit of every stage). ``unit_growth`` simulates 1 unit invested at the start with no
-    deposits, fees only, no tax: used for the time-weighted return and drawdown.
+    deposits, fees only, no tax: used for the time-weighted return and drawdown (the
+    rebalancing rule still applies, it is part of the strategy).
     ``journal`` (a list) collects the trades of row 0, for the realization detail view.
     """
     idx = market.day_idx if rows is None else market.day_idx[rows]
@@ -67,15 +111,18 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
     rate = 0.0 if unit_growth else req.tax_rate / 100
     real_tax = req.tax_basis == "real" and market.cpi_daily is not None
     fee = (1 - req.annual_fee / 100) ** (1 / 12)
+    taxable_moves = req.tax_on_switch and not unit_growth
 
     cpi = market.cpi_daily[idx] if market.cpi_daily is not None else None
     ones = np.ones(R)
     book = Book(R, A, rate, real_tax)
     book.journal = journal
 
-    paths = np.empty((R, T + 1)) if record else None
-    gross = np.empty((R, T + 1)) if record else None
-    deposits = np.zeros((R, T + 1)) if record else None
+    def rec():
+        return np.zeros((R, T + 1)) if record else None
+    paths, gross, deposits, withdrawn, buys, spread_buys, fees, taxes = (rec() for _ in range(8))
+    realloc = np.zeros((R, T + 1), dtype=bool) if record else None
+    unpaid = np.zeros(R)
 
     def deposit_scale(m):
         """Nominal value of one input unit deposited at month m.
@@ -84,6 +131,8 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
         deposit made decades ago is scaled down by the CPI. Indexed deposits follow the
         CPI month by month; otherwise the nominal amount is fixed at the plan's start.
         """
+        if cpi is None or unit_growth:
+            return ones
         ref = cpi[:, m] if req.index_deposits else cpi[:, 0]
         if req.real:
             return ref / market.cpi_base
@@ -97,78 +146,137 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
         start_amount = x
     else:
         start_amount = ones * req.start_amount
+    if unit_growth:
+        factor, ev_in, ev_out = np.zeros(T), np.zeros(T), np.zeros(T)
+    else:
+        factor, ev_in, ev_out = deposit_schedule(req)
+
+    # Spreading the start amount (and the first stage's initial deposit): it waits as cash.
+    spread = 0 if unit_growth else min(int(req.lump_spread), T)
+    cash = np.zeros(R)
+    cash_growth = (1 + req.cash_rate / 100 * (1 - rate)) ** (1 / 12)
 
     for s, stage in enumerate(req.stages):
         w = W[s]
         m0 = stage_starts[s]
-        cpi0 = cpi[:, m0] if cpi is not None else None
 
         if s > 0:
             book.m, book.ctx = m0, "switch"
-            book.reallocate(w, cpi0, taxable=req.tax_on_switch and not unit_growth)
+            book.reallocate(w, cpi[:, m0] if cpi is not None else None, taxable=taxable_moves)
+            if record:
+                realloc[:, m0] = True
 
         if unit_growth:
             monthly = 0.0 * ones
-            initial = start_amount if s == 0 else 0.0 * ones
+        elif x is not None and req.solve_for == SOLVE_MONTHLY:
+            monthly = x
         else:
-            if x is not None and req.solve_for == SOLVE_MONTHLY:
-                monthly = x
-            else:
-                monthly = ones * stage.monthly_deposit
-            initial = ones * stage.initial_deposit + (start_amount if s == 0 else 0.0)
+            monthly = ones * stage.monthly_deposit
+        initial = ones * stage.initial_deposit if not unit_growth else 0.0 * ones
+        if s == 0:
+            lump = initial + start_amount
+            initial = 0.0 * ones if spread else lump
 
         for j in range(stage.months):
             m = m0 + j
             cpi_m = cpi[:, m] if cpi is not None else None
-            amount = monthly + (initial if j == 0 else 0.0)
-            if cpi is not None and not unit_growth:
-                amount = amount * deposit_scale(m)
+            sc = deposit_scale(m)
+
+            moved = rebalance_rows(book, req.rebalance, req.rebalance_band, w, j)
+            if moved is not None:
+                book.m, book.ctx = m, "rebalance"
+                book.reallocate(w, cpi_m, taxable=taxable_moves, rows=moved)
+                if record:
+                    realloc[:, m] |= moved
+
+            if ev_out[m] > 0:
+                book.m, book.ctx = m, "event"
+                want = ev_out[m] * sc
+                got = book.withdraw_net(want, cpi_m)
+                unpaid += want - got
+                if record:
+                    withdrawn[:, m] = got
+
+            amount = (monthly * factor[m] + ev_in[m] + (initial if j == 0 else 0.0)) * sc
             book.m, book.ctx = m, "deposit"
             book.buy(amount, w, cpi_m)
+            put_in = amount
+            if spread and m < spread:
+                if m == 0:
+                    cash = lump * sc
+                    put_in = amount + cash
+                part = cash / (spread - m)
+                cash = cash - part
+                book.ctx = "spread"
+                book.buy(part, w, cpi_m)
+                if record:
+                    spread_buys[:, m] = part
             if record:
-                deposits[:, m] = amount
-                gross[:, m] = book.total
-                paths[:, m] = book.liquidation_value(cpi_m) if not unit_growth else gross[:, m]
+                deposits[:, m] = put_in
+                buys[:, m] = amount
+                taxes[:, m] = book.tax_paid
+                gross[:, m] = book.total + cash
+                paths[:, m] = (book.liquidation_value(cpi_m) if not unit_growth else book.total) + cash
+                fees[:, m] = book.fees
 
             book.grow(month_growth(market, idx, m), fee)
+            cash = cash * cash_growth
 
     cpi_T = cpi[:, T] if cpi is not None else None
-    final_gross = book.total
-    final = final_gross if unit_growth else book.liquidation_value(cpi_T)
+    final_gross = book.total + cash
+    final = final_gross if unit_growth else book.liquidation_value(cpi_T) + cash
     if record:
         paths[:, T] = final
         gross[:, T] = final_gross
+        taxes[:, T] = book.tax_paid
+        fees[:, T] = book.fees
+        # Running totals -> per month amounts.
+        taxes = np.diff(taxes, axis=1, prepend=0.0)
+        fees = np.diff(fees, axis=1, prepend=0.0)
     return SimOutput(final_net=final, paths_net=paths, deposits=deposits, cpi=cpi,
-                     final_gross=final_gross, paths_gross=gross)
+                     final_gross=final_gross, paths_gross=gross, withdrawn=withdrawn, unpaid=unpaid,
+                     buys=buys, spread_buys=spread_buys, realloc=realloc, fees=fees, taxes=taxes)
 
 
-def cohort_values(req: PlanRequest, market: Market, deposits: np.ndarray, years: int) -> np.ndarray:
-    """(R, years) gross value at the end of the plan of the deposits made in each plan year
-    (12 months each; a partial last year is left out), before tax.
+def lot_growth(req: PlanRequest, market: Market, realloc: np.ndarray) -> np.ndarray:
+    """(R, T) gross growth to the end of the plan of one unit bought at month m (after that
+    month's trades), fees included, before tax.
 
-    The holdings are linear in the deposits, so every lot's growth is known in closed form:
-    within its stage a lot keeps the stage weights, so it grows like the weighted sum of its
-    assets' price ratios (fees included); at a stage switch all lots are reallocated to the
-    new weights, so from there on every lot grows like one bought at the switch.
-    A taxable switch would also take tax out of the lot, which is ignored here (gross).
+    The holdings are linear in the money put in, so every lot's growth is known in closed
+    form. ``H[r, a]`` is the end value of one unit of asset a held after month m; walking back
+    from H = 1 at T, a month multiplies it by the asset's growth and fee, and a month whose
+    start moves the portfolio to the weights (``realloc``: a stage switch or a rebalance)
+    first pools all assets at the new weights. A lot bought at m holds that stage's weights.
+    A taxable move would also take tax out of the lot, which is ignored here (gross).
     """
     idx = market.day_idx
     R, T = idx.shape[0], idx.shape[1] - 1
     W = _stage_weights(req, market)
     fee = (1 - req.annual_fee / 100) ** (1 / 12)
-    stage_starts = np.cumsum([0] + [s.months for s in req.stages])
-    growth = np.empty((R, T))               # growth of a lot bought at month m, to month T
-    tail = np.ones(R)                       # growth from the end of the current stage to T
-    for s in range(len(req.stages) - 1, -1, -1):
-        m0, m1 = int(stage_starts[s]), int(stage_starts[s + 1])
-        p_end = market.prices[:, idx[:, m1]]                          # (A, R)
-        p_m = market.prices[:, idx[:, m0:m1]]                         # (A, R, L)
-        ratio = np.divide(p_end[:, :, None], p_m, out=np.zeros_like(p_m), where=p_m > 0)
-        months_held = np.arange(m1 - m0, 0, -1)                       # m1 - m for m in [m0, m1)
-        g = (W[s][:, None, None] * ratio).sum(axis=0) * fee ** months_held   # (R, L)
-        growth[:, m0:m1] = g * tail[:, None]
-        tail = tail * g[:, 0]
-    value = deposits[:, :T] * growth
+    stage = stage_of_month(req)
+    H = np.ones((R, len(market.asset_keys)))
+    G = np.empty((R, T))
+    for m in range(T - 1, -1, -1):
+        if m + 1 < T:
+            pooled = (H * W[stage[m + 1]]).sum(axis=1)
+            H = np.where(realloc[:, m + 1][:, None], pooled[:, None], H)
+        H = month_growth(market, idx, m) * fee * H
+        G[:, m] = (H * W[stage[m]]).sum(axis=1)
+    return G
+
+
+def cohort_values(req: PlanRequest, market: Market, out: SimOutput, years: int) -> np.ndarray:
+    """(R, years) gross value at the end of the plan of the money put in during each plan
+    year (12 months each; a partial last year is left out), before tax.
+
+    The spread start amount counts in the first year, when it left the investor. Withdrawal
+    events sell every lot pro rata, which leaves each lot's growth rate unchanged, so the
+    cohorts are valued as if nothing was sold (their return is what matters).
+    """
+    T = out.buys.shape[1] - 1
+    G = lot_growth(req, market, out.realloc)
+    value = out.buys[:, :T] * G
+    value[:, 0] += (out.spread_buys[:, :T] * G).sum(axis=1)
     return np.stack([value[:, 12 * y:12 * (y + 1)].sum(axis=1) for y in range(years)], axis=1)
 
 

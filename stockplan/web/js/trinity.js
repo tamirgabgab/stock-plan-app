@@ -3,7 +3,7 @@
 import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
 import { heatmapFigure, observeResize, PLOT_CONFIG } from "./charts.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
-import { HoldingsTable, PeriodSection, RawPreset, StageHead, TaxSection, TickerList, newId } from "./inputs.js";
+import { HoldingsTable, PeriodSection, RawPreset, RebalanceSection, StageHead, TaxSection, TickerList, newId } from "./inputs.js";
 import { CrossSection, DetailModal, FanChart, OutcomeByStart, RealizationsTable, SOLVED_SOURCE, Tile, VALUE_SOURCE,
          dateColumns, solvedLabel, useActive } from "./results.js";
 import { columnStats, decodeMatrix, summarize } from "./stats.js";
@@ -27,7 +27,7 @@ export function newWithdrawStage(n) {
 export const DEFAULT_TPLAN = {
   solve_for: "final", start_amount: 1_000_000, target_amount: 0, currency: "ILS", real: true,
   index_withdrawals: true, tax_rate: 25, tax_basis: "nominal", tax_on_switch: false, annual_fee: 0,
-  leverage_cost: 0, min_start: null, max_start: null, step: "M",
+  leverage_cost: 0, min_start: null, max_start: null, step: "M", rebalance: "none", rebalance_band: 5,
   stages: [newWithdrawStage(1)],
 };
 
@@ -98,6 +98,7 @@ export function TrinityInputs({ plan, setPlan, range, rangeError, favorites }) {
       <${RawPreset} plan=${plan} setPlan=${setPlan} indexKey="index_withdrawals" />
     </details>
     <${TaxSection} plan=${plan} set=${set} />
+    <${RebalanceSection} plan=${plan} set=${set} />
     <${PeriodSection} plan=${plan} set=${set} range=${range} rangeError=${rangeError} totalMonths=${totalMonths} />
     <section class="section stages" aria-label="שלבי המשיכה">
       <div class="section-head"><h2>שלבי המשיכה</h2>

@@ -20,7 +20,7 @@ from . import __version__
 from .config import FAVORITES, ON_VERCEL
 from .data import DataError, demo_reason, get_market_data
 from .data.search import lookup, search
-from .engine import (Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range,
+from .engine import (DepositEvent, Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range,
                      benchmark_path, realization_detail, run_plan, run_trinity, solve_trace, trinity_heatmap)
 from .engine.property import METRICS, STATS, InputError, PropertyRequest, row_of, run_property, solve_equal
 
@@ -46,6 +46,16 @@ class StageIn(BaseModel):
     holdings: List[HoldingIn] = Field(min_length=1)
 
 
+class EventIn(BaseModel):
+    month: int = Field(ge=0, le=1200)          # plan month, 0-based
+    kind: Literal["deposit", "withdraw", "pause"] = "deposit"
+    amount: float = Field(0.0, ge=0)
+    months: int = Field(12, ge=1, le=1200)     # length of a pause
+
+
+Rebalance = Literal["none", "monthly", "quarterly", "annual", "band"]
+
+
 class PlanIn(BaseModel):
     stages: List[StageIn] = Field(min_length=1)
     start_amount: float = Field(0.0, ge=0)
@@ -62,13 +72,21 @@ class PlanIn(BaseModel):
     min_start: Optional[date] = None
     max_start: Optional[date] = None
     step: Literal["D", "W", "M"] = "M"
+    deposit_every: Literal[1, 3, 6, 12] = 1
+    deposit_growth: float = Field(0.0, ge=-50, le=100)
+    events: List[EventIn] = Field(default_factory=list, max_length=100)
+    lump_spread: int = Field(0, ge=0, le=1200)
+    cash_rate: float = Field(0.0, ge=-10, le=50)
+    rebalance: Rebalance = "none"
+    rebalance_band: float = Field(5.0, gt=0, le=50)
 
     def to_request(self) -> PlanRequest:
         stages = [Stage(months=s.months, initial_deposit=s.initial_deposit,
                         monthly_deposit=s.monthly_deposit, name=s.name,
                         holdings=[Holding(h.ticker, h.weight, h.leverage) for h in s.holdings])
                   for s in self.stages]
-        return PlanRequest(stages=stages, **self.model_dump(exclude={"stages"}))
+        events = [DepositEvent(**e.model_dump()) for e in self.events]
+        return PlanRequest(stages=stages, events=events, **self.model_dump(exclude={"stages", "events"}))
 
 
 class WithdrawStageIn(BaseModel):
@@ -102,6 +120,8 @@ class TrinityIn(BaseModel):
     min_start: Optional[date] = None
     max_start: Optional[date] = None
     step: Literal["D", "W", "M"] = "M"
+    rebalance: Rebalance = "none"
+    rebalance_band: float = Field(5.0, gt=0, le=50)
 
     def to_request(self) -> WithdrawRequest:
         stages = [WithdrawStage(holdings=[Holding(h.ticker, h.weight, h.leverage) for h in s.holdings],
@@ -143,6 +163,14 @@ class TrinityBenchmarkIn(TrinityRealizationIn):
 def _floats(a) -> list:
     """JSON-safe list: NaN/inf become null, values rounded to cents."""
     return [None if not math.isfinite(v) else round(float(v), 4) for v in np.asarray(a, dtype=float)]
+
+
+def _opt(a) -> list | None:
+    return None if a is None else _floats(a)
+
+
+def _months(a) -> list:
+    return [None if v < 0 else int(v) for v in np.asarray(a)]
 
 
 def _matrix_b64(a: np.ndarray) -> str:
@@ -319,6 +347,16 @@ def simulate(plan: PlanIn):
         "years": int(res.year_irr_gross.shape[1]),
         "year_irr_gross": _matrix_b64(res.year_irr_gross),
         "year_irr_net": _matrix_b64(res.year_irr_net),
+        "withdrawn_total": _floats(res.withdrawn_total),
+        # First month at or above the target (null = never), gross and net.
+        "target_month_gross": _months(res.target_month_gross),
+        "target_month_net": _months(res.target_month_net),
+        "fees_total": _floats(res.fees_total),
+        "tax_paid": _floats(res.tax_paid),
+        "final_nofee": _opt(res.final_nofee),
+        "final_nofee_gross": _opt(res.final_nofee_gross),
+        "final_lump": _opt(res.final_lump),
+        "final_lump_gross": _opt(res.final_lump_gross),
         "warnings": res.warnings,
         "demo": get_market_data().is_demo,
     }

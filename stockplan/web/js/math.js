@@ -138,6 +138,12 @@ function DepositsMath({ plan, res }) {
       ${D(plan.solve_for === "monthly_deposit"
         ? S`D_m = \sigma_m\big(M + ${n(plan.stages[0].initial_deposit)}\,[m=0] + ${n(plan.start_amount)}\,[m=0]\big)`
         : S`D_m = \sigma_m\big(${n(plan.stages[0].monthly_deposit)} + ${n(plan.stages[0].initial_deposit)}\,[m=0] + ${plan.solve_for === "start_amount" ? "S_0" : n(plan.start_amount)}\,[m=0]\big)`)}
+      <p><b>לוח ההפקדות.</b> ההפקדה התקופתית משולמת כל ${T(S`f`)} חודשים מתחילת כל שלב, ועולה ב-${T(S`g`)} בכל שנת תוכנית.
+        בחודשי הפסקה (הקבוצה ${T(S`\mathcal{P}`)}) היא מדולגת, ואירועי ההפקדה ${T(S`E_m`)} מתווספים לה. באופן כללי:</p>
+      ${D(S`D_m = \sigma_m\Big(M_{k(m)}\,(1+g)^{\lfloor m/12 \rfloor}\,\big[(m - m_{k(m)}) \bmod f = 0\big]\,[m \notin \mathcal{P}] + I_{k(m)}\,[m = m_{k(m)}] + S_0\,[m = 0] + E_m\Big)`)}
+      <p>בתוכנית הנוכחית ${T(S`f = ${plan.deposit_every || 1}`)}, ${T(S`g = ${n(plan.deposit_growth || 0)}\%`)}${(plan.events || []).length ? `, ויש ${plan.events.length} אירועים` : ""}.
+        אירוע משיכה ${T(S`W_m`)} הוא מכירה יחסית של התיק בתחילת החודש, כמו משיכה בטריניטי: נמכר חלק ${T(S`f_m`)} כך שאחרי המס נשאר בדיוק ${T(S`\sigma_m W_m`)}.
+        ${plan.lump_spread ? html`הסכום ההתחלתי נפרס על ${T(S`N = ${plan.lump_spread}`)} חודשים: בחודש ${T(S`j < N`)} מושקע ${T(S`c_j/(N-j)`)} מהמזומן הממתין ${T(S`c_j`)}, והמזומן צומח בריבית ${T(S`${n(plan.cash_rate || 0)}\%`)} אחרי מס. מבחינת המשקיע הכסף יצא בחודש 0, ולכן ב-IRR הוא נספר שם.` : ""}</p>
       <p>סך ההפקדות שמוצג בטבלאות הוא ${T(S`\sum_{m=0}^{T-1} D_m`)}${plan.real ? ", מתורגם לכסף של היום (סעיף 4)" : ""}${dep ? html`, ובחציון יוצא ${m(dep.median)}` : ""}.</p>
     </section>
 
@@ -156,6 +162,9 @@ function DepositsMath({ plan, res }) {
         ואז צמיחה של התיק כולו לפי משקלי כל שלב הבא, ${T(S`\Gamma_m = \varphi^{\,T-m}\,\gamma_{k(m)}(t_m)\prod_{k' > k(m)} \gamma_{k'}(t_{m_{k'}})`)}
         עם ${T(S`\gamma_k(t) = \sum_i w_{k,i}\,P_i(t_{m_{k+1}})/P_i(t)`)} ו-${T(S`m_{K+1} = T`)}. ${plan.tax_on_switch ? "כשהמעבר הוא אירוע מס, המס שמשולם במעבר מקטין את הסכום שמושקע מחדש (סעיף 4), והמבנה כבר לא ליניארי בהפקדות." : "המעבר פטור ממס, אז הליניאריות נשמרת."}`
         : html`בתוכנית הנוכחית יש שלב אחד, אז הנוסחה הזו היא בדיוק מה שמחושב.`}</p>
+      <p><b>איזון מחדש.</b> בחודש שבו התיק מאוזן (כל חודש, רבעון או שנה מתחילת השלב, או כשמשקל מתרחק מהיעד ביותר מהסף) קורה בדיוק מה שקורה במעבר שלב:
+        ${T(S`V_{i,m} \leftarrow w_{k,i}\sum_j V_{j,m}`)}. לכן ${T(S`\Gamma_m`)} הוא מכפלה על כל נקודות האיזון והמעבר שאחרי ${T(S`m`)}.
+        ${plan.rebalance && plan.rebalance !== "none" ? "בתוכנית הנוכחית האיזון פעיל." : "בתוכנית הנוכחית אין איזון: כל הפקדה מוחזקת כמו שנקנתה."}</p>
       <p>עם המספרים הנוכחיים, ${T(S`T = ${months}`)}${fee ? html`, ${T(S`\varphi = ${fr(phi, 6)}`)}` : html`, ${T(S`\varphi = 1`)} (אין דמי ניהול)`}:</p>
       ${D(S`V_{${months}} = \sum_{m=0}^{${months - 1}} D_m\,\Gamma_m, \qquad \Gamma_m = ${fee ? S`${fr(phi, 6)}^{\,${months}-m}` : ""}\sum_i w_i\,\frac{P_i(t_{${months}})}{P_i(t_m)}`)}
       <p>המחירים ${T(S`P_i(t_m)`)} הם סדרות של אלפי מספרים, ולכן ${T(S`\Gamma_m`)} שונה לכל ריאליזציה. זה בדיוק מה שהופך כל תאריך התחלה לתוצאה אחרת.</p>

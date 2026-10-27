@@ -410,6 +410,10 @@ table.data tbody tr.pinned { box-shadow: inset -3px 0 0 var(--series-7); }
 .rank-head h3 { margin: 0; font-size: 13px; font-weight: 700; }
 .rank-head p { font-size: 12px; }
 .plot-rank { height: 170px; }
+.plot-short { height: 240px; }
+.income { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.income h3 { margin: 0; font-size: 14px; }
+.income .input-wrap { width: 110px; }
 
 /* --------------------------------------------------------------- math page */
 .math { display: flex; flex-direction: column; gap: 12px; max-width: 980px; }
@@ -490,6 +494,10 @@ table.data tbody tr.pinned { box-shadow: inset -3px 0 0 var(--series-7); }
 .holding-top > .icon-btn, .holding-top > button { margin-bottom: 4px; }
 .holding-bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .mini-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.events { display: flex; flex-direction: column; gap: 6px; }
+.event-grid { display: grid; grid-template-columns: 0.7fr 0.7fr 1.4fr; gap: 8px; }
+.event-grid .mini-field input { min-width: 0; }
+.holding.has-error { border-color: var(--danger); }
 .mini-field input { min-width: 90px; }
 .sym-ticker { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .sym-list {

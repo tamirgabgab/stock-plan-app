@@ -1,11 +1,11 @@
 // Results area: KPI tiles, fan chart over time, cross-section histogram, outcome by start date
 // and the realizations table. All panels share one "active realization" (hovered or pinned).
 import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
-import { fanFigure, histFigure, observeResize, outcomeFigure, rankFigure, PLOT_CONFIG, theme } from "./charts.js";
+import { fanFigure, histFigure, observeResize, outcomeFigure, rankFigure, reachFigure, PLOT_CONFIG, theme } from "./charts.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
 import { column, fractionBetween, histogram, nearestRow, nearestToQuantile, quantileSorted, rankSeries, row,
          sortedFinite, summarize } from "./stats.js";
-import { DualRange, Segmented, Toggle } from "./ui.js";
+import { DualRange, Hint, NumberInput, Segmented, Toggle } from "./ui.js";
 import { RealizationDetail } from "./detail.js";
 
 const SOLVED_LABEL = { monthly_deposit: "הפקדה חודשית נדרשת", start_amount: "סכום התחלתי נדרש" };
@@ -25,7 +25,8 @@ export function withMode(res, net) {
   if (!res.modes) return res;
   const m = net ? res.modes.net : res.modes.gross;
   return { ...res, net, paths: m.paths, cs: m.cs, years: m.years, bestYear: m.bestYear, worstYear: m.worstYear,
-           raw: { ...res.raw, final: m.final, irr: m.irr, account_drawdown: m.account_drawdown } };
+           raw: { ...res.raw, final: m.final, irr: m.irr, account_drawdown: m.account_drawdown,
+                  target_month: m.target_month, final_nofee: m.final_nofee, final_lump: m.final_lump } };
 }
 export const modeWord = (res) => (res.modes ? (res.net ? "נטו" : "ברוטו") : "");
 
@@ -82,8 +83,9 @@ export function useActive(res, ui) {
   return { active, setHover, pinned, setPinned, reps, detail, openDetail, closeDetail: () => setDetail(null) };
 }
 
-// In "final" mode the final value is the unknown, so there is no target to draw.
-const targetShown = (res) => res.plan.solve_for !== "final";
+// In "final" mode the final value is the unknown; the accumulation tab may still have a goal.
+const hasGoal = (res) => !!res.modes && res.plan.solve_for === "final" && res.plan.target_amount > 0;
+const targetShown = (res) => res.plan.solve_for !== "final" || hasGoal(res);
 
 // The detail modal for the open realization (if any); prev/next keep the pinned path in sync.
 export function DetailModal({ res, detail, openDetail, closeDetail, themeKey }) {
@@ -111,6 +113,11 @@ export function Results({ res: full, ui, setUi, themeKey }) {
       <${CrossSection} ...${shared} sources=${ACCUMULATION_SOURCES} />
       <${OutcomeByStart} ...${shared} />
     </div>
+    <div class=${hasGoal(res) ? "row-2" : ""}>
+      ${hasGoal(res) ? html`<${GoalCard} ...${shared} />` : null}
+      <${CostsCard} ...${shared} />
+    </div>
+    ${res.raw.final_lump ? html`<${SpreadCard} ...${shared} />` : null}
     <${RealizationsTable} ...${shared} columns=${accumulationColumns(res)} caption=${depositsCaption(res)} />
     <${DetailModal} ...${shared} />
   </div>`;
@@ -134,13 +141,15 @@ function Kpis({ res }) {
   const tiles = [];
   if (plan.solve_for === "final") {
     const fin = summarize(raw.final);
-    const losses = raw.final.filter((v, i) => v < raw.deposits_total[i]).length;
+    const netIn = (i) => raw.deposits_total[i] - (raw.withdrawn_total ? raw.withdrawn_total[i] || 0 : 0);
+    const losses = raw.final.filter((v, i) => v < netIn(i)).length;
+    const gain = summarize(raw.final.map((v, i) => v - netIn(i)));
     const worst = raw.final.indexOf(fin.min), best = raw.final.indexOf(fin.max);
     tiles.push(
       html`<${Tile} label=${`סכום סופי ${modeWord(res)} חציוני`} value=${m(fin.median)} sub=${`ממוצע ${m(fin.mean)}`} />`,
       html`<${Tile} label="סיכוי להפסד" value=${pct((100 * losses) / raw.n, 1)} sub="סכום סופי נמוך מסך ההפקדות" />`,
       html`<${Tile} label="תשואה שנתית (IRR) חציונית" value=${pct(irr?.median)} sub=${`10%–90%: ${pct(irr?.p10, 1)} עד ${pct(irr?.p90, 1)}`} />`,
-      html`<${Tile} label="סך הפקדות (חציון)" value=${m(dep?.median)} sub=${`רווח חציוני ${m(fin.median - (dep?.median || 0))}`} />`,
+      html`<${Tile} label="סך הפקדות (חציון)" value=${m(dep?.median)} sub=${`רווח חציוני ${m(gain?.median)}`} />`,
       html`<${Tile} label="התקופה הגרועה" value=${m(fin.min)} sub=${`התחלה ${dateHe(raw.start_dates[worst])}`} />`,
       html`<${Tile} label="התקופה הטובה" value=${m(fin.max)} sub=${`התחלה ${dateHe(raw.start_dates[best])}`} />`,
     );
@@ -252,7 +261,7 @@ export function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, 
       <div class="segmented small">${presets.map(([a, b]) => html`<button type="button"
         class=${ui.p1 === a && ui.p2 === b ? "on" : ""} onClick=${() => setUi((u) => ({ ...u, p1: a, p2: b }))}>${a}–${b}</button>`)}</div>
       <${Toggle} label=${res.labels.flow} checked=${ui.showDeposits} onChange=${(v) => setUi((u) => ({ ...u, showDeposits: v }))} />
-      ${targetShown(res) && res.plan.target_amount > 0 ? html`<${Toggle} label=${res.labels.targetLabel || "סכום סופי (היעד)"} checked=${ui.showTarget} onChange=${(v) => setUi((u) => ({ ...u, showTarget: v }))} />` : null}
+      ${targetShown(res) && res.plan.target_amount > 0 ? html`<${Toggle} label=${res.labels.targetLabel || (hasGoal(res) ? "יעד" : "סכום סופי (היעד)")} checked=${ui.showTarget} onChange=${(v) => setUi((u) => ({ ...u, showTarget: v }))} />` : null}
       <${Toggle} label="סקאלה לוגריתמית" checked=${ui.logY} onChange=${(v) => setUi((u) => ({ ...u, logY: v }))} />
       <${Toggle} label="מסלולים מייצגים" checked=${ui.showReps} onChange=${(v) => setUi((u) => ({ ...u, showReps: v }))}
         hint="שלוש ריאליזציות אמיתיות: אלה שסיימו קרוב לאחוזון התחתון, לחציון ולאחוזון העליון של התוצאה. בשונה מהקרן, אלה מסלולים שבאמת קרו, עם כל הירידות והקפיצות." />
@@ -341,7 +350,7 @@ export const ACCUMULATION_SOURCES = [
         if (v >= res.plan.target_amount) reach++;
       }
       const out = [{ label: "סיכוי להפסד (שווי מתחת להפקדות)", value: pct((100 * loss) / res.n, 1) }];
-      if (res.plan.solve_for !== "final") out.push({ label: "סיכוי להיות מעל הסכום הסופי (היעד)", value: pct((100 * reach) / res.n, 1) });
+      if (targetShown(res)) out.push({ label: hasGoal(res) ? "סיכוי להיות מעל היעד" : "סיכוי להיות מעל הסכום הסופי (היעד)", value: pct((100 * reach) / res.n, 1) });
       return out;
     } },
   SOLVED_SOURCE,
@@ -517,6 +526,103 @@ export function OutcomeByStart({ res, active, setHover, pinned, setPinned, openD
         <div class="muted">${res.labels.outcomeSub(res, tip.i)}</div>
       </div>` : null}
     </div>
+  </section>`;
+}
+
+// ------------------------------------------------------------- goal, costs and income
+
+// When the account first reaches the goal (final mode with a target): the share of start
+// dates that got there by each plan month, and the median time over all of them.
+function GoalCard({ res, themeKey }) {
+  const ref = useRef(null);
+  const { raw, plan } = res;
+  const goal = useMemo(() => {
+    const counts = new Array(res.T + 1).fill(0);
+    const hits = [];
+    for (const v of raw.target_month) if (v !== null && v !== undefined) { counts[v]++; hits.push(v); }
+    hits.sort((a, b) => a - b);
+    let acc = 0;
+    const share = counts.map((c) => 100 * (acc += c) / res.n);
+    const half = Math.ceil(res.n / 2) - 1;           // never = infinitely late, so it only counts if half got there
+    return { share, hits, median: hits.length > half ? hits[half] : null };
+  }, [res]);
+  usePlot(ref, () => reachFigure({ T: res.T, share: goal.share, median: goal.median }), [res, themeKey]);
+  const byHalf = goal.share[Math.floor(res.T / 2)];
+  const reached = goal.hits.length;
+  const fmtM = (m) => (m === null || m === undefined ? "—" : `${(m / 12).toFixed(1)} שנים`);
+  return html`<section class="card" aria-label="מתי מגיעים ליעד">
+    <div class="card-head"><div><h2>מתי מגיעים ליעד של <span dir="ltr">${money(plan.target_amount, plan.currency)}</span></h2>
+      <p class="muted">לכל תאריך התחלה: החודש הראשון שבו שווי החשבון (${modeWord(res)}) הגיע ליעד. הגרף מראה כמה מהתקופות כבר הגיעו אליו בכל רגע${plan.real ? ", בכסף של היום" : ""}.</p></div></div>
+    <dl class="stats">
+      <div><dt>זמן חציוני ליעד</dt><dd dir="ltr">${goal.median !== null ? fmtM(goal.median) : "פחות מחצי מגיעים"}</dd></div>
+      <div><dt>סיכוי להגיע עד הסוף</dt><dd dir="ltr">${pct((100 * reached) / res.n, 1)}</dd></div>
+      <div><dt>סיכוי להגיע עד ${monthsLabel(Math.floor(res.T / 2))}</dt><dd dir="ltr">${pct(byHalf, 1)}</dd></div>
+      <div><dt>הכי מהר</dt><dd dir="ltr">${fmtM(goal.hits[0])}</dd></div>
+      <div><dt>אחוזון 90 (מי שהגיע)</dt><dd dir="ltr">${reached ? fmtM(quantileSorted(goal.hits, 90)) : "—"}</dd></div>
+    </dl>
+    <div ref=${ref} class="plot plot-short"></div>
+  </section>`;
+}
+
+// What the plan cost (fees and tax), and the monthly income the final value can pay.
+function CostsCard({ res, ui, setUi }) {
+  const { raw, plan, modes } = res;
+  const cur = plan.currency;
+  const mo = (v) => money(v, cur);
+  const fees = summarize(raw.fees_total);
+  const drag = raw.final_nofee ? summarize(raw.final_nofee.map((v, i) => v - raw.final[i])) : null;
+  const dragPct = raw.final_nofee ? summarize(raw.final_nofee.map((v, i) => (v > 0 ? (100 * (v - raw.final[i])) / v : 0))) : null;
+  const taxPaid = summarize(raw.tax_paid);
+  const deferred = summarize(modes.gross.final.map((v, i) => v - modes.net.final[i]));
+  const swr = ui.swr ?? 4;
+  const income = summarize(raw.final.map((v) => (Math.max(v, 0) * swr) / 1200));
+  return html`<section class="card" aria-label="עלויות והכנסה">
+    <div class="card-head"><div><h2>עלויות והכנסה בסוף</h2>
+      <p class="muted">חציון על כל תאריכי ההתחלה${plan.real ? ", בכסף של היום" : ""}. דמי ניהול: כמה נגבו בפועל, וכמה פחות יש בסוף בגללם (כולל הריבית דריבית שהם מנעו).</p></div></div>
+    <dl class="stats">
+      <div><dt>דמי ניהול שנגבו</dt><dd dir="ltr">${plan.annual_fee > 0 ? mo(fees?.median) : "אין"}</dd></div>
+      <div><dt>הסכום הסופי שאבד לדמי ניהול</dt><dd dir="ltr">${drag ? html`${mo(drag.median)} <span class="muted">(${pct(dragPct.median, 1)})</span>` : "אין"}</dd></div>
+      <div><dt>מס ששולם בדרך <${Hint} text="מס על מכירות במהלך התוכנית: מעבר שלב או איזון שהם אירוע מס, ומשיכות חד-פעמיות." /></dt><dd dir="ltr">${mo(taxPaid?.median)}</dd></div>
+      <div><dt>מס נדחה למכירה בסוף</dt><dd dir="ltr">${mo(deferred?.median)}</dd></div>
+    </dl>
+    <div class="income">
+      <h3>הכנסה חודשית מהסכום הסופי</h3>
+      <div class="controls">
+        <label class="mini">שיעור משיכה שנתי <${NumberInput} value=${swr} step=${0.25} min=${0} max=${20} suffix="%"
+          onChange=${(v) => setUi((u) => ({ ...u, swr: v }))} /></label>
+        <span class="muted small">הסכום הסופי (${modeWord(res)}) כפול השיעור, חלקי 12. ‏4% הוא כלל האצבע של מחקר טריניטי; את ההצלחה שלו לאורך זמן בודקים בלשונית הטריניטי.</span>
+      </div>
+      <dl class="stats">
+        <div><dt>חציון</dt><dd dir="ltr">${mo(income?.median)}</dd></div>
+        <div><dt>אחוזון 10</dt><dd dir="ltr">${mo(income?.p10)}</dd></div>
+        <div><dt>אחוזון 90</dt><dd dir="ltr">${mo(income?.p90)}</dd></div>
+      </dl>
+    </div>
+  </section>`;
+}
+
+// Spreading the start amount (DCA) against investing it at once, per start date.
+function SpreadCard({ res, active, pinned, themeKey }) {
+  const ref = useRef(null);
+  const { raw, plan } = res;
+  const cur = plan.currency;
+  const diff = useMemo(() => raw.final.map((v, i) => v - raw.final_lump[i]), [res]);
+  const rel = summarize(raw.final.map((v, i) => (raw.final_lump[i] > 0 ? 100 * (v / raw.final_lump[i] - 1) : null)));
+  const s = summarize(diff);
+  const wins = diff.filter((d) => d > 0).length;
+  usePlot(ref, () => outcomeFigure({ dates: raw.start_dates, values: diff, highlightIdx: active, pinnedIdx: pinned,
+    prefix: CURRENCY_SYMBOL[cur], suffix: "", yTitle: "פריסה פחות השקעה מיידית" }), [res, active, pinned, themeKey]);
+  return html`<section class="card" aria-label="פריסה מול השקעה מיידית">
+    <div class="card-head"><div><h2>פריסה על ${monthsLabel(plan.lump_spread)} מול השקעה מיידית</h2>
+      <p class="muted">אותה תוכנית בדיוק, רק שהסכום ההתחלתי מושקע כולו ביום הראשון. הגרף: הסכום הסופי (${modeWord(res)}) עם הפריסה פחות בלעדיה, לכל תאריך התחלה. מעל האפס הפריסה ניצחה.</p></div></div>
+    <dl class="stats">
+      <div><dt>הפריסה ניצחה</dt><dd dir="ltr">${pct((100 * wins) / res.n, 1)}</dd></div>
+      <div><dt>הפרש חציוני</dt><dd dir="ltr">${money(s?.median, cur)} <span class="muted">(${pct(rel?.median, 2)})</span></dd></div>
+      <div><dt>הפרש ממוצע</dt><dd dir="ltr">${money(s?.mean, cur)}</dd></div>
+      <div><dt>הכי טוב לפריסה</dt><dd dir="ltr">${money(s?.max, cur)}</dd></div>
+      <div><dt>הכי רע לפריסה</dt><dd dir="ltr">${money(s?.min, cur)}</dd></div>
+    </dl>
+    <div ref=${ref} class="plot plot-short"></div>
   </section>`;
 }
 

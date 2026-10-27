@@ -8,7 +8,8 @@ import { column, fractionBetween, histogram, nearestRow, nearestToQuantile, quan
 import { DualRange, Hint, NumberInput, Segmented, Toggle } from "./ui.js";
 import { RealizationDetail } from "./detail.js";
 
-const SOLVED_LABEL = { monthly_deposit: "הפקדה חודשית נדרשת", start_amount: "סכום התחלתי נדרש" };
+const SOLVED_LABEL = { monthly_deposit: "הפקדה חודשית נדרשת", start_amount: "סכום התחלתי נדרש",
+                       withdrawal: "משיכה חודשית מקסימלית" };
 
 // Wording that differs between the accumulation and the withdrawal (Trinity) results.
 // ``res.labels`` carries one of these; the shared panels below read it.
@@ -109,6 +110,7 @@ export function Results({ res: full, ui, setUi, themeKey }) {
     </div>
     <${Kpis} res=${res} />
     <${FanChart} ...${shared} />
+    ${res.lifecycle ? html`<${LifecycleCard} ...${shared} />` : null}
     <div class="row-2">
       <${CrossSection} ...${shared} sources=${ACCUMULATION_SOURCES} />
       <${OutcomeByStart} ...${shared} />
@@ -130,6 +132,13 @@ export function Tile({ label, value, sub, text }) {
     <div class=${"tile-value" + (text ? " text" : "")} dir=${text ? "rtl" : "ltr"}>${value}</div>${sub ? html`<div class="tile-sub">${sub}</div>` : null}</div>`;
 }
 
+// Lifecycle plans: the share of start dates whose withdrawals were all paid.
+function successTile(res) {
+  const ok = res.raw.success.filter(Boolean).length;
+  return html`<${Tile} label="אחוז הצלחה" value=${pct((100 * ok) / res.n, 1)}
+    sub=${`ב-${ok.toLocaleString("he-IL")} מתוך ${res.n.toLocaleString("he-IL")} תקופות הכסף החזיק עד הסוף`} />`;
+}
+
 function Kpis({ res }) {
   const { raw, plan } = res;
   const cur = plan.currency;
@@ -147,7 +156,8 @@ function Kpis({ res }) {
     const worst = raw.final.indexOf(fin.min), best = raw.final.indexOf(fin.max);
     tiles.push(
       html`<${Tile} label=${`סכום סופי ${modeWord(res)} חציוני`} value=${m(fin.median)} sub=${`ממוצע ${m(fin.mean)}`} />`,
-      html`<${Tile} label="סיכוי להפסד" value=${pct((100 * losses) / raw.n, 1)} sub="סכום סופי נמוך מסך ההפקדות" />`,
+      res.lifecycle ? successTile(res)
+        : html`<${Tile} label="סיכוי להפסד" value=${pct((100 * losses) / raw.n, 1)} sub="סכום סופי נמוך מסך ההפקדות" />`,
       html`<${Tile} label="תשואה שנתית (IRR) חציונית" value=${pct(irr?.median)} sub=${`10%–90%: ${pct(irr?.p10, 1)} עד ${pct(irr?.p90, 1)}`} />`,
       html`<${Tile} label="סך הפקדות (חציון)" value=${m(dep?.median)} sub=${`רווח חציוני ${m(gain?.median)}`} />`,
       html`<${Tile} label="התקופה הגרועה" value=${m(fin.min)} sub=${`התחלה ${dateHe(raw.start_dates[worst])}`} />`,
@@ -156,12 +166,15 @@ function Kpis({ res }) {
   } else {
     const sol = summarize(raw.solved) || {};
     const name = SOLVED_LABEL[plan.solve_for];
-    const worst = raw.solved.indexOf(sol.max), best = raw.solved.indexOf(sol.min);
+    // A required deposit is better when lower; a possible withdrawal when higher.
+    const higher = res.labels.solvedHigherBetter;
+    const [wv, bv, safe] = higher ? [sol.min, sol.max, sol.p10] : [sol.max, sol.min, sol.p90];
+    const worst = raw.solved.indexOf(wv), best = raw.solved.indexOf(bv);
     tiles.push(
       html`<${Tile} label=${`${name} (חציון)`} value=${m(sol.median)} sub=${`ממוצע ${m(sol.mean)}`} />`,
-      html`<${Tile} label="להצלחה ב-90% מהתקופות" value=${m(sol.p90)} sub="מספיק ב-90% מהמקרים ההיסטוריים" />`,
-      html`<${Tile} label="המקרה הגרוע" value=${m(sol.max)} sub=${worst >= 0 ? `התחלה ${dateHe(raw.start_dates[worst])}` : ""} />`,
-      html`<${Tile} label="המקרה הטוב" value=${m(sol.min)} sub=${best >= 0 ? `התחלה ${dateHe(raw.start_dates[best])}` : ""} />`,
+      html`<${Tile} label="להצלחה ב-90% מהתקופות" value=${m(safe)} sub=${higher ? "אפשרי ב-90% מהמקרים ההיסטוריים" : "מספיק ב-90% מהמקרים ההיסטוריים"} />`,
+      html`<${Tile} label="המקרה הגרוע" value=${m(wv)} sub=${worst >= 0 ? `התחלה ${dateHe(raw.start_dates[worst])}` : ""} />`,
+      html`<${Tile} label="המקרה הטוב" value=${m(bv)} sub=${best >= 0 ? `התחלה ${dateHe(raw.start_dates[best])}` : ""} />`,
       html`<${Tile} label="תשואה שנתית (IRR) חציונית" value=${pct(irr?.median)} sub=${`10%–90%: ${pct(irr?.p10, 1)} עד ${pct(irr?.p90, 1)}`} />`,
       html`<${Tile} label="סך הפקדות (חציון)" value=${m(dep?.median)} />`,
     );
@@ -354,6 +367,9 @@ export const ACCUMULATION_SOURCES = [
       return out;
     } },
   SOLVED_SOURCE,
+  { key: "retire", kind: "money", label: "יתרה בפרישה", title: () => "התפלגות היתרה בתחילת שלבי המשיכה",
+    axis: "יתרה בפרישה", when: (res) => !!res.lifecycle, values: (res) => res.raw.retire_value,
+    note: "השווי נטו ברגע ששלב המשיכה הראשון מתחיל, לכל תאריך התחלה. ממנו נמדד אחוז המשיכה." },
   { key: "dd", kind: "pct", label: "ירידה מהשיא: התיק", title: () => "התפלגות הירידה המקסימלית מהשיא: תשואת התיק",
     axis: "ירידה מהשיא (%)", values: (res) => res.raw.max_drawdown, stats: DD_STATS,
     note: "הירידה הגדולה ביותר מהשיא של תשואת האסטרטגיה עצמה: יחידה אחת שהושקעה בהתחלה, כולל מינוף ודמי ניהול, בלי הפקדות ובלי מס. זה המדד המקובל ל'כמה כאב צפוי בדרך'." },
@@ -546,7 +562,7 @@ function GoalCard({ res, themeKey }) {
     const half = Math.ceil(res.n / 2) - 1;           // never = infinitely late, so it only counts if half got there
     return { share, hits, median: hits.length > half ? hits[half] : null };
   }, [res]);
-  usePlot(ref, () => reachFigure({ T: res.T, share: goal.share, median: goal.median }), [res, themeKey]);
+  usePlot(ref, () => reachFigure({ T: res.T, share: goal.share, mark: goal.median }), [res, themeKey]);
   const byHalf = goal.share[Math.floor(res.T / 2)];
   const reached = goal.hits.length;
   const fmtM = (m) => (m === null || m === undefined ? "—" : `${(m / 12).toFixed(1)} שנים`);
@@ -577,7 +593,7 @@ function CostsCard({ res, ui, setUi }) {
   const swr = ui.swr ?? 4;
   const income = summarize(raw.final.map((v) => (Math.max(v, 0) * swr) / 1200));
   return html`<section class="card" aria-label="עלויות והכנסה">
-    <div class="card-head"><div><h2>עלויות והכנסה בסוף</h2>
+    <div class="card-head"><div><h2>${res.lifecycle ? "עלויות" : "עלויות והכנסה בסוף"}</h2>
       <p class="muted">חציון על כל תאריכי ההתחלה${plan.real ? ", בכסף של היום" : ""}. דמי ניהול: כמה נגבו בפועל, וכמה פחות יש בסוף בגללם (כולל הריבית דריבית שהם מנעו).</p></div></div>
     <dl class="stats">
       <div><dt>דמי ניהול שנגבו</dt><dd dir="ltr">${plan.annual_fee > 0 ? mo(fees?.median) : "אין"}</dd></div>
@@ -585,7 +601,7 @@ function CostsCard({ res, ui, setUi }) {
       <div><dt>מס ששולם בדרך <${Hint} text="מס על מכירות במהלך התוכנית: מעבר שלב או איזון שהם אירוע מס, ומשיכות חד-פעמיות." /></dt><dd dir="ltr">${mo(taxPaid?.median)}</dd></div>
       <div><dt>מס נדחה למכירה בסוף</dt><dd dir="ltr">${mo(deferred?.median)}</dd></div>
     </dl>
-    <div class="income">
+    ${res.lifecycle ? null : html`<div class="income">
       <h3>הכנסה חודשית מהסכום הסופי</h3>
       <div class="controls">
         <label class="mini">שיעור משיכה שנתי <${NumberInput} value=${swr} step=${0.25} min=${0} max=${20} suffix="%"
@@ -597,7 +613,47 @@ function CostsCard({ res, ui, setUi }) {
         <div><dt>אחוזון 10</dt><dd dir="ltr">${mo(income?.p10)}</dd></div>
         <div><dt>אחוזון 90</dt><dd dir="ltr">${mo(income?.p90)}</dd></div>
       </dl>
-    </div>
+    </div>`}
+  </section>`;
+}
+
+// Lifecycle plans: did the money last through the withdrawal stages, when did it run out,
+// and what was there when the withdrawals started.
+function LifecycleCard({ res, themeKey }) {
+  const ref = useRef(null);
+  const { raw, plan } = res;
+  const cur = plan.currency;
+  const mo = (v) => money(v, cur);
+  const life = useMemo(() => {
+    const counts = new Array(res.T + 1).fill(0);
+    const out = [];
+    for (const v of raw.depleted_at) if (v !== null && v !== undefined) { counts[v]++; out.push(v); }
+    out.sort((a, b) => a - b);
+    let acc = 0;
+    const share = counts.map((c) => 100 - (100 * (acc += c)) / res.n);
+    return { share, out };
+  }, [res]);
+  usePlot(ref, () => reachFigure({ T: res.T, share: life.share, mark: raw.retire_month, name: "הכסף עוד לא נגמר" }),
+    [res, themeKey]);
+  const retire = summarize(raw.retire_value);
+  const solveMode = plan.solve_for !== "final";
+  const ok = raw.success.filter(Boolean).length;
+  const yrs = (m) => (m === null || m === undefined ? "—" : `${((m - raw.retire_month) / 12).toFixed(1)} שנים`);
+  const wdPerMonth = summarize(raw.withdrawn_total.map((v) => v / Math.max(res.T - raw.retire_month, 1)));
+  return html`<section class="card" aria-label="פרישה">
+    <div class="card-head"><div><h2>פרישה: האם הכסף מחזיק?</h2>
+      <p class="muted">שלבי המשיכה מתחילים אחרי ${monthsLabel(raw.retire_month)}. הגרף: אחוז התקופות שבהן הכסף עוד לא נגמר בכל רגע (הקו המקווקו הוא תחילת המשיכות)${plan.real ? ". הסכומים בכסף של היום" : ""}.</p></div></div>
+    <dl class="stats">
+      <div><dt>${solveMode ? "יש פתרון" : "הכסף החזיק עד הסוף"}</dt><dd dir="ltr">${pct((100 * ok) / res.n, 1)}</dd></div>
+      <div><dt>יתרה בפרישה (חציון) <${Hint} text="השווי נטו (אחרי מס על הרווח) ברגע ששלב המשיכה הראשון מתחיל. ממנו נמדד אחוז המשיכה." /></dt><dd dir="ltr">${mo(retire?.median)}</dd></div>
+      <div><dt>יתרה בפרישה: אחוזון 10</dt><dd dir="ltr">${mo(retire?.p10)}</dd></div>
+      <div><dt>יתרה בפרישה: אחוזון 90</dt><dd dir="ltr">${mo(retire?.p90)}</dd></div>
+      <div><dt>משיכה חודשית ממוצעת (חציון)</dt><dd dir="ltr">${mo(wdPerMonth?.median)}</dd></div>
+      ${life.out.length ? html`
+        <div><dt>נגמר אחרי (חציון, מתחילת הפרישה)</dt><dd dir="ltr">${yrs(life.out[Math.floor((life.out.length - 1) / 2)])}</dd></div>
+        <div><dt>הכי מוקדם</dt><dd dir="ltr">${yrs(life.out[0])}</dd></div>` : null}
+    </dl>
+    <div ref=${ref} class="plot plot-short"></div>
   </section>`;
 }
 
@@ -663,6 +719,12 @@ function accumulationColumns(res) {
     { key: "final", label: `סכום סופי ${word}`, get: (i) => raw.final[i], fmt: (v) => money(v, cur) },
     { key: "dep", label: "סך הפקדות", get: (i) => raw.deposits_total[i], fmt: (v) => money(v, cur), hidden: true },
     { key: "irr", label: "תשואה שנתית (IRR)", get: (i) => raw.irr[i], fmt: (v) => pct(v) },
+    ...(res.lifecycle ? [
+      { key: "retire", label: "יתרה בפרישה", get: (i) => raw.retire_value[i], fmt: (v) => money(v, cur) },
+      { key: "lasted", label: "הכסף החזיק", get: (i) => (raw.depleted_at[i] === null ? res.T + 1 : raw.depleted_at[i]), rtl: true,
+        fmt: (v) => (v > res.T ? "✓" : `נגמר אחרי ${monthsLabel(v - raw.retire_month)}`),
+        csv: (i) => (raw.depleted_at[i] === null ? "" : raw.depleted_at[i] - raw.retire_month) },
+    ] : []),
     yearColumn(res, "best", `שנה מקסימלית ${word}`, res.bestYear),
     yearColumn(res, "worst", `שנה מינימלית ${word}`, res.worstYear),
   ];

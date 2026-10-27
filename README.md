@@ -41,6 +41,14 @@ the UI — it is not real market history).
   deposit, take a withdrawal (a pro-rata sale, net of tax) or pause the deposits for a
   while. The start amount can be spread over N months (DCA), with interest on the waiting
   cash, and the results compare that to investing it at once on every start date.
+- **Lifecycle plans** – a stage can be a withdrawal (retirement) stage, with the Trinity
+  tab's withdrawal rules (percent of the balance at retirement, the 4% rule, CPI-indexed
+  by default; a fixed amount; a percent of the current balance with floor and ceiling;
+  one-time withdrawals), so one plan saves and then spends. The results show the success
+  rate, when the money ran out and the balance at retirement; solve for the required
+  deposit, the required start amount or the largest monthly withdrawal, leaving a chosen
+  final balance (0 = spend it all). A one-click example: 25 years of saving, then 30 of
+  the 4% rule.
 - **Periodic rebalancing** – back to the stage weights monthly, quarterly, yearly or when
   a weight drifts past a band; tax-free or taxable, like the stage switches (both tabs).
 - **Goal, costs and income** – in final-balance mode the target is a goal: when the

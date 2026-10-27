@@ -8,6 +8,7 @@ import { CrossSection, DetailModal, FanChart, OutcomeByStart, RealizationsTable,
          dateColumns, solvedLabel, useActive } from "./results.js";
 import { columnStats, decodeMatrix, summarize } from "./stats.js";
 import { NumberField, Segmented, Toggle } from "./ui.js";
+import { WithdrawFields } from "./withdrawal.js";
 
 export const TRINITY_SOLVE_OPTIONS = [
   { value: "final", label: "יתרה סופית" },
@@ -111,53 +112,14 @@ export function TrinityInputs({ plan, setPlan, range, rangeError, favorites }) {
 
 function WithdrawStageCard({ stage, index, count, sym, plan, onChange, onMove, onRemove }) {
   const set = (key) => (value) => onChange((s) => ({ ...s, [key]: value }));
-  const solveRate = plan.solve_for === "rate";
-  const solveAmount = plan.solve_for === "amount";
-  const locked = solveRate || solveAmount;
-  const pctUnit = solveRate || (!solveAmount && stage.rate_unit === "pct");
-  const monthlyFromPct = (stage.rate / 1200) * plan.start_amount;
-  const unitOptions = [{ value: "pct", label: "% לשנה" }, { value: "money", label: `${sym} לחודש` }];
   const indexed = plan.index_withdrawals ? ", צמוד" : "";
   return html`<div class="stage-card">
     <${StageHead} stage=${stage} index=${index} count=${count} set=${set} onMove=${onMove} onRemove=${onRemove} />
-    <div class="grid-2">
-      <${NumberField} label="חודשים" value=${stage.months} onChange=${set("months")} min=${1} max=${1200}
-        note=${monthsLabel(stage.months || 0)} />
-      <${Segmented} label="המשיכה מוגדרת כ" options=${unitOptions} value=${pctUnit ? "pct" : "money"} disabled=${locked}
-        note=${locked ? (solveRate ? "נקבע לפי מצב החישוב: אחוז" : "נקבע לפי מצב החישוב: סכום") : null}
-        onChange=${(v) => onChange((s) => ({ ...s, rate_unit: v, basis: v === "money" ? "initial" : s.basis }))}
-        hint=${locked ? "היחידה נקבעת לפי מה שמחשבים: בסכום משיכה קבוע המשיכה היא סכום לחודש, ובאחוז משיכה קבוע היא אחוז לשנה." : "אחוז לשנה (נמשך חודשית, 1/12) או סכום קבוע לחודש ביחידות הקלט."} />
-    </div>
-    <div class="grid-2">
-      ${pctUnit
-        ? html`<${NumberField} label="אחוז משיכה שנתי" value=${stage.rate} onChange=${set("rate")} step=${0.25} max=${100}
-            suffix="%" disabled=${solveRate}
-            note=${solveRate ? "מחושב" : stage.basis === "initial" ? `${money(monthlyFromPct, plan.currency)} לחודש${indexed}` : "מהיתרה בכל חודש"} />`
-        : html`<${NumberField} label="משיכה חודשית" value=${stage.amount} onChange=${set("amount")} step=${500}
-            suffix=${sym} disabled=${solveAmount} note=${solveAmount ? `מחושב (אותו סכום בכל השלבים${indexed})` : `${money(stage.amount, plan.currency)} לחודש${indexed}`} />`}
-      ${pctUnit ? html`<${Segmented} label="האחוז נמדד מ" options=${[{ value: "initial", label: "הסכום ההתחלתי" }, { value: "current", label: "היתרה הנוכחית" }]}
-          value=${stage.basis} onChange=${set("basis")}
-          hint="הסכום ההתחלתי: משיכה קבועה (צמודה למדד אם ההצמדה דלוקה), כמו במחקר טריניטי. היתרה הנוכחית: אחוז ממה שיש בתיק באותו חודש, אף פעם לא נגמר אבל ההכנסה משתנה. כשמחשבים אחוז מהיתרה כדאי להגדיר יתרה סופית חיובית, אחרת אפשר פשוט למשוך הכל." />` : null}
-    </div>
-    ${pctUnit && stage.basis === "current" ? html`<div class="guard">
-      <div class="field-label">רצפה ותקרה למשיכה החודשית (0 = בלי)</div>
-      <div class="grid-3">
-        <${NumberField} label="לפחות" value=${stage.floor} onChange=${set("floor")} step=${stage.guard_unit === "pct" ? 0.25 : 500}
-          suffix=${stage.guard_unit === "pct" ? "%" : sym} />
-        <${NumberField} label="לכל היותר" value=${stage.ceiling} onChange=${set("ceiling")} step=${stage.guard_unit === "pct" ? 0.25 : 500}
-          suffix=${stage.guard_unit === "pct" ? "%" : sym} />
-        <${Segmented} label="יחידות" options=${[{ value: "pct", label: "% מההתחלתי" }, { value: "money", label: sym }]}
-          value=${stage.guard_unit} onChange=${set("guard_unit")}
-          hint="אחוז לשנה מהסכום ההתחלתי (צמוד אם ההצמדה דלוקה), או סכום לחודש ביחידות הקלט." />
-      </div>
-    </div>` : null}
-    <div class="grid-2">
-      <${NumberField} label="משיכה חד-פעמית בתחילת השלב" value=${stage.one_time} onChange=${set("one_time")}
-        step=${stage.one_time_unit === "pct" ? 1 : 10000} suffix=${stage.one_time_unit === "pct" ? "%" : sym} max=${stage.one_time_unit === "pct" ? 100 : undefined} />
-      <${Segmented} label="יחידות" options=${[{ value: "money", label: sym }, { value: "pct", label: "% מהיתרה" }]}
-        value=${stage.one_time_unit} onChange=${set("one_time_unit")}
-        hint="סכום בכסף (ביחידות הקלט) או אחוז מהיתרה ברגע שהשלב מתחיל." />
-    </div>
+    <${NumberField} label="חודשים" value=${stage.months} onChange=${set("months")} min=${1} max=${1200}
+      note=${monthsLabel(stage.months || 0)} />
+    <${WithdrawFields} stage=${stage} set=${set} onChange=${onChange} sym=${sym} currency=${plan.currency}
+      indexed=${plan.index_withdrawals} solveRate=${plan.solve_for === "rate"} solveAmount=${plan.solve_for === "amount"}
+      baseNote=${(st) => `${money((st.rate / 1200) * plan.start_amount, plan.currency)} לחודש${indexed}`} />
     <${HoldingsTable} stage=${stage} onChange=${onChange} />
   </div>`;
 }

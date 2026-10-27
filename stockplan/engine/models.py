@@ -8,7 +8,8 @@ from typing import List, Optional
 SOLVE_FINAL = "final"
 SOLVE_MONTHLY = "monthly_deposit"
 SOLVE_START = "start_amount"
-SOLVE_MODES = (SOLVE_FINAL, SOLVE_MONTHLY, SOLVE_START)
+SOLVE_WITHDRAWAL = "withdrawal"     # the largest monthly withdrawal of the withdrawal stages
+SOLVE_MODES = (SOLVE_FINAL, SOLVE_MONTHLY, SOLVE_START, SOLVE_WITHDRAWAL)
 
 STEPS = {"D": "day", "W": "week", "M": "month"}
 
@@ -37,6 +38,22 @@ class Stage:
     initial_deposit: float = 0.0
     monthly_deposit: float = 0.0
     name: str = ""
+    kind: str = "deposit"         # "deposit", or "withdraw" (a retirement stage: no deposits)
+    # Withdrawal stage settings, the same as the Trinity tab's (see WithdrawStage). The
+    # "initial" basis is the net balance when the plan's first withdrawal stage starts.
+    rate: float = 4.0
+    amount: float = 0.0
+    rate_unit: str = "pct"
+    basis: str = "initial"
+    floor: float = 0.0
+    ceiling: float = 0.0
+    guard_unit: str = "pct"
+    one_time: float = 0.0
+    one_time_unit: str = "money"
+
+    @property
+    def withdraws(self) -> bool:
+        return self.kind == "withdraw"
 
 
 @dataclass
@@ -78,14 +95,30 @@ class PlanRequest:
     cash_rate: float = 0.0         # percent per year earned by the cash waiting to be invested
     rebalance: str = "none"        # see REBALANCE_RULES
     rebalance_band: float = 5.0    # percentage points, for rebalance == "band"
+    index_withdrawals: bool = True # withdrawal stages keep their purchasing power (as in Trinity)
 
     @property
     def total_months(self) -> int:
         return sum(s.months for s in self.stages)
 
     @property
+    def has_withdrawals(self) -> bool:
+        return any(s.withdraws for s in self.stages)
+
+    @property
+    def retire_month(self) -> int:
+        """Plan month the first withdrawal stage starts (-1 = none)."""
+        m = 0
+        for s in self.stages:
+            if s.withdraws:
+                return m
+            m += s.months
+        return -1
+
+    @property
     def needs_cpi(self) -> bool:
-        return self.real or self.index_deposits or self.tax_basis == "real"
+        return (self.real or self.index_deposits or self.tax_basis == "real"
+                or (self.index_withdrawals and self.has_withdrawals))
 
 
 @dataclass
@@ -126,6 +159,12 @@ class SimulationResult:
     # The same plan with the start amount invested at once (only when it is spread).
     final_lump: "object" = None
     final_lump_gross: "object" = None
+    # Withdrawal stages (lifecycle plans): success means every withdrawal was paid in full
+    # (final mode) or that a solution exists (solve modes).
+    success: "object" = None              # (R,) bool
+    depleted_at: "object" = None          # (R,) first month a withdrawal was not paid in full, or -1
+    retire_value: "object" = None         # (R,) net balance when the withdrawals start, display units
+    retire_month: int = -1
 
 
 # ------------------------------------------------------------------ withdrawal (Trinity)

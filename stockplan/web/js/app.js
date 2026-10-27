@@ -36,6 +36,7 @@ const DEFAULT_PLAN = {
   cash_rate: 0,
   rebalance: "none",
   rebalance_band: 5,
+  index_withdrawals: true,
   stages: [{ ...newStage(1), months: 240, monthly_deposit: 1000 }],
 };
 
@@ -85,8 +86,12 @@ function prepareResult(raw, plan) {
     net: mode(raw.paths, raw.final, raw.irr, raw.account_drawdown, raw.year_irr_net,
               { target_month: raw.target_month_net, final_nofee: raw.final_nofee, final_lump: raw.final_lump }),
   };
+  const lifecycle = raw.success !== null && raw.success !== undefined;
+  const labels = lifecycle
+    ? { ...ACCUMULATION_LABELS, flow: "הפקדות פחות משיכות", flowVerb: "הופקד נטו", solvedHigherBetter: plan.solve_for === "withdrawal" }
+    : ACCUMULATION_LABELS;
   return { raw, plan, deps, depMean, modes, paths: modes.gross.paths, cs: modes.gross.cs,
-           n: raw.n, T: raw.months, id: Math.random(), labels: ACCUMULATION_LABELS };
+           n: raw.n, T: raw.months, id: Math.random(), labels, lifecycle };
 }
 
 // Per realization: the plan year (0-based) whose deposits earned the most / the least.

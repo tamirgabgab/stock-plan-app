@@ -144,6 +144,9 @@ function DepositsMath({ plan, res }) {
       <p>בתוכנית הנוכחית ${T(S`f = ${plan.deposit_every || 1}`)}, ${T(S`g = ${n(plan.deposit_growth || 0)}\%`)}${(plan.events || []).length ? `, ויש ${plan.events.length} אירועים` : ""}.
         אירוע משיכה ${T(S`W_m`)} הוא מכירה יחסית של התיק בתחילת החודש, כמו משיכה בטריניטי: נמכר חלק ${T(S`f_m`)} כך שאחרי המס נשאר בדיוק ${T(S`\sigma_m W_m`)}.
         ${plan.lump_spread ? html`הסכום ההתחלתי נפרס על ${T(S`N = ${plan.lump_spread}`)} חודשים: בחודש ${T(S`j < N`)} מושקע ${T(S`c_j/(N-j)`)} מהמזומן הממתין ${T(S`c_j`)}, והמזומן צומח בריבית ${T(S`${n(plan.cash_rate || 0)}\%`)} אחרי מס. מבחינת המשקיע הכסף יצא בחודש 0, ולכן ב-IRR הוא נספר שם.` : ""}</p>
+      <p><b>שלבי משיכה (מחזור חיים).</b> בשלב משיכה אין הפקדה תקופתית. בכל חודש נמכר חלק יחסי מהתיק כך שאחרי המס מתקבלת המשיכה ${T(S`W_m`)}, לפי אותם כללים כמו בלשונית הטריניטי (סעיף המשיכות שם).
+        הבסיס של "אחוז מהיתרה בפרישה" הוא השווי נטו ${T(S`B_r`)} בחודש ${T(S`m_r`)} שבו מתחיל שלב המשיכה הראשון: ${T(S`W_m = \tfrac{q}{1200}\,B_r\,C_m/C_{m_r}`)} כשהמשיכות צמודות, ובלי המנה ${T(S`C_m/C_{m_r}`)} כשלא.
+        בפתרון הנעלם פותרים על "יתרה סופית פחות משיכות שלא שולמו", שהיא מונוטונית גם אחרי שהכסף נגמר.</p>
       <p>סך ההפקדות שמוצג בטבלאות הוא ${T(S`\sum_{m=0}^{T-1} D_m`)}${plan.real ? ", מתורגם לכסף של היום (סעיף 4)" : ""}${dep ? html`, ובחציון יוצא ${m(dep.median)}` : ""}.</p>
     </section>
 
@@ -329,13 +332,15 @@ const PHASE_HE = {
 function SolverSection({ plan, api, kind }) {
   const ref = useRef(null);
   const hasUnknown = plan.solve_for !== "final";
+  const lifecycle = kind === "deposits" && plan.stages.some((s) => s.kind === "withdraw");
   const choices = kind === "deposits"
-    ? [{ value: "monthly_deposit", label: "הפקדה חודשית" }, { value: "start_amount", label: "סכום התחלתי" }]
+    ? [{ value: "monthly_deposit", label: "הפקדה חודשית" }, { value: "start_amount", label: "סכום התחלתי" },
+       ...(lifecycle ? [{ value: "withdrawal", label: "משיכה חודשית" }] : [])]
     : [{ value: "amount", label: "סכום משיכה" }, { value: "rate", label: "אחוז משיכה" }, { value: "start_amount", label: "סכום התחלתי" }];
   const [demoSolve, setDemoSolve] = useState(choices[0].value);
   const solveFor = hasUnknown ? plan.solve_for : demoSolve;
   const payload = useMemo(() => ({ ...toPayload(plan), solve_for: solveFor,
-    target_amount: plan.target_amount > 0 ? plan.target_amount : (kind === "deposits" ? 1_000_000 : 0) }), [plan, solveFor]);
+    target_amount: plan.target_amount > 0 ? plan.target_amount : (kind === "deposits" && !lifecycle ? 1_000_000 : 0) }), [plan, solveFor]);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -357,8 +362,9 @@ function SolverSection({ plan, api, kind }) {
   }, [key]);
   const isRate = solveFor === "rate";
   const sym = CURRENCY_SYMBOL[plan.currency];
-  const xLabel = { monthly_deposit: "הפקדה חודשית", start_amount: "סכום התחלתי", rate: "אחוז משיכה שנתי", amount: "משיכה חודשית" }[solveFor];
-  const yLabel = kind === "deposits" ? "סכום סופי נטו" : "יתרה סופית פחות משיכות שלא שולמו";
+  const xLabel = { monthly_deposit: "הפקדה חודשית", start_amount: "סכום התחלתי", rate: "אחוז משיכה שנתי", amount: "משיכה חודשית",
+                   withdrawal: "משיכה חודשית" }[solveFor];
+  const yLabel = kind === "deposits" && !lifecycle ? "סכום סופי נטו" : "יתרה סופית פחות משיכות שלא שולמו";
   useEffect(() => {
     if (!ref.current || !data) return;
     const fig = solverFigure({ gridX: data.grid_x, gridY: data.grid_y, target: data.target, steps: data.steps, upto: step,

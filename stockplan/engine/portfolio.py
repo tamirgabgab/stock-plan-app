@@ -167,3 +167,37 @@ def rebalance_rows(book: Book, rule: str, band: float, w: np.ndarray, j: int) ->
         return rows if rows.any() else None
     period = REBALANCE_PERIODS[rule]
     return np.ones(book.V.shape[0], dtype=bool) if j % period == 0 else None
+
+
+def withdrawal_want(stage, j: int, total: np.ndarray, start: np.ndarray, sc: np.ndarray,
+                    rate: np.ndarray | None = None, amount: np.ndarray | None = None) -> np.ndarray:
+    """(R,) net cash a withdrawal stage asks for at its month ``j``, nominal.
+
+    Shared by the Trinity tab and the withdrawal stages of a lifecycle plan. ``start`` is
+    the "initial" basis in input units (the Trinity start amount, or the balance when the
+    lifecycle's withdrawals begin), ``sc`` the nominal value of one input unit now (it
+    carries the CPI indexation), ``total`` the market value of the holdings now. ``rate``
+    and ``amount`` override the stage's annual rate or its fixed monthly amount (solve modes).
+    """
+    R = len(total)
+    rate_v = rate if rate is not None else np.full(R, float(stage.rate))
+    basis = stage.basis
+    if amount is not None:
+        fixed, basis = amount, "initial"                 # solving for a fixed amount
+    elif stage.rate_unit == "money" and rate is None:
+        fixed = np.full(R, float(stage.amount))          # per month, input units
+    else:
+        fixed = rate_v / 1200 * start                    # percent per year of the start amount
+    want = np.zeros(R)
+    if j == 0 and stage.one_time > 0:
+        want += stage.one_time / 100 * total if stage.one_time_unit == "pct" else stage.one_time * sc
+    if basis == "current":
+        monthly = rate_v / 1200 * total
+        pct = stage.guard_unit == "pct"
+        if stage.floor > 0:
+            monthly = np.maximum(monthly, (stage.floor / 1200 * start if pct else stage.floor) * sc)
+        if stage.ceiling > 0:
+            monthly = np.minimum(monthly, (stage.ceiling / 1200 * start if pct else stage.ceiling) * sc)
+    else:
+        monthly = fixed * sc
+    return want + monthly

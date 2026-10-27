@@ -317,7 +317,7 @@ def test_plan_year_cohorts_add_up_to_the_gross_final():
     req = plan(stages, start_amount=500, annual_fee=1.0)
     market = prepare_market(req, data)
     out = simulate(req, market, record=True)
-    cohorts = cohort_values(req, market, out.deposits, 3)
+    cohorts = cohort_values(req, market, out, 3)
     assert cohorts.shape == (1, 3)
     assert cohorts.sum() == pytest.approx(out.final_gross[0], rel=1e-9)
 

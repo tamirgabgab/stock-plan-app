@@ -10,6 +10,8 @@ import { addMonths } from "./results.js";
 const ACTION = {
   "buy:deposit": "קנייה · הפקדה", "buy:start": "קנייה · סכום התחלתי", "buy:switch": "קנייה · מעבר שלב",
   "sell:switch": "מכירה · מעבר שלב", "sell:withdraw": "מכירה · משיכה", "sell:one_time": "מכירה · משיכה חד-פעמית",
+  "buy:spread": "קנייה · פריסת הסכום ההתחלתי", "buy:rebalance": "קנייה · איזון מחדש", "sell:rebalance": "מכירה · איזון מחדש",
+  "sell:event": "מכירה · משיכה מתוכננת",
 };
 const ROWS = 150;
 
@@ -109,8 +111,9 @@ function AccountChart({ data, res, themeKey, view, setP, error }) {
   const sym = CURRENCY_SYMBOL[cur];
   const word = net ? "נטו" : "ברוטו";
   const dates = useMemo(() => data.path.map((_, m) => addMonths(data.start_date, m)), [data]);
-  // Cumulative deposits (accumulation) or net withdrawals (Trinity), from the journal.
+  // Cumulative net deposits (accumulation, from the server) or net withdrawals (Trinity, from the journal).
   const flow = useMemo(() => {
+    if (data.flow) return data.flow;
     const perMonth = new Array(data.path.length).fill(0);
     for (const t of data.trades) {
       if (!data.trinity && t.kind === "buy" && t.ctx === "deposit") perMonth[t.m] += t.amount;

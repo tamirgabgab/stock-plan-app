@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from .models import REBALANCE_PERIODS
+
 
 class Book:
     def __init__(self, R: int, A: int, tax_rate: float, real_tax: bool):
@@ -20,6 +22,8 @@ class Book:
         self.Bn = np.zeros((R, A))           # nominal cost basis
         self.Bc = np.zeros((R, A))           # sum of (amount / CPI at purchase): indexed basis = Bc * CPI_now
         self.shield = np.zeros(R)            # accumulated realized losses
+        self.tax_paid = np.zeros(R)          # running total of the tax paid on sales
+        self.fees = np.zeros(R)              # running total of the management fees charged
         # Optional trade journal for a single-realization run (row 0 only). The simulators
         # set ``m`` (month) and ``ctx`` (why the trade happens) before each operation.
         self.journal: list | None = None
@@ -52,7 +56,9 @@ class Book:
         """Tax due on realized gains G (R,), consuming or building the loss shield."""
         taxable = np.maximum(G - self.shield, 0.0)
         self.shield = np.where(G > 0, np.maximum(self.shield - G, 0.0), self.shield - G)
-        return self.rate * taxable
+        tax = self.rate * taxable
+        self.tax_paid = self.tax_paid + tax
+        return tax
 
     def liquidation_value(self, cpi_now) -> np.ndarray:
         """(R,) value after selling everything and paying the tax (shield is not consumed)."""
@@ -97,35 +103,67 @@ class Book:
         gross, tax = self.sell_fraction(np.repeat(f[:, None], self.V.shape[1], axis=1), cpi_now)
         return gross - tax
 
-    def reallocate(self, w: np.ndarray, cpi_now, taxable: bool) -> None:
-        """Move the whole portfolio to weights ``w`` at a stage switch.
+    def reallocate(self, w: np.ndarray, cpi_now, taxable: bool, rows: np.ndarray | None = None) -> None:
+        """Move the portfolio to weights ``w`` (a stage switch or a rebalance).
 
+        ``rows`` (bool, R) limits the move to some realizations; the others are left as they are.
         Tax-free: the cost basis travels with the money (tax deferred to the end).
         Taxable: only the holdings that shrink are sold; the cash after tax buys the ones
-        that grow, and a holding kept in the next stage keeps its basis.
+        that grow, and a holding that is kept keeps its basis.
         """
+        on = np.ones(self.V.shape[0], dtype=bool) if rows is None else rows
+        log = bool(on[0])
         target = self.total[:, None] * w
         if not taxable:
-            delta = (target - self.V)[0]
-            self._log("sell", np.maximum(-delta, 0.0))
-            self._log("buy", np.maximum(delta, 0.0))
-            self.V = target
-            self.Bn = self.Bn.sum(axis=1)[:, None] * w
-            self.Bc = self.Bc.sum(axis=1)[:, None] * w
+            if log:
+                delta = (target - self.V)[0]
+                self._log("sell", np.maximum(-delta, 0.0))
+                self._log("buy", np.maximum(delta, 0.0))
+            m = on[:, None]
+            self.V = np.where(m, target, self.V)
+            self.Bn = np.where(m, self.Bn.sum(axis=1)[:, None] * w, self.Bn)
+            self.Bc = np.where(m, self.Bc.sum(axis=1)[:, None] * w, self.Bc)
             return
-        sell = np.maximum(self.V - target, 0.0)
+        sell = np.where(on[:, None], np.maximum(self.V - target, 0.0), 0.0)
         frac = np.divide(sell, self.V, out=np.zeros_like(self.V), where=self.V > 0)
+        journal, self.journal = self.journal, (self.journal if log else None)
         gross, tax = self.sell_fraction(frac, cpi_now)
         cash = gross - tax
-        deficit = np.maximum(target - self.V, 0.0)
+        deficit = np.where(on[:, None], np.maximum(target - self.V, 0.0), 0.0)
         dsum = deficit.sum(axis=1)
         scale = np.divide(cash, dsum, out=np.zeros_like(cash), where=dsum > 0)
         add = deficit * scale[:, None]
         self._log("buy", add[0])
+        self.journal = journal
         self.V += add
         self.Bn += add
         if self.real_tax:
             self.Bc += add / cpi_now[:, None]
 
+    def drift(self, w: np.ndarray) -> np.ndarray:
+        """(R,) largest distance of a weight from ``w``, in fractions (0 for an empty book)."""
+        tot = self.total
+        cur = np.divide(self.V, tot[:, None], out=np.repeat(w[None, :], len(tot), axis=0), where=tot[:, None] > 0)
+        return np.abs(cur - w).max(axis=1)
+
     def grow(self, growth: np.ndarray, fee: float) -> None:
-        self.V *= growth * fee
+        grown = self.V * growth
+        self.V = grown * fee
+        if fee != 1.0:
+            self.fees = self.fees + grown.sum(axis=1) * (1.0 - fee)
+
+
+def rebalance_rows(book: Book, rule: str, band: float, w: np.ndarray, j: int) -> np.ndarray | None:
+    """Which realizations rebalance at month ``j`` of a stage (None = none of them).
+
+    Periodic rules rebalance every 1, 3 or 12 months counted from the stage start (the stage
+    start itself is already a reallocation); "band" rebalances whenever a weight is more than
+    ``band`` percentage points away from its target.
+    """
+    if rule == "none" or j == 0 or (w > 0).sum() < 2:
+        return None
+    if rule == "band":
+        rows = book.drift(w) > band / 100
+        return rows if rows.any() else None
+    period = REBALANCE_PERIODS[rule]
+    return np.ones(book.V.shape[0], dtype=bool) if j % period == 0 else None

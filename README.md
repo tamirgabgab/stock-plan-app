@@ -36,6 +36,18 @@ the UI — it is not real market history).
   (any Yahoo ticker, weights, daily-rebalanced leverage).
 - **Solve for the missing parameter** – final balance, required monthly deposit or
   required starting amount, for every start date.
+- **Deposit schedule** – the periodic deposit can be monthly, quarterly, half-yearly or
+  yearly and can rise by a percent every plan year (like a salary); one-off events add a
+  deposit, take a withdrawal (a pro-rata sale, net of tax) or pause the deposits for a
+  while. The start amount can be spread over N months (DCA), with interest on the waiting
+  cash, and the results compare that to investing it at once on every start date.
+- **Periodic rebalancing** – back to the stage weights monthly, quarterly, yearly or when
+  a weight drifts past a band; tax-free or taxable, like the stage switches (both tabs).
+- **Goal, costs and income** – in final-balance mode the target is a goal: when the
+  account first reaches it, as a distribution and a "share reached by year N" chart. The
+  fees charged, the final value lost to fees (the same plan with no fee), the tax paid
+  along the way and deferred to the end, and the monthly income the final value pays at a
+  chosen withdrawal rate.
 - **Nominal or real** – real mode puts every input and result in today's money
   (CPI of the last data month); optional CPI-indexed deposits.
 - **Currency** – USD or ILS. Assets are assumed to trade in USD; ILS converts every

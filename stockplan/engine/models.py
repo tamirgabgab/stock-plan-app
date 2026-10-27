@@ -12,6 +12,12 @@ SOLVE_MODES = (SOLVE_FINAL, SOLVE_MONTHLY, SOLVE_START)
 
 STEPS = {"D": "day", "W": "week", "M": "month"}
 
+# Periodic rebalancing back to the stage weights: months between rebalances, or "band"
+# (whenever a weight drifts more than ``rebalance_band`` percentage points).
+REBALANCE_PERIODS = {"monthly": 1, "quarterly": 3, "annual": 12}
+REBALANCE_RULES = ("none", "band", *REBALANCE_PERIODS)
+DEPOSIT_EVERY = (1, 3, 6, 12)
+
 
 @dataclass
 class Holding:
@@ -34,6 +40,20 @@ class Stage:
 
 
 @dataclass
+class DepositEvent:
+    """A one-off change to the deposit schedule at plan month ``month`` (0-based).
+
+    "deposit" adds ``amount``; "withdraw" takes ``amount`` out (a pro-rata sale, net of tax);
+    "pause" skips the periodic deposits for ``months`` months. Amounts are in input units,
+    like the deposits (today's money in real mode, indexed when the deposits are).
+    """
+    month: int
+    kind: str = "deposit"          # "deposit", "withdraw" or "pause"
+    amount: float = 0.0
+    months: int = 12               # length of a pause
+
+
+@dataclass
 class PlanRequest:
     stages: List[Stage]
     start_amount: float = 0.0
@@ -50,6 +70,14 @@ class PlanRequest:
     min_start: Optional[date] = None
     max_start: Optional[date] = None
     step: str = "M"                # "D", "W" or "M" between consecutive start dates
+    # Deposit schedule
+    deposit_every: int = 1         # months between periodic deposits (1, 3, 6 or 12)
+    deposit_growth: float = 0.0    # percent per year the periodic deposit rises (a step every plan year)
+    events: List[DepositEvent] = field(default_factory=list)
+    lump_spread: int = 0           # invest the start amount over this many months (0 = at once)
+    cash_rate: float = 0.0         # percent per year earned by the cash waiting to be invested
+    rebalance: str = "none"        # see REBALANCE_RULES
+    rebalance_band: float = 5.0    # percentage points, for rebalance == "band"
 
     @property
     def total_months(self) -> int:
@@ -85,6 +113,19 @@ class SimulationResult:
     # cohort's own gain.
     year_irr_gross: "object" = None
     year_irr_net: "object" = None
+    withdrawn_total: "object" = None      # (R,) net cash taken out by withdrawal events
+    # First month the account reaches the target (-1 = never), gross and net.
+    target_month_gross: "object" = None
+    target_month_net: "object" = None
+    # Costs, display units: fees charged, tax paid along the way, and the final value of the
+    # same plan with no fees (the fee drag is the difference).
+    fees_total: "object" = None
+    tax_paid: "object" = None
+    final_nofee: "object" = None
+    final_nofee_gross: "object" = None
+    # The same plan with the start amount invested at once (only when it is spread).
+    final_lump: "object" = None
+    final_lump_gross: "object" = None
 
 
 # ------------------------------------------------------------------ withdrawal (Trinity)
@@ -127,6 +168,8 @@ class WithdrawRequest:
     min_start: Optional[date] = None
     max_start: Optional[date] = None
     step: str = "M"
+    rebalance: str = "none"
+    rebalance_band: float = 5.0
 
     @property
     def total_months(self) -> int:

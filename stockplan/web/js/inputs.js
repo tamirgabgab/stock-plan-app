@@ -5,13 +5,21 @@ import { DatePicker, DualRange, Field, Hint, IconButton, NumberField, NumberInpu
 
 // Plan state -> API body: drop the UI ids and empty holdings (shared with the math tab).
 export function toPayload(plan) {
-  return {
+  const out = {
     ...plan,
     stages: plan.stages.map(({ id, ...s }) => ({
       ...s, holdings: s.holdings.filter((h) => h.ticker && h.weight > 0).map(({ name, ...h }) => h),
     })),
   };
+  if (plan.events) out.events = plan.events.map(({ id, ...e }) => e);
+  return out;
 }
+
+// Periodic deposit: the stage field's name follows the frequency.
+export const EVERY_OPTIONS = [
+  { value: 1, label: "חודשית" }, { value: 3, label: "רבעונית" }, { value: 6, label: "חצי-שנתית" }, { value: 12, label: "שנתית" },
+];
+export const depositLabel = (every) => `הפקדה ${(EVERY_OPTIONS.find((o) => o.value === every) || EVERY_OPTIONS[0]).label}`;
 
 export const SOLVE_OPTIONS = [
   { value: "final", label: "סכום סופי" },
@@ -53,10 +61,11 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
         <${NumberField} label="סכום התחלתי" value=${plan.start_amount} onChange=${set("start_amount")}
           step=${1000} suffix=${sym} disabled=${plan.solve_for === "start_amount"}
           note=${plan.solve_for === "start_amount" ? "מחושב" : money(plan.start_amount, plan.currency)} />
-        <${NumberField} label="סכום סופי" value=${plan.target_amount} onChange=${set("target_amount")}
-          step=${10000} suffix=${sym} disabled=${plan.solve_for === "final"}
-          note=${plan.solve_for === "final" ? "מחושב" : money(plan.target_amount, plan.currency)}
-          hint="במצב סכום סופי זה מה שמחושב, ולכן השדה נעול. בהפקדה חודשית או בסכום התחלתי זה הסכום שצריך להגיע אליו בסוף." />
+        <${NumberField} label=${plan.solve_for === "final" ? "יעד" : "סכום סופי"} value=${plan.target_amount}
+          onChange=${set("target_amount")} step=${10000} suffix=${sym}
+          note=${plan.solve_for === "final" ? (plan.target_amount > 0 ? `${money(plan.target_amount, plan.currency)} · לזמן עד היעד` : "0: בלי יעד")
+            : money(plan.target_amount, plan.currency)}
+          hint="בהפקדה חודשית או בסכום התחלתי זה הסכום שצריך להגיע אליו בסוף. במצב סכום סופי הסכום הסופי מחושב, והשדה הוא יעד: התוצאות מראות מתי התיק מגיע אליו ומה הסיכוי. 0 מבטל את היעד." />
       </div>
       <div class="grid-2">
         <${Segmented} label="מטבע" options=${[{ value: "ILS", label: "₪ שקל" }, { value: "USD", label: "$ דולר" }]}
@@ -66,19 +75,19 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
           value=${plan.real} onChange=${set("real")}
           hint="ריאלי: כל הסכומים, גם ההפקדות והסכום הסופי שאתה מזין, הם בכסף של היום. הפקדה בעבר מוקטנת לפי מדד המחירים של המטבע שנבחר, והתוצאות מוצגות בכוח הקנייה של היום." />
       </div>
-      <${Toggle} label="הצמדת ההפקדות למדד" checked=${plan.index_deposits} onChange=${set("index_deposits")}
-        hint="ההפקדות גדלות עם האינפלציה, כך שערכן הריאלי נשמר. כבוי: הסכום הנומינלי קבוע מתחילת התוכנית." />
       <${RawPreset} plan=${plan} setPlan=${setPlan} indexKey="index_deposits" />
     </details>
 
+    <${ScheduleSection} plan=${plan} set=${set} setPlan=${setPlan} sym=${sym} totalMonths=${totalMonths} />
     <${TaxSection} plan=${plan} set=${set} />
+    <${RebalanceSection} plan=${plan} set=${set} />
     <${PeriodSection} plan=${plan} set=${set} range=${range} rangeError=${rangeError} totalMonths=${totalMonths} />
 
     <section class="section stages" aria-label="שלבי ההשקעה">
       <div class="section-head"><h2>שלבי ההשקעה</h2>
         <button type="button" class="btn ghost" onClick=${addStage}>+ הוסף שלב</button></div>
       ${plan.stages.map((s, i) => html`<${StageCard} key=${s.id} stage=${s} index=${i} count=${plan.stages.length}
-          sym=${sym} currency=${plan.currency} solveMonthly=${plan.solve_for === "monthly_deposit"}
+          sym=${sym} currency=${plan.currency} solveMonthly=${plan.solve_for === "monthly_deposit"} every=${plan.deposit_every || 1}
           onChange=${(fn) => setStage(s.id, fn)} onMove=${(d) => moveStage(i, d)} onRemove=${() => removeStage(s.id)} />`)}
     </section>
   </aside>`;
@@ -112,6 +121,88 @@ export function TaxSection({ plan, set }) {
       <${NumberField} label="עלות מינוף שנתית" value=${plan.leverage_cost} onChange=${set("leverage_cost")}
         step=${0.25} max=${30} suffix="%" hint="ריבית שנתית על החלק הממונף (מינוף פחות 1), כמו בקרנות ממונפות." />
     </div>
+  </details>`;
+}
+
+// Deposit schedule: frequency, yearly growth, indexation, spreading the start amount and
+// one-off events (deposit, withdrawal, pause).
+function ScheduleSection({ plan, set, setPlan, sym, totalMonths }) {
+  const events = plan.events || [];
+  const spread = plan.lump_spread || 0;
+  const setEvents = (fn) => setPlan((p) => ({ ...p, events: fn(p.events || []) }));
+  const addEvent = () => setEvents((ev) => [...ev, { id: newId(), kind: "deposit", month: 12, amount: 10000, months: 12 }]);
+  return html`<details open class="section">
+    <summary>לוח ההפקדות</summary>
+    <${Segmented} label="תדירות ההפקדה" options=${EVERY_OPTIONS} value=${plan.deposit_every || 1} onChange=${set("deposit_every")}
+      hint="כל כמה חודשים משולמת ההפקדה של השלב, מתחילת כל שלב. הסכום בשדה של השלב הוא הסכום של כל הפקדה (למשל ₪12,000 פעם בשנה)." />
+    <div class="grid-2">
+      <${NumberField} label="עלייה שנתית בהפקדה" value=${plan.deposit_growth || 0} onChange=${set("deposit_growth")}
+        step=${0.5} min=${-50} max=${100} suffix="%"
+        note=${plan.deposit_growth ? `בשנה ה-10: פי ${((1 + plan.deposit_growth / 100) ** 9).toFixed(2)}` : "ההפקדה קבועה"}
+        hint=${`ההפקדה עולה באחוז הזה בכל שנת תוכנית, למשל כמו עליית שכר. ${plan.index_deposits ? "ההפקדות צמודות למדד, ולכן העלייה היא מעל האינפלציה." : "ההפקדות לא צמודות, ולכן העלייה נומינלית."}`} />
+      <div class="field"><span class="field-label">הצמדה</span>
+        <${Toggle} label="הצמדת ההפקדות למדד" checked=${plan.index_deposits} onChange=${set("index_deposits")}
+          hint="ההפקדות גדלות עם האינפלציה, כך שערכן הריאלי נשמר. כבוי: הסכום הנומינלי קבוע מתחילת התוכנית." /></div>
+    </div>
+    <div class="grid-2">
+      <${NumberField} label="פריסת הסכום ההתחלתי" value=${spread} onChange=${set("lump_spread")} step=${1} max=${totalMonths}
+        suffix="חודשים" note=${spread ? `${monthsLabel(spread)} בחלקים שווים` : "0: הכל מושקע מיד"}
+        hint="במקום להשקיע את הסכום ההתחלתי (ואת ההפקדה בתחילת השלב הראשון) ביום אחד, משקיעים אותו בחלקים שווים במשך החודשים האלה (DCA). בינתיים הכסף מחכה במזומן. התוצאות משוות לכל תאריך התחלה בין הפריסה להשקעה מיידית." />
+      <${NumberField} label="ריבית על המזומן הממתין" value=${plan.cash_rate || 0} onChange=${set("cash_rate")} step=${0.25}
+        min=${-10} max=${50} suffix="%" disabled=${!spread}
+        hint="ריבית שנתית נומינלית על הכסף שמחכה להשקעה (למשל פיקדון או קרן כספית), אחרי מס בשיעור של מס רווחי ההון." />
+    </div>
+    <div class="events">
+      <div class="holdings-title">אירועים חד-פעמיים <${Hint} text="הפקדה או משיכה של סכום בחודש מסוים בתוכנית (בונוס, ירושה, קניית רכב), או הפסקה של ההפקדות התקופתיות (חופשה, לימודים). הסכומים מתנהגים כמו ההפקדות: בכסף של היום במצב ריאלי, וצמודים כשההפקדות צמודות. משיכה היא מכירה יחסית של התיק, והמס על הרווח משולם בה." /></div>
+      ${events.map((e, k) => html`<${EventRow} key=${e.id || k} ev=${e} sym=${sym} totalMonths=${totalMonths}
+        onChange=${(fn) => setEvents((ev) => ev.map((x, i) => (i === k ? fn(x) : x)))}
+        onRemove=${() => setEvents((ev) => ev.filter((_, i) => i !== k))} />`)}
+      <button type="button" class="btn link" onClick=${addEvent}>+ הוסף אירוע</button>
+    </div>
+  </details>`;
+}
+
+const EVENT_KINDS = [{ value: "deposit", label: "הפקדה" }, { value: "withdraw", label: "משיכה" }, { value: "pause", label: "הפסקה" }];
+
+function EventRow({ ev, sym, totalMonths, onChange, onRemove }) {
+  const set = (key) => (value) => onChange((e) => ({ ...e, [key]: value }));
+  const year = Math.floor(ev.month / 12) + 1, mon = (ev.month % 12) + 1;
+  const setWhen = (y, m) => onChange((e) => ({ ...e, month: Math.max(0, (Math.round(y) - 1) * 12 + Math.round(m) - 1) }));
+  const outside = ev.month >= totalMonths;
+  return html`<div class=${"holding event" + (outside ? " has-error" : "")}>
+    <div class="holding-top">
+      <${Segmented} small options=${EVENT_KINDS} value=${ev.kind} onChange=${set("kind")} />
+      <${IconButton} title="הסר אירוע" danger onClick=${onRemove}>✕</${IconButton}>
+    </div>
+    <div class="event-grid">
+      <label class="mini-field"><span>שנה</span>
+        <${NumberInput} value=${year} onChange=${(v) => setWhen(v, mon)} min=${1} max=${Math.max(1, Math.ceil(totalMonths / 12))} /></label>
+      <label class="mini-field"><span>חודש</span>
+        <${NumberInput} value=${mon} onChange=${(v) => setWhen(year, Math.min(12, Math.max(1, v)))} min=${1} max=${12} /></label>
+      ${ev.kind === "pause"
+        ? html`<label class="mini-field"><span>משך</span>
+            <${NumberInput} value=${ev.months} onChange=${set("months")} min=${1} max=${1200} suffix="חודשים" /></label>`
+        : html`<label class="mini-field"><span>סכום</span>
+            <${NumberInput} value=${ev.amount} onChange=${set("amount")} step=${1000} suffix=${sym} /></label>`}
+    </div>
+    ${outside ? html`<span class="field-error" role="alert">האירוע אחרי סוף התוכנית (${monthsLabel(totalMonths)})</span>` : null}
+  </div>`;
+}
+
+const REBALANCE_OPTIONS = [
+  { value: "none", label: "בלי" }, { value: "monthly", label: "חודשי" }, { value: "quarterly", label: "רבעוני" },
+  { value: "annual", label: "שנתי" }, { value: "band", label: "לפי סף" },
+];
+
+// Rebalancing within a stage, shared by the accumulation and the Trinity panels.
+export function RebalanceSection({ plan, set }) {
+  const rule = plan.rebalance || "none";
+  return html`<details open class="section">
+    <summary>איזון מחדש</summary>
+    <${Segmented} label="החזרה למשקלי השלב" options=${REBALANCE_OPTIONS} value=${rule} onChange=${set("rebalance")}
+      hint=${`בלי: כל הפקדה נשארת כמו שנקנתה, והמשקלים זזים עם השוק. חודשי, רבעוני או שנתי: מתחילת כל שלב, התיק חוזר למשקלים בכל תקופה. לפי סף: רק כשמשקל של נכס מתרחק מהיעד ביותר מהסף. ${plan.tax_on_switch ? "המעבר בין שלבים מוגדר כאירוע מס, ולכן גם האיזון ממוסה (מה שנמכר משלם מס על הרווח)." : "המעבר בין שלבים מוגדר כפטור ממס (כמו בקופת גמל להשקעה), ולכן גם האיזון פטור והמס נדחה לסוף."}`} />
+    ${rule === "band" ? html`<${NumberField} label="סף (נקודות אחוז)" value=${plan.rebalance_band ?? 5} onChange=${set("rebalance_band")}
+      step=${1} max=${50} suffix="%" hint="למשל 5: בתיק של 60/40, האיזון קורה כשמשקל המניות יורד מתחת ל-55% או עולה מעל 65%." />` : null}
   </details>`;
 }
 
@@ -210,7 +301,7 @@ export function HoldingsTable({ stage, onChange }) {
 
 export function TickerList() { return null; }   // the symbol picker searches the server instead
 
-function StageCard({ stage, index, count, sym, currency, solveMonthly, onChange, onMove, onRemove }) {
+function StageCard({ stage, index, count, sym, currency, solveMonthly, every, onChange, onMove, onRemove }) {
   const set = (key) => (value) => onChange((s) => ({ ...s, [key]: value }));
 
   return html`<div class="stage-card">
@@ -220,7 +311,7 @@ function StageCard({ stage, index, count, sym, currency, solveMonthly, onChange,
         note=${monthsLabel(stage.months || 0)} />
       <${NumberField} label="הפקדה בתחילת השלב" value=${stage.initial_deposit} onChange=${set("initial_deposit")}
         step=${1000} suffix=${sym} />
-      <${NumberField} label="הפקדה חודשית" value=${stage.monthly_deposit} onChange=${set("monthly_deposit")}
+      <${NumberField} label=${depositLabel(every)} value=${stage.monthly_deposit} onChange=${set("monthly_deposit")}
         step=${100} suffix=${sym} disabled=${solveMonthly} note=${solveMonthly ? "מחושב" : null} />
     </div>
     <${HoldingsTable} stage=${stage} onChange=${onChange} />

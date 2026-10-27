@@ -147,6 +147,8 @@ def realization_detail(req, md: MarketData, start: date) -> dict:
         "summary": summary, "trades": trades,
         "path": [_num(v) for v in np.asarray(res.paths)[0]],
         "path_gross": [_num(v) for v in path_gross],
+        # Cumulative money put in, net of withdrawal events (accumulation only).
+        "flow": None if trinity else [_num(v) for v in np.asarray(res.deposits_path)[0]],
         "basket": series_at(days[keep]), "buys": series_at(marker_days), "sells": series_at(sale_days),
         "has_fx": fx is not None,
     }

@@ -445,3 +445,21 @@ export function scanFigure({ xs, ys, roots, current, xLabel, ySuffix = "", yPref
     yaxis: axis(t, { tickprefix: yPrefix, ticksuffix: ySuffix, tickformat: "~s", fixedrange: true }),
   }) };
 }
+
+// Time to target: the share of realizations that reached the target by each plan month.
+export function reachFigure({ T, share, median }) {
+  const t = theme();
+  const x = share.map((_, m) => m / 12);
+  const shapes = median !== null ? [{ type: "line", x0: median / 12, x1: median / 12, yref: "paper", y0: 0, y1: 1,
+                                       line: { color: t.orange, width: 1.5, dash: "dash" } }] : [];
+  const data = [{ type: "scatter", mode: "lines", x, y: share, line: { width: 2.5, color: t.blue, shape: "hv" },
+                  fill: "tozeroy", fillcolor: t.band, name: "הגיעו ליעד",
+                  hovertemplate: "%{x:.1f} שנים: %{y:.1f}%<extra></extra>" }];
+  const layout = baseLayout(t, {
+    showlegend: false, hovermode: "x", dragmode: false, shapes,
+    margin: { l: 52, r: 16, t: 8, b: 40 },
+    xaxis: axis(t, { title: { text: "שנים מתחילת התוכנית" }, range: [0, T / 12], fixedrange: true }),
+    yaxis: axis(t, { ticksuffix: "%", range: [0, 100], fixedrange: true }),
+  });
+  return { data, layout };
+}

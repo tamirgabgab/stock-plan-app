@@ -4,7 +4,8 @@ All realizations (start dates) are simulated at once: the state is a matrix of s
 (R, A) — realizations × assets — and the only Python loop is over months.
 
 Per month m the order is: stage transition (if a new stage starts) or a periodic rebalance,
-withdrawal events, deposits, record the path point, then market growth to month m+1. Within
+withdrawal events, deposits, the withdrawal of a withdrawal stage, record the path point,
+then market growth to month m+1. Within
 a stage each deposit is split by the stage weights and held, unless the plan rebalances back
 to the weights (monthly, quarterly, annually or when a weight drifts past a band). A stage
 transition or a rebalance is either tax-free (cost basis carried over, so the tax is
@@ -15,6 +16,10 @@ stage start, rises by ``deposit_growth`` percent every plan year, and is skipped
 pause event. One-off deposit and withdrawal events are added on top. The start amount can be
 spread over ``lump_spread`` months: it leaves the investor at month 0, waits as cash earning
 ``cash_rate`` (taxed), and is invested in equal parts of what is left.
+
+Withdrawal stages make a lifecycle plan: no periodic deposits, and every month the stage's
+withdrawal rule (the Trinity tab's, ``portfolio.withdrawal_want``) sells a pro-rata slice net
+of tax. Its "initial" basis is the net balance when the first withdrawal stage starts.
 
 Real mode: amounts entered by the user (deposits, events, target) are in today's money, i.e.
 the CPI of the last data month; see ``deposit_scale``.
@@ -30,8 +35,8 @@ from typing import Optional
 import numpy as np
 
 from .market import Market
-from .portfolio import Book, rebalance_rows
-from .models import PlanRequest, SOLVE_MONTHLY, SOLVE_START
+from .portfolio import Book, rebalance_rows, withdrawal_want
+from .models import PlanRequest, SOLVE_MONTHLY, SOLVE_START, SOLVE_WITHDRAWAL
 
 
 @dataclass
@@ -42,8 +47,11 @@ class SimOutput:
     cpi: Optional[np.ndarray] = None          # (R, T+1) CPI at each month (if loaded)
     final_gross: Optional[np.ndarray] = None  # (R,) nominal market value of the holdings
     paths_gross: Optional[np.ndarray] = None  # (R, T+1) nominal market value (before the final tax)
-    withdrawn: Optional[np.ndarray] = None    # (R, T+1) nominal net cash taken out by withdrawal events
-    unpaid: Optional[np.ndarray] = None       # (R,) nominal withdrawal events that could not be paid
+    withdrawn: Optional[np.ndarray] = None    # (R, T+1) nominal net cash taken out (events and withdrawal stages)
+    unpaid: Optional[np.ndarray] = None       # (R,) nominal withdrawals that could not be paid (all of them)
+    events_unpaid: Optional[np.ndarray] = None   # (R,) the part of ``unpaid`` from withdrawal events
+    shortfall_at: Optional[np.ndarray] = None    # (R,) first month a withdrawal stage was not paid in full, or -1
+    retire_value: Optional[np.ndarray] = None    # (R,) nominal net value when the first withdrawal stage starts
     buys: Optional[np.ndarray] = None         # (R, T+1) bought at month m from that month's deposits
     spread_buys: Optional[np.ndarray] = None  # (R, T+1) bought at month m from the waiting start amount
     realloc: Optional[np.ndarray] = None      # (R, T+1) bool: the portfolio was moved to the weights at m
@@ -122,7 +130,10 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
         return np.zeros((R, T + 1)) if record else None
     paths, gross, deposits, withdrawn, buys, spread_buys, fees, taxes = (rec() for _ in range(8))
     realloc = np.zeros((R, T + 1), dtype=bool) if record else None
-    unpaid = np.zeros(R)
+    unpaid, events_unpaid = np.zeros(R), np.zeros(R)
+    shortfall_at = np.full(R, -1, dtype=np.int64)
+    retire_value = np.zeros(R)
+    retire_units = np.zeros(R)        # the withdrawal stages' "initial" basis, in input units
 
     def deposit_scale(m):
         """Nominal value of one input unit deposited at month m.
@@ -137,6 +148,13 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
         if req.real:
             return ref / market.cpi_base
         return ref / cpi[:, 0]
+
+    def withdrawal_scale(m):
+        """Nominal value of one input unit withdrawn at month m (indexed by its own switch)."""
+        if cpi is None:
+            return ones
+        ref = cpi[:, m] if req.index_withdrawals else cpi[:, 0]
+        return ref / market.cpi_base if req.real else ref / cpi[:, 0]
 
     # Resolve deposits once (they may be overridden per realization by ``x``).
     stage_starts = np.cumsum([0] + [s.months for s in req.stages])
@@ -166,13 +184,13 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
             if record:
                 realloc[:, m0] = True
 
-        if unit_growth:
+        if unit_growth or stage.withdraws:
             monthly = 0.0 * ones
         elif x is not None and req.solve_for == SOLVE_MONTHLY:
             monthly = x
         else:
             monthly = ones * stage.monthly_deposit
-        initial = ones * stage.initial_deposit if not unit_growth else 0.0 * ones
+        initial = ones * stage.initial_deposit if not (unit_growth or stage.withdraws) else 0.0 * ones
         if s == 0:
             lump = initial + start_amount
             initial = 0.0 * ones if spread else lump
@@ -194,6 +212,7 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
                 want = ev_out[m] * sc
                 got = book.withdraw_net(want, cpi_m)
                 unpaid += want - got
+                events_unpaid += want - got
                 if record:
                     withdrawn[:, m] = got
 
@@ -211,6 +230,20 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
                 book.buy(part, w, cpi_m)
                 if record:
                     spread_buys[:, m] = part
+
+            if stage.withdraws and not unit_growth:
+                sw = withdrawal_scale(m)
+                if m == req.retire_month:
+                    retire_value = book.liquidation_value(cpi_m) + cash
+                    retire_units = retire_value / sw
+                want = withdrawal_want(stage, j, book.total, retire_units, sw,
+                                       amount=x if (x is not None and req.solve_for == SOLVE_WITHDRAWAL) else None)
+                book.m, book.ctx = m, ("one_time" if j == 0 and stage.one_time > 0 else "withdraw")
+                got = book.withdraw_net(want, cpi_m)
+                shortfall_at[(got < want - 1e-6) & (shortfall_at < 0)] = m
+                unpaid += want - got
+                if record:
+                    withdrawn[:, m] += got
             if record:
                 deposits[:, m] = put_in
                 buys[:, m] = amount
@@ -235,6 +268,7 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
         fees = np.diff(fees, axis=1, prepend=0.0)
     return SimOutput(final_net=final, paths_net=paths, deposits=deposits, cpi=cpi,
                      final_gross=final_gross, paths_gross=gross, withdrawn=withdrawn, unpaid=unpaid,
+                     events_unpaid=events_unpaid, shortfall_at=shortfall_at, retire_value=retire_value,
                      buys=buys, spread_buys=spread_buys, realloc=realloc, fees=fees, taxes=taxes)
 
 

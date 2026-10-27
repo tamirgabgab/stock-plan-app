@@ -7,7 +7,7 @@ import numpy as np
 
 from ..data.base import DataError, MarketData
 from .market import Market, available_range, prepare_market
-from .models import (DEPOSIT_EVERY, REBALANCE_RULES, DepositEvent, SOLVE_AMOUNT, SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_START,
+from .models import (DEPOSIT_EVERY, REBALANCE_RULES, DepositEvent, SOLVE_AMOUNT, SOLVE_WITHDRAWAL, SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_START,
                      TRINITY_SOLVE_MODES, Holding, PlanRequest, SimulationResult, Stage,
                      WithdrawRequest, WithdrawResult, WithdrawStage)
 from .simulate import cohort_values, simulate
@@ -31,9 +31,19 @@ def validate(req: PlanRequest) -> None:
             raise ValueError(f"בשלב {i} המשקלים חייבים להיות חיוביים")
         if any(h.leverage < 0 for h in s.holdings):
             raise ValueError(f"בשלב {i} המינוף לא יכול להיות שלילי")
+        if s.kind not in ("deposit", "withdraw"):
+            raise ValueError(f"בשלב {i} סוג השלב לא מוכר ({s.kind})")
+        if s.withdraws:
+            _validate_withdraw_stage(s, i)
     if not 0 <= req.tax_rate < 100:
         raise ValueError("שיעור המס חייב להיות בין 0 ל-100")
-    if req.solve_for != SOLVE_FINAL and req.target_amount <= 0:
+    if req.solve_for == SOLVE_WITHDRAWAL and not req.has_withdrawals:
+        raise ValueError("כדי לחשב משיכה מקסימלית צריך לפחות שלב משיכה אחד")
+    if req.solve_for == SOLVE_MONTHLY and all(s.withdraws for s in req.stages):
+        raise ValueError("כדי לחשב הפקדה נדרשת צריך לפחות שלב הפקדה אחד")
+    if req.solve_for != SOLVE_FINAL and req.target_amount < 0:
+        raise ValueError("הסכום הסופי (היעד) לא יכול להיות שלילי")
+    if req.solve_for != SOLVE_FINAL and req.target_amount == 0 and not req.has_withdrawals:
         raise ValueError("סכום סופי (היעד) חייב להיות חיובי")
     if req.deposit_every not in DEPOSIT_EVERY:
         raise ValueError("תדירות ההפקדה חייבת להיות כל 1, 3, 6 או 12 חודשים")
@@ -54,6 +64,17 @@ def validate(req: PlanRequest) -> None:
             raise ValueError(f"אירוע {k}: הסכום לא יכול להיות שלילי")
         if e.kind == "pause" and e.months < 1:
             raise ValueError(f"אירוע {k}: הפסקה חייבת להיות של חודש אחד לפחות")
+
+
+def _validate_withdraw_stage(s, i: int) -> None:
+    """A withdrawal stage's settings (the Trinity tab's stage and the lifecycle's)."""
+    if s.rate < 0 or s.amount < 0 or s.floor < 0 or s.ceiling < 0 or s.one_time < 0:
+        raise ValueError(f"בשלב {i} המשיכות לא יכולות להיות שליליות")
+    if s.ceiling > 0 and s.floor > s.ceiling:
+        raise ValueError(f"בשלב {i} הרצפה גדולה מהתקרה")
+    if s.rate_unit not in ("pct", "money") or s.basis not in ("initial", "current") \
+            or s.guard_unit not in ("pct", "money") or s.one_time_unit not in ("pct", "money"):
+        raise ValueError(f"בשלב {i} הגדרת המשיכה לא מוכרת")
 
 
 def _validate_rebalance(req) -> None:
@@ -84,7 +105,13 @@ def _initial_guess(req: PlanRequest) -> float:
     growth = (1 + r) ** T
     annuity = (growth - 1) / r
     if req.solve_for == SOLVE_START:
-        return req.target_amount / growth
+        return max(req.target_amount, 1.0) / growth
+    if req.solve_for == SOLVE_WITHDRAWAL:
+        # 4% a year of what the deposits would grow to by the first withdrawal stage, at 7%.
+        mr = max(req.retire_month, 1)
+        g = (1 + r) ** mr
+        monthly = np.mean([s.monthly_deposit for s in req.stages if not s.withdraws] or [0.0])
+        return max(0.04 / 12 * (req.start_amount * g + monthly * (g - 1) / r), 100.0)
     return max(req.target_amount - req.start_amount * growth, 0.1 * req.target_amount) / annuity
 
 
@@ -99,13 +126,25 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
     if req.solve_for != SOLVE_FINAL:
         cpi_all = market.cpi_daily[market.day_idx] if market.cpi_daily is not None else None
 
-        def final_display(x, rows):
-            out = simulate(req, market, x=x, rows=rows).final_net
+        def score(x, rows):
+            # Final value minus the withdrawals that could not be paid: strictly monotone in the
+            # unknown even after the account runs dry (where the final value alone is flat).
+            out = simulate(req, market, x=x, rows=rows)
+            v = out.final_net - out.unpaid
             if req.real and cpi_all is not None:
-                out = out * market.cpi_base / cpi_all[rows, T]
-            return out
+                v = v * market.cpi_base / cpi_all[rows, T]
+            return v
 
-        solved = solve_monotone(final_display, req.target_amount, R, _initial_guess(req))
+        if req.solve_for == SOLVE_WITHDRAWAL:
+            # The score falls as the withdrawal rises: solve on the negated function. A row
+            # that misses the target even with no withdrawal at all has no solution.
+            solved = solve_monotone(lambda x, rows: -score(x, rows), -req.target_amount, R, _initial_guess(req))
+            zero = np.where(solved == 0)[0]
+            if len(zero):
+                miss = score(np.zeros(len(zero)), zero) < req.target_amount - max(abs(req.target_amount) * 1e-7, 1e-4)
+                solved[zero[miss]] = np.nan
+        else:
+            solved = solve_monotone(score, req.target_amount, R, _initial_guess(req))
         n_bad = int(np.isnan(solved).sum())
         if n_bad:
             warnings.append(f"ב-{n_bad} תקופות לא ניתן להגיע ליעד (למשל התיק התאפס)")
@@ -124,7 +163,7 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
     irr = irr_annual(deposits - withdrawn, final)
     irr_gross = irr_annual(deposits - withdrawn, final_gross)
     year_gross, year_net = _cohort_irr(req, market, out, D)
-    n_unpaid = int((out.unpaid > 1e-6).sum())
+    n_unpaid = int((out.events_unpaid > 1e-6).sum())
     if n_unpaid:
         warnings.append(f"ב-{n_unpaid} תקופות לא היה מספיק כסף בתיק לכל המשיכות החד-פעמיות")
 
@@ -145,9 +184,21 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
         alt = simulate(replace(req, lump_spread=0), market, x=x_same)
         final_lump, final_lump_gross = alt.final_net * D[:, T], alt.final_gross * D[:, T]
 
+    success = depleted_at = retire_value = None
+    if req.has_withdrawals:
+        depleted_at = out.shortfall_at
+        retire_value = out.retire_value * D[:, req.retire_month]
+        if solved is None:
+            success = depleted_at < 0
+            n_fail = int((~success).sum())
+            if n_fail:
+                warnings.append(f"ב-{n_fail} תקופות הכסף נגמר לפני סוף שלבי המשיכה")
+        else:
+            success = ~np.isnan(solved)
+
     starts = list(market.start_dates)
     ends = list(market.calendar[market.day_idx[:, -1]])
-    if (final <= 0).any():
+    if (final <= 0).any() and not req.has_withdrawals:
         warnings.append(f"ב-{int((final <= 0).sum())} תקופות התיק התאפס")
 
     return SimulationResult(start_dates=starts, end_dates=ends, months=T, final=final,
@@ -162,7 +213,9 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
                             target_month_net=first_reach(paths, req.target_amount),
                             fees_total=(out.fees * D).sum(axis=1), tax_paid=(out.taxes * D).sum(axis=1),
                             final_nofee=final_nofee, final_nofee_gross=final_nofee_gross,
-                            final_lump=final_lump, final_lump_gross=final_lump_gross)
+                            final_lump=final_lump, final_lump_gross=final_lump_gross,
+                            success=success, depleted_at=depleted_at, retire_value=retire_value,
+                            retire_month=req.retire_month)
 
 
 def first_reach(paths: np.ndarray, target: float) -> np.ndarray:
@@ -231,10 +284,7 @@ def validate_withdraw(req: WithdrawRequest) -> None:
             raise ValueError(f"בשלב {i} אין נכסים")
         if any(h.weight < 0 for h in s.holdings) or sum(h.weight for h in s.holdings) <= 0:
             raise ValueError(f"בשלב {i} המשקלים חייבים להיות חיוביים")
-        if s.rate < 0 or s.amount < 0 or s.floor < 0 or s.ceiling < 0 or s.one_time < 0:
-            raise ValueError(f"בשלב {i} המשיכות לא יכולות להיות שליליות")
-        if s.ceiling > 0 and s.floor > s.ceiling:
-            raise ValueError(f"בשלב {i} הרצפה גדולה מהתקרה")
+        _validate_withdraw_stage(s, i)
     _validate_rebalance(req)
     if not 0 <= req.tax_rate < 100:
         raise ValueError("שיעור המס חייב להיות בין 0 ל-100")
@@ -366,12 +416,13 @@ def solve_trace(req, md: MarketData) -> dict:
             out = simulate_withdraw(req, market, x=x, rows=rows)
             v = out.final_net - out.unpaid
         else:
-            v = simulate(req, market, x=x, rows=rows).final_net
+            out = simulate(req, market, x=x, rows=rows)
+            v = out.final_net - out.unpaid
         if req.real and cpi_all is not None:
             v = v * market.cpi_base / cpi_all[rows, T]
         return v
 
-    sign = -1.0 if (trinity and req.solve_for in (SOLVE_RATE, SOLVE_AMOUNT)) else 1.0
+    sign = -1.0 if (req.solve_for == SOLVE_WITHDRAWAL or (trinity and req.solve_for in (SOLVE_RATE, SOLVE_AMOUNT))) else 1.0
     guess = _trinity_guess(req) if trinity else _initial_guess(req)
     solved = solve_monotone(lambda x, rows: sign * value(x, rows), sign * req.target_amount, R, guess)
     finite = np.where(np.isfinite(solved))[0]
@@ -399,6 +450,6 @@ def solve_trace(req, md: MarketData) -> dict:
 
 from .detail import benchmark_path, realization_detail  # noqa: E402  (uses run_plan / run_trinity above)
 
-__all__ = ["DepositEvent", "benchmark_path", "realization_detail", "Holding", "Stage", "PlanRequest", "SimulationResult", "run_plan", "available_range",
+__all__ = ["DepositEvent", "SOLVE_WITHDRAWAL", "benchmark_path", "realization_detail", "Holding", "Stage", "PlanRequest", "SimulationResult", "run_plan", "available_range",
            "SOLVE_FINAL", "SOLVE_MONTHLY", "SOLVE_START", "SOLVE_RATE", "SOLVE_AMOUNT",
            "WithdrawStage", "WithdrawRequest", "WithdrawResult", "run_trinity", "trinity_heatmap", "solve_trace"]

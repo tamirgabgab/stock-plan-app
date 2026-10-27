@@ -18,7 +18,7 @@ import numpy as np
 
 from .market import Market
 from .models import SOLVE_AMOUNT, SOLVE_RATE, SOLVE_START, WithdrawRequest
-from .portfolio import Book, rebalance_rows
+from .portfolio import Book, rebalance_rows, withdrawal_want
 from .simulate import month_growth
 
 
@@ -94,21 +94,6 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
             book.m, book.ctx = m0, "switch"
             book.reallocate(w, cpi[:, m0] if cpi is not None else None, taxable=req.tax_on_switch)
 
-        rate = rate_override if rate_override is not None else ones * stage.rate
-        basis = stage.basis
-        if amount_override is not None:
-            fixed, basis = amount_override, "initial"        # solving for a fixed amount
-        elif stage.rate_unit == "money" and rate_override is None:
-            fixed = ones * stage.amount                      # per month, input units
-        else:
-            fixed = rate / 1200 * start_amount               # percent per year of the start amount
-        floor = ceiling = None
-        if basis == "current":
-            if stage.floor > 0:
-                floor = ones * (stage.floor / 1200 * start_amount if stage.guard_unit == "pct" else stage.floor)
-            if stage.ceiling > 0:
-                ceiling = ones * (stage.ceiling / 1200 * start_amount if stage.guard_unit == "pct" else stage.ceiling)
-
         for j in range(stage.months):
             m = m0 + j
             cpi_m = cpi[:, m] if cpi is not None else None
@@ -117,19 +102,8 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
             if moved is not None:
                 book.m, book.ctx = m, "rebalance"
                 book.reallocate(w, cpi_m, taxable=req.tax_on_switch, rows=moved)
-            want = np.zeros(R)
-            if j == 0 and stage.one_time > 0:
-                want += (stage.one_time / 100 * book.total if stage.one_time_unit == "pct"
-                         else stage.one_time * sc)
-            if basis == "current":
-                monthly = rate / 1200 * book.total
-                if floor is not None:
-                    monthly = np.maximum(monthly, floor * sc)
-                if ceiling is not None:
-                    monthly = np.minimum(monthly, ceiling * sc)
-            else:
-                monthly = fixed * sc
-            want += monthly
+            want = withdrawal_want(stage, j, book.total, start_amount, sc,
+                                   rate=rate_override, amount=amount_override)
 
             book.m, book.ctx = m, ("one_time" if j == 0 and stage.one_time > 0 else "withdraw")
             got = book.withdraw_net(want, cpi_m)

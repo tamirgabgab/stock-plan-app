@@ -2,6 +2,7 @@
 import { html } from "../vendor/preact-htm.module.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel } from "./format.js";
 import { DatePicker, DualRange, Field, Hint, IconButton, NumberField, NumberInput, Segmented, SymbolPicker, Toggle } from "./ui.js";
+import { WithdrawFields } from "./withdrawal.js";
 
 // Plan state -> API body: drop the UI ids and empty holdings (shared with the math tab).
 export function toPayload(plan) {
@@ -26,14 +27,35 @@ export const SOLVE_OPTIONS = [
   { value: "monthly_deposit", label: "הפקדה חודשית" },
   { value: "start_amount", label: "סכום התחלתי" },
 ];
+const WITHDRAWAL_OPTION = { value: "withdrawal", label: "משיכה חודשית" };
+export const hasWithdrawals = (plan) => plan.stages.some((s) => s.kind === "withdraw");
+const solveOptions = (plan) => (hasWithdrawals(plan) ? [...SOLVE_OPTIONS, WITHDRAWAL_OPTION] : SOLVE_OPTIONS);
 
 let nextId = 1;
 export const newId = () => `s${Date.now().toString(36)}${nextId++}`;
 
 export function newStage(n) {
   return {
-    id: newId(), name: `שלב ${n}`, months: 120, initial_deposit: 0, monthly_deposit: 1000,
+    id: newId(), name: `שלב ${n}`, months: 120, kind: "deposit", initial_deposit: 0, monthly_deposit: 1000,
+    ...WITHDRAW_DEFAULTS,
     holdings: [{ ticker: "^GSPC", name: "S&P 500", weight: 100, leverage: 1 }],
+  };
+}
+
+// The withdrawal rule a stage gets when it is switched to "withdraw" (the 4% rule).
+const WITHDRAW_DEFAULTS = { rate: 4, amount: 5000, rate_unit: "pct", basis: "initial", floor: 0, ceiling: 0,
+                            guard_unit: "pct", one_time: 0, one_time_unit: "money" };
+
+// Example lifecycle plan: 25 years of indexed deposits, then 30 years of the 4% rule.
+function retirementPreset(p) {
+  const holdings = [{ ticker: "^GSPC", name: "S&P 500", weight: 100, leverage: 1 }];
+  return {
+    ...p, solve_for: "final", real: true, index_deposits: true, index_withdrawals: true, start_amount: 0,
+    target_amount: 0, lump_spread: 0, events: [],
+    stages: [
+      { ...newStage(1), name: "חיסכון", months: 300, monthly_deposit: 3000, holdings },
+      { ...newStage(2), name: "פרישה", months: 360, kind: "withdraw", monthly_deposit: 0, holdings },
+    ],
   };
 }
 
@@ -49,23 +71,29 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
   const removeStage = (id) => setPlan((p) => ({ ...p, stages: p.stages.filter((s) => s.id !== id) }));
   const addStage = () => setPlan((p) => ({ ...p, stages: [...p.stages, newStage(p.stages.length + 1)] }));
   const totalMonths = plan.stages.reduce((a, s) => a + (s.months || 0), 0);
+  const withdraws = hasWithdrawals(plan);
 
   return html`<aside class="panel inputs" aria-label="הגדרות">
     <${TickerList} favorites=${favorites} />
 
     <details open class="section">
       <summary>מה לחשב</summary>
-      <${Segmented} options=${SOLVE_OPTIONS} value=${plan.solve_for} onChange=${set("solve_for")}
-        hint="השדה שנבחר כאן הוא הנעלם, ולכן הוא נעול ומחושב. סכום סופי: מריצים את התוכנית כמו שהיא. הפקדה חודשית או סכום התחלתי: מחשבים לכל תקופה היסטורית כמה צריך כדי להגיע לסכום הסופי." />
+      <${Segmented} options=${solveOptions(plan)} value=${plan.solve_for} onChange=${set("solve_for")}
+        hint=${`השדה שנבחר כאן הוא הנעלם, ולכן הוא נעול ומחושב. סכום סופי: מריצים את התוכנית כמו שהיא. הפקדה חודשית או סכום התחלתי: מחשבים לכל תקופה היסטורית כמה צריך כדי להגיע לסכום הסופי${withdraws ? " בלי שהכסף ייגמר בשלבי המשיכה" : ""}.${withdraws ? " משיכה חודשית: הסכום הקבוע הגדול ביותר שאפשר למשוך כל חודש בשלבי המשיכה." : ""}`} />
+      ${plan.solve_for === "withdrawal" && !withdraws
+        ? html`<p class="callout error">כדי לחשב משיכה חודשית צריך לפחות שלב משיכה אחד.</p>` : null}
       <div class="grid-2">
         <${NumberField} label="סכום התחלתי" value=${plan.start_amount} onChange=${set("start_amount")}
           step=${1000} suffix=${sym} disabled=${plan.solve_for === "start_amount"}
           note=${plan.solve_for === "start_amount" ? "מחושב" : money(plan.start_amount, plan.currency)} />
-        <${NumberField} label=${plan.solve_for === "final" ? "יעד" : "סכום סופי"} value=${plan.target_amount}
+        <${NumberField} label=${plan.solve_for === "final" ? "יעד" : withdraws ? "יתרה סופית" : "סכום סופי"} value=${plan.target_amount}
           onChange=${set("target_amount")} step=${10000} suffix=${sym}
           note=${plan.solve_for === "final" ? (plan.target_amount > 0 ? `${money(plan.target_amount, plan.currency)} · לזמן עד היעד` : "0: בלי יעד")
+            : withdraws ? (plan.target_amount > 0 ? `${money(plan.target_amount, plan.currency)} נשארים בסוף` : "0: למשוך הכל")
             : money(plan.target_amount, plan.currency)}
-          hint="בהפקדה חודשית או בסכום התחלתי זה הסכום שצריך להגיע אליו בסוף. במצב סכום סופי הסכום הסופי מחושב, והשדה הוא יעד: התוצאות מראות מתי התיק מגיע אליו ומה הסיכוי. 0 מבטל את היעד." />
+          hint=${withdraws && plan.solve_for !== "final"
+            ? "כמה צריך להישאר בסוף התוכנית, אחרי כל המשיכות: 0 פירושו למשוך הכל, וסכום חיובי הוא למשל ירושה."
+            : "בהפקדה חודשית או בסכום התחלתי זה הסכום שצריך להגיע אליו בסוף. במצב סכום סופי הסכום הסופי מחושב, והשדה הוא יעד: התוצאות מראות מתי התיק מגיע אליו ומה הסיכוי. 0 מבטל את היעד."} />
       </div>
       <div class="grid-2">
         <${Segmented} label="מטבע" options=${[{ value: "ILS", label: "₪ שקל" }, { value: "USD", label: "$ דולר" }]}
@@ -86,7 +114,11 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
     <section class="section stages" aria-label="שלבי ההשקעה">
       <div class="section-head"><h2>שלבי ההשקעה</h2>
         <button type="button" class="btn ghost" onClick=${addStage}>+ הוסף שלב</button></div>
-      ${plan.stages.map((s, i) => html`<${StageCard} key=${s.id} stage=${s} index=${i} count=${plan.stages.length}
+      <div class="preset">
+        <button type="button" class="chip" onClick=${() => setPlan(retirementPreset)}>תוכנית פרישה לדוגמה</button>
+        <span class="muted">25 שנות הפקדה צמודה של ${money(3000, plan.currency)} בחודש, ואחריהן 30 שנות משיכה לפי כלל ה-4%. מחליף את השלבים.</span>
+      </div>
+      ${plan.stages.map((s, i) => html`<${StageCard} key=${s.id} stage=${s} index=${i} count=${plan.stages.length} plan=${plan}
           sym=${sym} currency=${plan.currency} solveMonthly=${plan.solve_for === "monthly_deposit"} every=${plan.deposit_every || 1}
           onChange=${(fn) => setStage(s.id, fn)} onMove=${(d) => moveStage(i, d)} onRemove=${() => removeStage(s.id)} />`)}
     </section>
@@ -142,7 +174,10 @@ function ScheduleSection({ plan, set, setPlan, sym, totalMonths }) {
         hint=${`ההפקדה עולה באחוז הזה בכל שנת תוכנית, למשל כמו עליית שכר. ${plan.index_deposits ? "ההפקדות צמודות למדד, ולכן העלייה היא מעל האינפלציה." : "ההפקדות לא צמודות, ולכן העלייה נומינלית."}`} />
       <div class="field"><span class="field-label">הצמדה</span>
         <${Toggle} label="הצמדת ההפקדות למדד" checked=${plan.index_deposits} onChange=${set("index_deposits")}
-          hint="ההפקדות גדלות עם האינפלציה, כך שערכן הריאלי נשמר. כבוי: הסכום הנומינלי קבוע מתחילת התוכנית." /></div>
+          hint="ההפקדות גדלות עם האינפלציה, כך שערכן הריאלי נשמר. כבוי: הסכום הנומינלי קבוע מתחילת התוכנית." />
+        ${hasWithdrawals(plan) ? html`<${Toggle} label="הצמדת המשיכות למדד" checked=${plan.index_withdrawals !== false}
+          onChange=${set("index_withdrawals")}
+          hint="דלוק (כמו במחקר טריניטי): המשיכה הקבועה של שלבי המשיכה שומרת על כוח הקנייה שלה מתחילת הפרישה. כבוי: הסכום הנומינלי קבוע." />` : null}</div>
     </div>
     <div class="grid-2">
       <${NumberField} label="פריסת הסכום ההתחלתי" value=${spread} onChange=${set("lump_spread")} step=${1} max=${totalMonths}
@@ -301,11 +336,28 @@ export function HoldingsTable({ stage, onChange }) {
 
 export function TickerList() { return null; }   // the symbol picker searches the server instead
 
-function StageCard({ stage, index, count, sym, currency, solveMonthly, every, onChange, onMove, onRemove }) {
-  const set = (key) => (value) => onChange((s) => ({ ...s, [key]: value }));
+const KIND_OPTIONS = [{ value: "deposit", label: "הפקדה" }, { value: "withdraw", label: "משיכה (פרישה)" }];
 
+function StageCard({ stage, index, count, plan, sym, currency, solveMonthly, every, onChange, onMove, onRemove }) {
+  const set = (key) => (value) => onChange((s) => ({ ...s, [key]: value }));
+  const kind = stage.kind || "deposit";
+  const setKind = (v) => onChange((s) => ({ ...WITHDRAW_DEFAULTS, ...s, kind: v }));
+  const head = html`<${StageHead} stage=${stage} index=${index} count=${count} set=${set} onMove=${onMove} onRemove=${onRemove} />
+    <${Segmented} small options=${KIND_OPTIONS} value=${kind} onChange=${setKind}
+      hint="שלב משיכה הוא פרישה: אין בו הפקדות, ובכל חודש נמשך ממנו סכום לפי הכלל שנבחר (כמו בלשונית הטריניטי), במכירה יחסית עם מס על הרווח. 'היתרה בפרישה' היא השווי נטו כששלב המשיכה הראשון מתחיל." />`;
+  if (kind === "withdraw") {
+    return html`<div class="stage-card withdraw">
+      ${head}
+      <${NumberField} label="חודשים" value=${stage.months} onChange=${set("months")} min=${1} max=${1200}
+        note=${monthsLabel(stage.months || 0)} />
+      <${WithdrawFields} stage=${stage} set=${set} onChange=${onChange} sym=${sym} currency=${currency}
+        indexed=${plan.index_withdrawals !== false} solveAmount=${plan.solve_for === "withdrawal"} base="היתרה בפרישה"
+        baseNote=${(st) => `${st.rate}% לשנה מהיתרה בתחילת שלב המשיכה הראשון${plan.index_withdrawals !== false ? ", צמוד" : ""}`} />
+      <${HoldingsTable} stage=${stage} onChange=${onChange} />
+    </div>`;
+  }
   return html`<div class="stage-card">
-    <${StageHead} stage=${stage} index=${index} count=${count} set=${set} onMove=${onMove} onRemove=${onRemove} />
+    ${head}
     <div class="grid-3">
       <${NumberField} label="חודשים" value=${stage.months} onChange=${set("months")} min=${1} max=${1200}
         note=${monthsLabel(stage.months || 0)} />

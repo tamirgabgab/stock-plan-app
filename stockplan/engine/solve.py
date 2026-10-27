@@ -74,11 +74,12 @@ def irr_annual(deposits: np.ndarray, final: np.ndarray) -> np.ndarray:
     """Annual money-weighted return (percent) of monthly deposits ending at ``final``.
 
     ``deposits`` has shape (R, T+1) with the amount put in at each month (in the same units
-    as ``final``). Solved by bisection on the monthly rate, using Horner's rule so each
+    as ``final``); a negative amount is money taken out (a withdrawal). With deposits first
+    and withdrawals later the flows change sign once, so the root is unique and the
+    bisection below finds it. Solved by bisection on the monthly rate, using Horner's rule so each
     evaluation is T vector operations.
     """
     R, T1 = deposits.shape
-    total = deposits.sum(axis=1)
     lo = np.full(R, -0.9999)
     hi = np.full(R, 1.0)          # monthly rates: -99.99% .. +100%
 
@@ -96,8 +97,10 @@ def irr_annual(deposits: np.ndarray, final: np.ndarray) -> np.ndarray:
         lo = np.where(above, lo, mid)
     i = 0.5 * (lo + hi)
     out = ((1 + i) ** 12 - 1) * 100
-    out[total <= 0] = np.nan
-    out[final <= 0] = -100.0
+    # Nothing came back (no withdrawals, nothing left): everything was lost. Nothing went in: no return.
+    got_back = (deposits < 0).any(axis=1)
+    out[(final <= 0) & ~got_back] = -100.0
+    out[np.where(deposits > 0, deposits, 0.0).sum(axis=1) <= 0] = np.nan
     return out
 
 

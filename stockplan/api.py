@@ -38,9 +38,23 @@ class HoldingIn(BaseModel):
     leverage: float = Field(1.0, ge=0, le=10)
 
 
-class StageIn(BaseModel):
+class WithdrawRule(BaseModel):
+    """How a withdrawal stage withdraws (the Trinity tab's stage and a lifecycle's)."""
+    rate: float = Field(4.0, ge=0, le=1200)
+    amount: float = Field(0.0, ge=0)
+    rate_unit: Literal["pct", "money"] = "pct"
+    basis: Literal["initial", "current"] = "initial"
+    floor: float = Field(0.0, ge=0)
+    ceiling: float = Field(0.0, ge=0)
+    guard_unit: Literal["pct", "money"] = "pct"
+    one_time: float = Field(0.0, ge=0)
+    one_time_unit: Literal["money", "pct"] = "money"
+
+
+class StageIn(WithdrawRule):
     name: str = ""
     months: int = Field(ge=1, le=1200)
+    kind: Literal["deposit", "withdraw"] = "deposit"
     initial_deposit: float = Field(0.0, ge=0)
     monthly_deposit: float = Field(0.0, ge=0)
     holdings: List[HoldingIn] = Field(min_length=1)
@@ -60,7 +74,7 @@ class PlanIn(BaseModel):
     stages: List[StageIn] = Field(min_length=1)
     start_amount: float = Field(0.0, ge=0)
     target_amount: float = Field(1_000_000.0, ge=0)
-    solve_for: Literal["final", "monthly_deposit", "start_amount"] = "final"
+    solve_for: Literal["final", "monthly_deposit", "start_amount", "withdrawal"] = "final"
     currency: Literal["USD", "ILS"] = "USD"
     real: bool = False
     index_deposits: bool = False
@@ -79,28 +93,19 @@ class PlanIn(BaseModel):
     cash_rate: float = Field(0.0, ge=-10, le=50)
     rebalance: Rebalance = "none"
     rebalance_band: float = Field(5.0, gt=0, le=50)
+    index_withdrawals: bool = True
 
     def to_request(self) -> PlanRequest:
-        stages = [Stage(months=s.months, initial_deposit=s.initial_deposit,
-                        monthly_deposit=s.monthly_deposit, name=s.name,
-                        holdings=[Holding(h.ticker, h.weight, h.leverage) for h in s.holdings])
+        stages = [Stage(holdings=[Holding(h.ticker, h.weight, h.leverage) for h in s.holdings],
+                        **s.model_dump(exclude={"holdings"}))
                   for s in self.stages]
         events = [DepositEvent(**e.model_dump()) for e in self.events]
         return PlanRequest(stages=stages, events=events, **self.model_dump(exclude={"stages", "events"}))
 
 
-class WithdrawStageIn(BaseModel):
+class WithdrawStageIn(WithdrawRule):
     name: str = ""
     months: int = Field(ge=1, le=1200)
-    rate: float = Field(4.0, ge=0, le=1200)
-    amount: float = Field(0.0, ge=0)
-    rate_unit: Literal["pct", "money"] = "pct"
-    basis: Literal["initial", "current"] = "initial"
-    floor: float = Field(0.0, ge=0)
-    ceiling: float = Field(0.0, ge=0)
-    guard_unit: Literal["pct", "money"] = "pct"
-    one_time: float = Field(0.0, ge=0)
-    one_time_unit: Literal["money", "pct"] = "money"
     holdings: List[HoldingIn] = Field(min_length=1)
 
 
@@ -357,6 +362,11 @@ def simulate(plan: PlanIn):
         "final_nofee_gross": _opt(res.final_nofee_gross),
         "final_lump": _opt(res.final_lump),
         "final_lump_gross": _opt(res.final_lump_gross),
+        # Withdrawal stages (lifecycle plans); null when the plan has none.
+        "success": None if res.success is None else [bool(v) for v in res.success],
+        "depleted_at": None if res.depleted_at is None else _months(res.depleted_at),
+        "retire_value": _opt(res.retire_value),
+        "retire_month": res.retire_month,
         "warnings": res.warnings,
         "demo": get_market_data().is_demo,
     }

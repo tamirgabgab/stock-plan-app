@@ -36,6 +36,7 @@ class HoldingIn(BaseModel):
     ticker: str = Field(min_length=1, max_length=20)
     weight: float = Field(ge=0)
     leverage: float = Field(1.0, ge=0, le=10)
+    dividend: float = Field(0.0, ge=0, le=50)    # percent per year
 
 
 class WithdrawRule(BaseModel):
@@ -49,6 +50,7 @@ class WithdrawRule(BaseModel):
     guard_unit: Literal["pct", "money"] = "pct"
     one_time: float = Field(0.0, ge=0)
     one_time_unit: Literal["money", "pct"] = "money"
+    annuity: bool = False                        # קופת גמל: paid as an annuity (tax-exempt)
 
 
 class StageIn(WithdrawRule):
@@ -68,6 +70,11 @@ class EventIn(BaseModel):
 
 
 Rebalance = Literal["none", "monthly", "quarterly", "annual", "band"]
+Account = Literal["regular", "hishtalmut", "gemel"]
+
+
+def _holdings(holdings) -> list:
+    return [Holding(h.ticker, h.weight, h.leverage, h.dividend) for h in holdings]
 
 
 class PlanIn(BaseModel):
@@ -94,10 +101,12 @@ class PlanIn(BaseModel):
     rebalance: Rebalance = "none"
     rebalance_band: float = Field(5.0, gt=0, le=50)
     index_withdrawals: bool = True
+    account: Account = "regular"
+    account_ceiling: float = Field(0.0, ge=0)        # per plan year, deposit units (0 = none)
+    deposit_fee: float = Field(0.0, ge=0, le=10)     # percent of every deposit
 
     def to_request(self) -> PlanRequest:
-        stages = [Stage(holdings=[Holding(h.ticker, h.weight, h.leverage) for h in s.holdings],
-                        **s.model_dump(exclude={"holdings"}))
+        stages = [Stage(holdings=_holdings(s.holdings), **s.model_dump(exclude={"holdings"}))
                   for s in self.stages]
         events = [DepositEvent(**e.model_dump()) for e in self.events]
         return PlanRequest(stages=stages, events=events, **self.model_dump(exclude={"stages", "events"}))
@@ -127,10 +136,10 @@ class TrinityIn(BaseModel):
     step: Literal["D", "W", "M"] = "M"
     rebalance: Rebalance = "none"
     rebalance_band: float = Field(5.0, gt=0, le=50)
+    account: Account = "regular"
 
     def to_request(self) -> WithdrawRequest:
-        stages = [WithdrawStage(holdings=[Holding(h.ticker, h.weight, h.leverage) for h in s.holdings],
-                                **s.model_dump(exclude={"holdings"}))
+        stages = [WithdrawStage(holdings=_holdings(s.holdings), **s.model_dump(exclude={"holdings"}))
                   for s in self.stages]
         return WithdrawRequest(stages=stages, **self.model_dump(exclude={"stages"}))
 
@@ -358,6 +367,8 @@ def simulate(plan: PlanIn):
         "target_month_net": _months(res.target_month_net),
         "fees_total": _floats(res.fees_total),
         "tax_paid": _floats(res.tax_paid),
+        "dividend_tax": _floats(res.dividend_tax),      # part of tax_paid
+        "deposit_fees": _floats(res.deposit_fees),      # part of fees_total
         "final_nofee": _opt(res.final_nofee),
         "final_nofee_gross": _opt(res.final_nofee_gross),
         "final_lump": _opt(res.final_lump),

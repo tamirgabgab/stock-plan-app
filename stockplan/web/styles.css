@@ -683,3 +683,13 @@ fieldset.apt-fields:disabled > :not(.field-note) { opacity: 0.45; }
 .corr-list { display: flex; flex-direction: column; gap: 4px; }
 .corr-row { display: grid; grid-template-columns: minmax(0, 1.2fr) 84px minmax(0, 1.4fr); gap: 8px; align-items: center; font-size: 13px; }
 @media (max-width: 640px) { .corr-row { grid-template-columns: minmax(0, 1fr) 84px; } .corr-row > :last-child { grid-column: 1 / -1; } }
+
+/* Account type: the ceiling presets, and a toggle that does not apply */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.toggle.disabled { opacity: 0.55; cursor: default; }
+
+/* Phones: the floating "to the results" button */
+.to-results {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 40;
+  box-shadow: var(--shadow); border-radius: 999px; padding: 10px 20px;
+}

@@ -6,6 +6,10 @@ withdrawal, record the path point, then market growth to month m+1. Every withdr
 pro-rata sale, so the tax on the realized gain is paid at that moment and the net cash is
 the amount the user asked for (the sale is grossed up for the tax).
 
+The account type works as in the accumulation simulator (dividend tax in a regular account;
+an Israeli savings account moves tax-free). Here a קרן השתלמות is taken as at least six
+years old, so its gains are exempt, and the whole start amount is within the ceilings.
+
 Withdrawals are in input units: in real mode that is today's money, and an indexed fixed
 withdrawal keeps its purchasing power month by month (the original Trinity study).
 """
@@ -17,9 +21,9 @@ from typing import Optional
 import numpy as np
 
 from .market import Market
-from .models import SOLVE_AMOUNT, SOLVE_RATE, SOLVE_START, WithdrawRequest
+from .models import HISHTALMUT_MONTHS, SOLVE_AMOUNT, SOLVE_RATE, SOLVE_START, WithdrawRequest, exempt_now
 from .portfolio import Book, paid_short, rebalance_rows, withdrawal_want
-from .simulate import month_growth
+from .simulate import _stage_weights, month_growth, stage_dividends
 
 
 @dataclass
@@ -31,18 +35,6 @@ class WithdrawOutput:
     unpaid: Optional[np.ndarray] = None          # (R,) nominal sum of withdrawals that could not be paid
     cpi: Optional[np.ndarray] = None
     paths_gross: Optional[np.ndarray] = None     # (R, T+1) nominal market value of the holdings
-
-
-def _weights(req: WithdrawRequest, market: Market) -> np.ndarray:
-    W = np.zeros((len(req.stages), len(market.asset_keys)))
-    for s, stage in enumerate(req.stages):
-        for h in stage.holdings:
-            W[s, market.asset_keys.index(h.key)] += h.weight
-        total = W[s].sum()
-        if total <= 0:
-            raise ValueError(f"סכום המשקלים בשלב {s + 1} הוא אפס")
-        W[s] /= total
-    return W
 
 
 def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarray] = None,
@@ -57,13 +49,17 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
     idx = market.day_idx if rows is None else market.day_idx[rows]
     R, T = idx.shape[0], idx.shape[1] - 1
     A = len(market.asset_keys)
-    W = _weights(req, market)
+    W = _stage_weights(req, market)
     real_tax = req.tax_basis == "real" and market.cpi_daily is not None
     fee = (1 - req.annual_fee / 100) ** (1 / 12)
     cpi = market.cpi_daily[idx] if market.cpi_daily is not None else None
     ones = np.ones(R)
     book = Book(R, A, req.tax_rate / 100, real_tax)
     book.journal = journal
+    regular = req.account == "regular"
+    book.split = not regular
+    taxable_moves = req.tax_on_switch and regular
+    divs = stage_dividends(req, market)
 
     paths = np.empty((R, T + 1)) if record else None
     gross = np.empty((R, T + 1)) if record else None
@@ -92,16 +88,17 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
         m0 = stage_starts[s]
         if s > 0:
             book.m, book.ctx = m0, "switch"
-            book.reallocate(w, cpi[:, m0] if cpi is not None else None, taxable=req.tax_on_switch)
+            book.reallocate(w, cpi[:, m0] if cpi is not None else None, taxable=taxable_moves)
 
         for j in range(stage.months):
             m = m0 + j
             cpi_m = cpi[:, m] if cpi is not None else None
             sc = scale(m)
+            book.exempt = exempt_now(req.account, HISHTALMUT_MONTHS + m, stage.annuity)
             moved = rebalance_rows(book, req.rebalance, req.rebalance_band, w, j)
             if moved is not None:
                 book.m, book.ctx = m, "rebalance"
-                book.reallocate(w, cpi_m, taxable=req.tax_on_switch, rows=moved)
+                book.reallocate(w, cpi_m, taxable=taxable_moves, rows=moved)
             want = withdrawal_want(stage, j, book.total, start_amount, sc,
                                    rate=rate_override, amount=amount_override)
 
@@ -116,8 +113,11 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
                 gross[:, m] = book.total
 
             book.grow(month_growth(market, idx, m), fee)
+            if divs is not None:
+                book.pay_dividends(divs[s], cpi[:, m + 1] if cpi is not None else None)
 
     cpi_T = cpi[:, T] if cpi is not None else None
+    book.exempt = exempt_now(req.account, HISHTALMUT_MONTHS + T, req.stages[-1].annuity)
     final = book.liquidation_value(cpi_T)
     if record:
         paths[:, T] = final

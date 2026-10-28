@@ -1,6 +1,7 @@
 // App shell: state, persistence, API calls and layout.
 import { html, render, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
 import { postJSON } from "./api.js";
+import { withDividends } from "./dividends.js";
 import { InputsPanel, newId, newStage, toPayload } from "./inputs.js";
 import { MathPage } from "./math.js";
 import { PropertyInputs, PropertyResults, defaultPropertyPlan, usePropertyRunner } from "./property.js";
@@ -37,6 +38,9 @@ const DEFAULT_PLAN = {
   rebalance: "none",
   rebalance_band: 5,
   index_withdrawals: true,
+  account: "regular",
+  account_ceiling: 0,
+  deposit_fee: 0,
   stages: [{ ...newStage(1), months: 240, monthly_deposit: 1000 }],
 };
 
@@ -65,7 +69,7 @@ function initialView() {
 }
 
 const withIds = (p) => ({
-  ...p, stages: p.stages.map((s) => ({ ...s, id: s.id || newId() })),
+  ...p, stages: p.stages.map((s) => ({ ...s, id: s.id || newId(), holdings: withDividends(s.holdings || []) })),
   ...(p.events ? { events: p.events.map((e) => ({ ...e, id: e.id || newId() })) } : {}),
 });
 
@@ -212,6 +216,7 @@ function App() {
     else if (view === "property") setPlan(defaultPropertyPlan());
     else setPlan({ ...DEFAULT_PLAN, stages: [newStage(1)] });
   };
+  const mainRef = useRef(null);
   const nextTheme = { auto: "light", light: "dark", dark: "auto" }[theme];
   const themeLabel = { auto: "ערכת צבע: אוטומטית", light: "ערכת צבע: בהירה", dark: "ערכת צבע: כהה" }[theme];
 
@@ -246,7 +251,7 @@ function App() {
         : view === "property" ? html`<${PropertyInputs} plan=${plan} setPlan=${setPlan} res=${res} errors=${prop.fieldErrors} />`
         : html`<${InputsPanel} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} />`}
       <${PanelResizer} width=${panelW} setWidth=${setPanelW} />
-      <div class=${"main" + (busy ? " is-busy" : "")}>
+      <div class=${"main" + (busy ? " is-busy" : "")} ref=${mainRef}>
         ${error ? html`<div class="callout error" role="alert">${error}</div>` : null}
         ${busy ? html`<div class="busy" role="status"><span class="spinner"></span>מחשב...</div>` : null}
         ${view === "math" ? html`<${MathPage} plan=${acc.plan} res=${acc.res} tplan=${tri.plan} tres=${tri.res}
@@ -262,8 +267,33 @@ function App() {
           : !error ? html`<div class="empty">${busy ? "טוען נתונים (בפעם הראשונה ההורדה לוקחת כמה שניות)..." : "הגדר תוכנית כדי לראות תוצאות"}</div>` : null}
       </div>
     </main>
+    <${ToResults} target=${mainRef} busy=${busy} />
     <footer class="foot muted">לצורכי מחקר ולימוד בלבד. אין לראות בכך ייעוץ השקעות.
       ${meta.version ? html` · גרסה <span dir="ltr">${meta.version}</span>` : null}</footer>`;
+}
+
+// Phones (the panel sits above the results): a floating button that scrolls down to the
+// results while they are below the screen.
+function ToResults({ target, busy }) {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const el = target.current;
+    if (!el || !("IntersectionObserver" in window)) return;
+    const narrow = window.matchMedia("(max-width: 980px)");
+    let below = false;
+    const update = () => setShow(narrow.matches && below);
+    const io = new IntersectionObserver(([e]) => {
+      below = !e.isIntersecting && e.boundingClientRect.top > 0;
+      update();
+    });
+    io.observe(el);
+    narrow.addEventListener("change", update);
+    return () => { io.disconnect(); narrow.removeEventListener("change", update); };
+  }, [target]);
+  if (!show) return null;
+  return html`<button type="button" class="btn primary to-results"
+    onClick=${() => target.current?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+    ${busy ? "מחשב..." : "לתוצאות ↓"}</button>`;
 }
 
 // Drag handle between the settings panel and the results (double-click resets the width).

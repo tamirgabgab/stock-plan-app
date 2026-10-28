@@ -19,12 +19,28 @@ REBALANCE_PERIODS = {"monthly": 1, "quarterly": 3, "annual": 12}
 REBALANCE_RULES = ("none", "band", *REBALANCE_PERIODS)
 DEPOSIT_EVERY = (1, 3, 6, 12)
 
+# Account types: a regular (taxable) brokerage account, or an Israeli savings account whose
+# gains are tax-exempt up to a yearly deposit ceiling: a קרן השתלמות (exempt from six years
+# after it opens) or a קופת גמל להשקעה (exempt when withdrawn as an annuity). Both move
+# between tracks (stage switches, rebalancing) without tax and pay no tax on dividends.
+ACCOUNTS = ("regular", "hishtalmut", "gemel")
+HISHTALMUT_MONTHS = 72
+
+
+def exempt_now(account: str, month: int, annuity: bool) -> bool:
+    """The exempt part of an Israeli savings account is tax-free at plan ``month``:
+    a קרן השתלמות from six years on, a קופת גמל when the money is paid as an annuity."""
+    if account == "hishtalmut":
+        return month >= HISHTALMUT_MONTHS
+    return account == "gemel" and annuity
+
 
 @dataclass
 class Holding:
     ticker: str
     weight: float
     leverage: float = 1.0
+    dividend: float = 0.0          # percent per year paid as dividends (taxed in a regular account)
 
     @property
     def key(self) -> tuple[str, float]:
@@ -50,6 +66,7 @@ class Stage:
     guard_unit: str = "pct"
     one_time: float = 0.0
     one_time_unit: str = "money"
+    annuity: bool = False         # קופת גמל: withdrawn as an annuity, so the exempt part is tax-free
 
     @property
     def withdraws(self) -> bool:
@@ -96,6 +113,11 @@ class PlanRequest:
     rebalance: str = "none"        # see REBALANCE_RULES
     rebalance_band: float = 5.0    # percentage points, for rebalance == "band"
     index_withdrawals: bool = True # withdrawal stages keep their purchasing power (as in Trinity)
+    # Account type (see ACCOUNTS). The ceiling is per plan year, in the deposits' units
+    # (0 = none): the gain on deposits above it is always taxed.
+    account: str = "regular"
+    account_ceiling: float = 0.0
+    deposit_fee: float = 0.0       # percent of every deposit, taken before it is invested
 
     @property
     def total_months(self) -> int:
@@ -178,6 +200,8 @@ class SimulationResult:
     retire_value: "object" = None         # (R,) net balance when the withdrawals start, display units
     retire_month: int = -1
     withdraw_monthly: "object" = None     # (R,) average monthly withdrawal of the withdrawal stages
+    dividend_tax: "object" = None         # (R,) the part of ``tax_paid`` paid on dividends
+    deposit_fees: "object" = None         # (R,) the part of ``fees_total`` taken from the deposits
 
 
 # ------------------------------------------------------------------ withdrawal (Trinity)
@@ -200,6 +224,7 @@ class WithdrawStage:
     guard_unit: str = "pct"       # "pct": percent per year of the start amount; "money": per month
     one_time: float = 0.0         # withdrawal at the start of the stage
     one_time_unit: str = "money"  # "money" or "pct" (of the balance at that moment)
+    annuity: bool = False         # see Stage.annuity
     name: str = ""
 
 
@@ -222,6 +247,8 @@ class WithdrawRequest:
     step: str = "M"
     rebalance: str = "none"
     rebalance_band: float = 5.0
+    # An Israeli savings account is taken as at least six years old and within its ceilings.
+    account: str = "regular"
 
     @property
     def total_months(self) -> int:

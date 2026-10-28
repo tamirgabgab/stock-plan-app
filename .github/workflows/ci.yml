@@ -1,4 +1,6 @@
-# Tests and smoke checks for every push to main and every pull request.
+# Tests and smoke checks for every push to main and every pull request. The browser test
+# (tests/test_browser.py) is skipped in the pytest jobs and runs in the "web" job, which
+# installs Playwright and Chromium.
 # The suite runs on demo (synthetic) data, so it never depends on Yahoo, FRED, CBS or the
 # Bank of Israel being reachable.
 name: CI
@@ -68,3 +70,8 @@ jobs:
       - name: Server log
         if: failure()
         run: cat server.log
+      - name: Browser test (every tab, account settings, phone layout)
+        run: |
+          pip install -r requirements-dev.txt playwright==1.56.0
+          python -m playwright install --with-deps chromium
+          python -m pytest -q tests/test_browser.py

@@ -60,9 +60,9 @@ export function Segmented({ label, hint, options, value, onChange, small, disabl
   </div>`;
 }
 
-export function Toggle({ label, hint, checked, onChange }) {
-  return html`<label class="toggle">
-    <input type="checkbox" checked=${checked} onChange=${(e) => onChange(e.currentTarget.checked)} />
+export function Toggle({ label, hint, checked, onChange, disabled = false }) {
+  return html`<label class=${"toggle" + (disabled ? " disabled" : "")}>
+    <input type="checkbox" checked=${checked} disabled=${disabled} onChange=${(e) => onChange(e.currentTarget.checked)} />
     <span class="switch" aria-hidden="true"></span>
     <span>${label}${hint ? html` <${Hint} text=${hint} />` : null}</span>
   </label>`;

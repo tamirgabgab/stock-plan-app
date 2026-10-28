@@ -5,7 +5,7 @@ import { heatmapFigure, observeResize, PLOT_CONFIG } from "./charts.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
 import { HoldingsTable, isSavings, PeriodSection, RawPreset, RebalanceSection, StageHead, TaxSection, TickerList, newId } from "./inputs.js";
 import { CrossSection, DetailModal, FanChart, OutcomeByStart, RealizationsTable, SOLVED_SOURCE, Tile, VALUE_SOURCE,
-         dateColumns, solvedLabel, useActive } from "./results.js";
+         dateColumns, isSynthetic, periods, realName, solvedLabel, useActive } from "./results.js";
 import { columnStats, decodeMatrix, summarize } from "./stats.js";
 import { NumberField, Segmented, Toggle } from "./ui.js";
 import { WithdrawFields } from "./withdrawal.js";
@@ -29,7 +29,8 @@ export const DEFAULT_TPLAN = {
   solve_for: "final", start_amount: 1_000_000, target_amount: 0, currency: "ILS", real: true,
   index_withdrawals: true, tax_rate: 25, tax_basis: "nominal", tax_on_switch: false, annual_fee: 0,
   leverage_cost: 0, min_start: null, max_start: null, step: "M", rebalance: "none", rebalance_band: 5,
-  account: "regular", stages: [newWithdrawStage(1)],
+  account: "regular", mode: "history", paths: 2000, block: 12, seed: 1, sample_from: null, sample_to: null,
+  stages: [newWithdrawStage(1)],
 };
 
 export const DEFAULT_HEAT = { rate_from: 2, rate_to: 8, rate_step: 0.25, years_from: 10, years_to: 40, years_step: 5, kind: "survival" };
@@ -140,7 +141,7 @@ function TrinityKpis({ res }) {
   const tiles = [];
   if (plan.solve_for === "final") {
     tiles.push(html`<${Tile} label="אחוז הצלחה" value=${pct((100 * okCount) / raw.n, 1)}
-      sub=${`ב-${okCount.toLocaleString("he-IL")} מתוך ${raw.n.toLocaleString("he-IL")} תקופות הכסף לא נגמר`} />`);
+      sub=${`ב-${okCount.toLocaleString("he-IL")} מתוך ${raw.n.toLocaleString("he-IL")} ${periods(res)} הכסף לא נגמר`} />`);
   }
   if (plan.solve_for !== "final") {
     const sol = summarize(raw.solved) || {};
@@ -152,23 +153,23 @@ function TrinityKpis({ res }) {
                       start_amount: "סכום שהספיק ב-90% מהמקרים" }[plan.solve_for];
     tiles.push(
       html`<${Tile} label=${`${solvedLabel(res)} (חציון)`} value=${f(sol.median)} sub=${`ממוצע ${f(sol.mean)}`} />`,
-      html`<${Tile} label="בטוח ב-90% מהתקופות" value=${f(safe)} sub=${safeSub} />`,
+      html`<${Tile} label=${`בטוח ב-90% מה${periods(res)}`} value=${f(safe)} sub=${safeSub} />`,
       html`<${Tile} label="המקרה הגרוע" value=${f(higher ? sol.min : sol.max)} />`,
     );
   } else {
     tiles.push(
       html`<${Tile} label="יתרה סופית חציונית" value=${m(fin.median)} sub=${`ממוצע ${m(fin.mean)} · התחלה ${m(plan.start_amount)}`} />`,
-      html`<${Tile} label="התקופה הגרועה" value=${m(fin.min)} sub=${`התחלה ${dateHe(raw.start_dates[worst])}`} />`,
-      html`<${Tile} label="התקופה הטובה" value=${m(fin.max)} sub=${`התחלה ${dateHe(raw.start_dates[best])}`} />`,
+      html`<${Tile} label="התקופה הגרועה" value=${m(fin.min)} sub=${realName(res, worst)} />`,
+      html`<${Tile} label="התקופה הטובה" value=${m(fin.max)} sub=${realName(res, best)} />`,
     );
   }
   tiles.push(html`<${Tile} label="משיכה חודשית ממוצעת (חציון)" value=${m(wd?.median)}
     sub=${`10%–90%: ${m(wd?.p10)} עד ${m(wd?.p90)}${plan.real ? " · בכסף של היום" : ""}`} />`);
   if (plan.solve_for === "final") {
     tiles.push(html`<${Tile} label="מתי הכסף נגמר (במקרי כישלון)" text value=${ttd ? monthsLabel(Math.round(ttd.median)) : "—"}
-      sub=${ttd ? `הכי מוקדם: ${monthsLabel(ttd.min)} · ב-${failed.length.toLocaleString("he-IL")} תקופות` : "הכסף לא נגמר באף תקופה"} />`);
+      sub=${ttd ? `הכי מוקדם: ${monthsLabel(ttd.min)} · ב-${failed.length.toLocaleString("he-IL")} ${periods(res)}` : `הכסף לא נגמר באף ${isSynthetic(res) ? "מסלול" : "תקופה"}`} />`);
   } else if (okCount < raw.n) {
-    tiles.push(html`<${Tile} label="תקופות בלי פתרון" value=${(raw.n - okCount).toLocaleString("he-IL")} sub="היעד לא מושג בשום ערך של הנעלם" />`);
+    tiles.push(html`<${Tile} label=${`${periods(res)} בלי פתרון`} value=${(raw.n - okCount).toLocaleString("he-IL")} sub="היעד לא מושג בשום ערך של הנעלם" />`);
   }
   return html`<section class="tiles" aria-label="סיכום">${tiles}
     <div class="tile meta-tile"><div class="tile-label">ריאליזציות</div><div class="tile-value">${raw.n.toLocaleString("he-IL")}</div>
@@ -218,9 +219,9 @@ export function TrinityResults({ res, ui, setUi, themeKey, plan, setPlan, payloa
     <${TrinityKpis} res=${res} />
     <${FanChart} ...${shared} />
     <${Heatmap} payload=${payload} plan=${plan} setPlan=${setPlan} heat=${heat} setHeat=${setHeat} themeKey=${themeKey} />
-    <div class="row-2">
+    <div class=${isSynthetic(res) ? "" : "row-2"}>
       <${CrossSection} ...${shared} sources=${TRINITY_SOURCES} />
-      <${OutcomeByStart} ...${shared} />
+      ${isSynthetic(res) ? null : html`<${OutcomeByStart} ...${shared} />`}
     </div>
     <${RealizationsTable} ...${shared} columns=${trinityColumns(res)} />
     <${DetailModal} ...${shared} />

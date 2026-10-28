@@ -69,6 +69,13 @@ the UI — it is not real market history).
   withdrawn as an annuity (a switch on the withdrawal stage); in both the stage switches
   and rebalancing are tax-free, dividends are not taxed, and the gain on deposits above
   the yearly ceiling (the 2026 ceilings are one click away) is always taxed. Both tabs.
+- **Synthetic scenarios** – instead of the historical start dates, thousands of paths glued
+  from blocks of consecutive historical months (a block bootstrap): every asset, the FX rate
+  and the CPI of a month move together, so correlations, inflation and crashes stay real;
+  only the order of the blocks is new. Number of paths, block length, seed and the stretch
+  of history to sample from are settings. Long plans (a 55-year lifecycle) get thousands of
+  scenarios. The table, the tiles and the detail view name paths instead of dates. Both the
+  accumulation and the Trinity tab (the Trinity heat map stays historical).
 - **Statistics** – median (bold), mean (dashed) and a p1–p2 percentile band over time;
   optional *representative paths* (the real realizations that ended at p1, the median
   and p2) and a percentile-rank-over-time chart for the hovered or pinned path;

@@ -306,7 +306,8 @@ export function basketFigure({ basket, buys, sells, stages, useFx, highlight }) 
 }
 
 // One realization's account value against the same plan at a fixed annual return.
-export function accountFigure({ dates, account, accountLabel = "שווי החשבון", bench, flow, flowLabel, benchLabel, sym }) {
+// ``years``: the x values are years from the start (a synthetic path has no dates).
+export function accountFigure({ dates, account, accountLabel = "שווי החשבון", bench, flow, flowLabel, benchLabel, sym, years = false }) {
   const t = theme();
   const hv = (name) => `${name}: ${sym}%{y:,.0f}<extra></extra>`;
   const data = [
@@ -319,7 +320,7 @@ export function accountFigure({ dates, account, accountLabel = "שווי החש�
     hovermode: "x unified", dragmode: "zoom",
     margin: { l: 64, r: 16, t: 8, b: 36 },
     legend: { orientation: "h", x: 0, xanchor: "left", y: 1.02, yanchor: "bottom", bgcolor: "rgba(0,0,0,0)" },
-    xaxis: axis(t, { type: "date" }),
+    xaxis: axis(t, years ? { title: { text: "שנים מתחילת התוכנית" } } : { type: "date" }),
     yaxis: axis(t, { tickprefix: sym, tickformat: "~s", rangemode: "tozero" }),
   });
   return { data, layout };

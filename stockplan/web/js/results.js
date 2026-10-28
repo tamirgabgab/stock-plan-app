@@ -58,6 +58,12 @@ function usePlot(ref, build, deps, bind) {
   }, []);
 }
 
+// A realization's name: its start date, or its number among the synthetic paths.
+export const isSynthetic = (res) => !!res.raw.synthetic;
+export const periods = (res) => (isSynthetic(res) ? "מסלולים" : "תקופות");
+export const realName = (res, i) => (isSynthetic(res)
+  ? `מסלול ${(i + 1).toLocaleString("he-IL")}` : `התחלה ${dateHe(res.raw.start_dates[i])}`);
+
 // Realizations that actually ended at the p1, median and p2 percentiles of the outcome
 // (final value, or the solved variable in solve mode, where every path ends at the target).
 export function representative(res, p1, p2) {
@@ -68,7 +74,7 @@ export function representative(res, p1, p2) {
   const lo = Math.min(p1, p2), hi = Math.max(p1, p2);
   return [lo, 50, hi].map((p, i) => {
     const idx = nearestToQuantile(scores, sorted, p);
-    return { idx, p, color: i, label: `אחוזון ${p}: התחלה ${dateHe(res.raw.start_dates[idx])}` };
+    return { idx, p, color: i, label: `אחוזון ${p}: ${realName(res, idx)}` };
   }).filter((r) => r.idx >= 0);
 }
 
@@ -111,9 +117,9 @@ export function Results({ res: full, ui, setUi, themeKey }) {
     <${Kpis} res=${res} />
     <${FanChart} ...${shared} />
     ${res.lifecycle ? html`<${LifecycleCard} ...${shared} />` : null}
-    <div class="row-2">
+    <div class=${isSynthetic(res) ? "" : "row-2"}>
       <${CrossSection} ...${shared} sources=${ACCUMULATION_SOURCES} />
-      <${OutcomeByStart} ...${shared} />
+      ${isSynthetic(res) ? null : html`<${OutcomeByStart} ...${shared} />`}
     </div>
     <div class=${hasGoal(res) ? "row-2" : ""}>
       ${hasGoal(res) ? html`<${GoalCard} ...${shared} />` : null}
@@ -136,7 +142,7 @@ export function Tile({ label, value, sub, text }) {
 function successTile(res) {
   const ok = res.raw.success.filter(Boolean).length;
   return html`<${Tile} label="אחוז הצלחה" value=${pct((100 * ok) / res.n, 1)}
-    sub=${`ב-${ok.toLocaleString("he-IL")} מתוך ${res.n.toLocaleString("he-IL")} תקופות הכסף החזיק עד הסוף`} />`;
+    sub=${`ב-${ok.toLocaleString("he-IL")} מתוך ${res.n.toLocaleString("he-IL")} ${periods(res)} הכסף החזיק עד הסוף`} />`;
 }
 
 function Kpis({ res }) {
@@ -160,8 +166,8 @@ function Kpis({ res }) {
         : html`<${Tile} label="סיכוי להפסד" value=${pct((100 * losses) / raw.n, 1)} sub="סכום סופי נמוך מסך ההפקדות" />`,
       html`<${Tile} label="תשואה שנתית (IRR) חציונית" value=${pct(irr?.median)} sub=${`10%–90%: ${pct(irr?.p10, 1)} עד ${pct(irr?.p90, 1)}`} />`,
       html`<${Tile} label="סך הפקדות (חציון)" value=${m(dep?.median)} sub=${`רווח חציוני ${m(gain?.median)}`} />`,
-      html`<${Tile} label="התקופה הגרועה" value=${m(fin.min)} sub=${`התחלה ${dateHe(raw.start_dates[worst])}`} />`,
-      html`<${Tile} label="התקופה הטובה" value=${m(fin.max)} sub=${`התחלה ${dateHe(raw.start_dates[best])}`} />`,
+      html`<${Tile} label="התקופה הגרועה" value=${m(fin.min)} sub=${realName(res, worst)} />`,
+      html`<${Tile} label="התקופה הטובה" value=${m(fin.max)} sub=${realName(res, best)} />`,
     );
   } else {
     const sol = summarize(raw.solved) || {};
@@ -172,9 +178,9 @@ function Kpis({ res }) {
     const worst = raw.solved.indexOf(wv), best = raw.solved.indexOf(bv);
     tiles.push(
       html`<${Tile} label=${`${name} (חציון)`} value=${m(sol.median)} sub=${`ממוצע ${m(sol.mean)}`} />`,
-      html`<${Tile} label="להצלחה ב-90% מהתקופות" value=${m(safe)} sub=${higher ? "אפשרי ב-90% מהמקרים ההיסטוריים" : "מספיק ב-90% מהמקרים ההיסטוריים"} />`,
-      html`<${Tile} label="המקרה הגרוע" value=${m(wv)} sub=${worst >= 0 ? `התחלה ${dateHe(raw.start_dates[worst])}` : ""} />`,
-      html`<${Tile} label="המקרה הטוב" value=${m(bv)} sub=${best >= 0 ? `התחלה ${dateHe(raw.start_dates[best])}` : ""} />`,
+      html`<${Tile} label=${`להצלחה ב-90% מה${periods(res)}`} value=${m(safe)} sub=${`${higher ? "אפשרי" : "מספיק"} ב-90% מה${isSynthetic(res) ? "מסלולים" : "מקרים ההיסטוריים"}`} />`,
+      html`<${Tile} label="המקרה הגרוע" value=${m(wv)} sub=${worst >= 0 ? realName(res, worst) : ""} />`,
+      html`<${Tile} label="המקרה הטוב" value=${m(bv)} sub=${best >= 0 ? realName(res, best) : ""} />`,
       html`<${Tile} label="תשואה שנתית (IRR) חציונית" value=${pct(irr?.median)} sub=${`10%–90%: ${pct(irr?.p10, 1)} עד ${pct(irr?.p90, 1)}`} />`,
       html`<${Tile} label="סך הפקדות (חציון)" value=${m(dep?.median)} />`,
     );
@@ -195,7 +201,7 @@ export function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, 
   const sym = CURRENCY_SYMBOL[res.plan.currency];
   const timeIdx = ui.timeIdx ?? res.T;
   const highlight = active !== null ? {
-    y: row(res.paths, active), label: `התחלה ${dateHe(res.raw.start_dates[active])}`,
+    y: row(res.paths, active), label: realName(res, active),
   } : null;
   const repTraces = useMemo(() => reps.map((r) => ({ y: row(res.paths, r.idx), label: r.label })), [res, reps]);
 
@@ -264,7 +270,7 @@ export function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, 
         <p class="muted">קו מודגש: חציון. מקווקו: ממוצע. רקע: טווח האחוזונים. ריחוף מציג את המסלול הקרוב לסמן, ולחיצה נועצת אותו.</p></div>
       ${pinned !== null ? html`<div class="pin-actions">
         <button class="btn primary small" onClick=${() => openDetail(pinned)}>פירוט מלא</button>
-        <button class="chip" onClick=${() => setPinned(null)}>מסלול נעוץ: ${dateHe(res.raw.start_dates[pinned])} ✕</button></div>` : null}
+        <button class="chip" onClick=${() => setPinned(null)}>מסלול נעוץ: ${isSynthetic(res) ? realName(res, pinned) : dateHe(res.raw.start_dates[pinned])} ✕</button></div>` : null}
     </div>
     <div class="controls">
       <label class="mini">מאחוזון <input type="number" dir="ltr" min="0" max="100" step="1" value=${ui.p1}
@@ -296,7 +302,7 @@ function RankChart({ res, ui, active, reps, timeIdx, themeKey }) {
     const out = reps.map((r) => ({ y: rankSeries(res.paths, res.cs.sorted, r.idx), label: r.label, color: t.reps[r.color] }));
     if (active !== null) {
       out.push({ y: rankSeries(res.paths, res.cs.sorted, active), color: t.violet, main: true,
-                 label: `התחלה ${dateHe(res.raw.start_dates[active])}` });
+                 label: realName(res, active) });
     }
     return out;
   }, [res, reps, active, themeKey]);
@@ -325,7 +331,7 @@ function FanTip({ tip, res, ui }) {
   return html`<div class="fan-tip" style=${style} role="tooltip">
     <div class="tip-title">${monthsLabel(tip.t)} מההתחלה</div>
     <div class="tip-path"><span class="swatch violet"></span>
-      <div>התחלה ${dateHe(start)} · ${dateHe(addMonths(start, tip.t))}<br />
+      <div>${isSynthetic(res) ? realName(res, tip.r) : html`התחלה ${dateHe(start)} · ${dateHe(addMonths(start, tip.t))}`}<br />
       שווי <b dir="ltr">${money(res.paths.at(tip.r, tip.t), cur)}</b>
       <span class="muted"> · ${res.labels.flowVerb} ${money(res.deps.at(tip.r, tip.t), cur, { compact: true })}</span></div></div>
     <table class="tip-table"><tbody>
@@ -537,7 +543,7 @@ export function OutcomeByStart({ res, active, setHover, pinned, setPinned, openD
     <div class="plot-wrap">
       <div ref=${ref} class="plot"></div>
       ${tip ? html`<div class="fan-tip small" style=${tipStyle} role="tooltip">
-        <div class="tip-title">התחלה ${dateHe(res.raw.start_dates[tip.i])}</div>
+        <div class="tip-title">${realName(res, tip.i)}</div>
         <div>${outcomeName}: <b dir="ltr">${fmtVal(values[tip.i])}</b></div>
         <div class="muted">${res.labels.outcomeSub(res, tip.i)}</div>
       </div>` : null}
@@ -676,7 +682,7 @@ function SpreadCard({ res, active, pinned, themeKey }) {
     prefix: CURRENCY_SYMBOL[cur], suffix: "", yTitle: "פריסה פחות השקעה מיידית" }), [res, active, pinned, themeKey]);
   return html`<section class="card" aria-label="פריסה מול השקעה מיידית">
     <div class="card-head"><div><h2>פריסה על ${monthsLabel(plan.lump_spread)} מול השקעה מיידית</h2>
-      <p class="muted">אותה תוכנית בדיוק, רק שהסכום ההתחלתי מושקע כולו ביום הראשון. הגרף: הסכום הסופי (${modeWord(res)}) עם הפריסה פחות בלעדיה, לכל תאריך התחלה. מעל האפס הפריסה ניצחה.</p></div></div>
+      <p class="muted">אותה תוכנית בדיוק, רק שהסכום ההתחלתי מושקע כולו ביום הראשון.${isSynthetic(res) ? " ההשוואה היא על אותם מסלולים." : ` הגרף: הסכום הסופי (${modeWord(res)}) עם הפריסה פחות בלעדיה, לכל תאריך התחלה. מעל האפס הפריסה ניצחה.`}</p></div></div>
     <dl class="stats">
       <div><dt>הפריסה ניצחה</dt><dd dir="ltr">${pct((100 * wins) / res.n, 1)}</dd></div>
       <div><dt>הפרש חציוני</dt><dd dir="ltr">${money(s?.median, cur)} <span class="muted">(${pct(rel?.median, 2)})</span></dd></div>
@@ -684,7 +690,7 @@ function SpreadCard({ res, active, pinned, themeKey }) {
       <div><dt>הכי טוב לפריסה</dt><dd dir="ltr">${money(s?.max, cur)}</dd></div>
       <div><dt>הכי רע לפריסה</dt><dd dir="ltr">${money(s?.min, cur)}</dd></div>
     </dl>
-    <div ref=${ref} class="plot plot-short"></div>
+    ${isSynthetic(res) ? null : html`<div ref=${ref} class="plot plot-short"></div>`}
   </section>`;
 }
 
@@ -695,8 +701,9 @@ const PAGE = 15;
 export function dateColumns(res) {
   const { raw } = res;
   return [
-    { key: "start", label: "התחלה", get: (i) => raw.start_dates[i], fmt: dateHe },
-    { key: "end", label: "סיום", get: (i) => raw.end_dates[i], fmt: dateHe },
+    ...(isSynthetic(res) ? [{ key: "path", label: "מסלול", get: (i) => i + 1, fmt: (v) => v.toLocaleString("he-IL") }] : [
+      { key: "start", label: "התחלה", get: (i) => raw.start_dates[i], fmt: dateHe },
+      { key: "end", label: "סיום", get: (i) => raw.end_dates[i], fmt: dateHe }]),
     ...(res.plan.solve_for !== "final"
       ? [{ key: "solved", label: solvedLabel(res), get: (i) => raw.solved[i], fmt: res.labels.solvedFmt || ((v) => money(v, res.plan.currency)) }]
       : []),
@@ -711,7 +718,7 @@ function yearColumn(res, key, label, pick) {
   return {
     key, label, get: ret, fmt: (v) => pct(v, 1),
     render: (i) => (yearOf(i) < 0 ? "—" : html`שנה ${yearOf(i) + 1} <span dir="ltr">(${pct(ret(i), 1)})</span>`),
-    title: (i) => (yearOf(i) < 0 ? "" : `הפקדות ${dateHe(addMonths(res.raw.start_dates[i], 12 * yearOf(i)))} עד ${dateHe(addMonths(res.raw.start_dates[i], 12 * yearOf(i) + 11))}, מוחזקות עד הסוף`),
+    title: (i) => (yearOf(i) < 0 ? "" : isSynthetic(res) ? `ההפקדות של שנה ${yearOf(i) + 1}, מוחזקות עד הסוף` : `הפקדות ${dateHe(addMonths(res.raw.start_dates[i], 12 * yearOf(i)))} עד ${dateHe(addMonths(res.raw.start_dates[i], 12 * yearOf(i) + 11))}, מוחזקות עד הסוף`),
     csv: (i) => (yearOf(i) < 0 ? "" : `${yearOf(i) + 1} (${(ret(i) ?? 0).toFixed(1)}%)`),
   };
 }
@@ -754,7 +761,7 @@ export function RealizationsTable({ res, active, setHover, pinned, setPinned, co
   const [page, setPage] = useState(0);
   const cols = columns.filter((c) => !c.hidden);
   const order = useMemo(() => {
-    const c = cols.find((x) => x.key === sort.key);
+    const c = cols.find((x) => x.key === sort.key) || cols[0];    // e.g. "start" in a synthetic run
     const idx = Array.from({ length: raw.n }, (_, i) => i);
     idx.sort((p, q) => {
       const a = c.get(p), b = c.get(q);
@@ -791,7 +798,7 @@ export function RealizationsTable({ res, active, setHover, pinned, setPinned, co
       <tbody onMouseLeave=${() => setHover(null)}>
         ${shown.map((i) => html`<tr key=${i} class=${(i === active ? "active" : "") + (i === pinned ? " pinned" : "")}
             onMouseEnter=${() => setHover(i)} onClick=${() => openDetail(i)} title="לחץ לפירוט מלא">
-          ${cols.map((c) => html`<td dir=${c.key === "start" || c.key === "end" || c.rtl || c.render ? "rtl" : "ltr"}
+          ${cols.map((c) => html`<td dir=${c.key === "start" || c.key === "end" || c.key === "path" || c.rtl || c.render ? "rtl" : "ltr"}
             title=${c.title ? c.title(i) : undefined}>${c.render ? c.render(i) : c.fmt(c.get(i))}</td>`)}
         </tr>`)}
       </tbody>

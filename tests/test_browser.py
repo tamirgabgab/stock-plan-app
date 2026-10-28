@@ -1,6 +1,6 @@
 """The web UI in a real (headless) browser, on demo data: every tab loads and computes
-without a JavaScript error, the account settings run, and the phone layout's "to the
-results" button works. Skipped when Playwright is not installed (the CI "web" job installs it).
+without a JavaScript error, the account settings and the synthetic scenarios run (with a
+path's detail view), and the phone layout's "to the results" button works. Skipped when Playwright is not installed (the CI "web" job installs it).
 """
 from __future__ import annotations
 
@@ -80,10 +80,25 @@ def test_every_tab_runs(server, browser):
         click_option(page, account)
         settle(page, account)
 
+    # Synthetic paths: the table lists paths, and a path's detail opens.
+    click_option(page, "מסלולים סינתטיים")
+    settle(page, "synthetic")
+    table = page.locator("section.card", has_text="כל הריאליזציות").locator("tbody tr")
+    table.first.click()
+    page.wait_for_selector(".modal .journal", timeout=60_000)
+    page.keyboard.press("Escape")
+    click_option(page, "תאריכים היסטוריים")
+    settle(page, "history again")
+
     for tab in ("טריניטי (משיכות)", "דירה נגד שוק ההון", "הסבר מתמטי", "צבירה"):
         page.get_by_role("button", name=tab, exact=True).click()
         settle(page, tab)
         page.wait_for_selector(".main .card, .main section, .main .math", timeout=60_000)
+        if tab.startswith("טריניטי"):
+            click_option(page, "מסלולים סינתטיים")
+            settle(page, "Trinity synthetic")
+            click_option(page, "תאריכים היסטוריים")
+            settle(page, "Trinity history")
     assert not errors, "\n".join(errors)
     page.close()
 

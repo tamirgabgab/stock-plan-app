@@ -41,6 +41,12 @@ const DEFAULT_PLAN = {
   account: "regular",
   account_ceiling: 0,
   deposit_fee: 0,
+  mode: "history",
+  paths: 2000,
+  block: 12,
+  seed: 1,
+  sample_from: null,
+  sample_to: null,
   stages: [{ ...newStage(1), months: 240, monthly_deposit: 1000 }],
 };
 

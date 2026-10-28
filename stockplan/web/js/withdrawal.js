@@ -3,14 +3,14 @@
 // Trinity tab's stages and the withdrawal stages of a lifecycle plan in the accumulation tab.
 import { html } from "../vendor/preact-htm.module.js";
 import { money } from "./format.js";
-import { NumberField, Segmented } from "./ui.js";
+import { NumberField, Segmented, Toggle } from "./ui.js";
 
 // ``solveRate``/``solveAmount``: the rate or the monthly amount is the unknown (locked).
 // ``moneyWhen``: which money a fixed amount is in, e.g. " במחירי תחילת הפרישה".
 // ``base``: what "initial" means, e.g. "הסכום ההתחלתי"; ``baseNote(stage)``: the note under
-// the rate when it is a percent of that basis.
+// the rate when it is a percent of that basis. ``annuity``: offer the annuity switch (a קופת גמל).
 export function WithdrawFields({ stage, set, onChange, sym, currency, indexed, solveRate = false, solveAmount = false,
-                                 base = "הסכום ההתחלתי", baseNote, moneyWhen = "" }) {
+                                 base = "הסכום ההתחלתי", baseNote, moneyWhen = "", annuity = false }) {
   const locked = solveRate || solveAmount;
   const pctUnit = solveRate || (!solveAmount && stage.rate_unit === "pct");
   const unitOptions = [{ value: "pct", label: "% לשנה" }, { value: "money", label: `${sym} לחודש` }];
@@ -49,5 +49,7 @@ export function WithdrawFields({ stage, set, onChange, sym, currency, indexed, s
       <${Segmented} label="יחידות" options=${[{ value: "money", label: sym }, { value: "pct", label: "% מהיתרה" }]}
         value=${stage.one_time_unit} onChange=${set("one_time_unit")}
         hint="סכום בכסף (ביחידות הקלט) או אחוז מהיתרה ברגע שהשלב מתחיל." />
-    </div>`;
+    </div>
+    ${annuity ? html`<${Toggle} label="משיכה כקצבה (פטורה ממס)" checked=${!!stage.annuity} onChange=${set("annuity")}
+      hint="בקופת גמל להשקעה, משיכה כקצבה חודשית מגיל 60 פטורה ממס רווחי הון, על ההפקדות עד התקרה. הגיל באחריותך: סמן רק שלב שמתחיל אחרי גיל 60. כבוי: כל משיכה היא סכום חד-פעמי, והמס על הרווח משולם בה." />` : null}`;
 }

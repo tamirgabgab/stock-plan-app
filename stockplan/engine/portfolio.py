@@ -6,6 +6,12 @@ State is (R, A): realizations × assets. Every method works on all realizations 
 Tax: realized losses build a shield that offsets later gains. With a real tax basis the
 cost basis is CPI-indexed; an inflationary gain is not taxed and cannot create a
 deductible loss (only a nominal loss can), as in Israeli capital-gains rules.
+
+Israeli savings accounts (קרן השתלמות, קופת גמל להשקעה) keep part of the money tax-exempt:
+a "split" book tracks the exempt part (value and cost basis, ``Ve``/``Bne``/``Bce``) inside
+the totals. Every trade touches both parts pro rata. The exempt part's gain is taxed only
+while ``exempt`` is False (the simulator sets it: before six years in a קרן השתלמות, a lump
+sum from a קופת גמל); the rest (deposits above the yearly ceiling) is always taxed.
 """
 from __future__ import annotations
 
@@ -24,6 +30,13 @@ class Book:
         self.shield = np.zeros(R)            # accumulated realized losses
         self.tax_paid = np.zeros(R)          # running total of the tax paid on sales
         self.fees = np.zeros(R)              # running total of the management fees charged
+        self.dividend_tax = np.zeros(R)      # the part of ``tax_paid`` paid on dividends
+        # Split book (Israeli savings accounts): the tax-exempt part of the holdings.
+        self.split = False
+        self.exempt = False                  # the exempt part is tax-free right now
+        self.Ve = np.zeros((R, A))
+        self.Bne = np.zeros((R, A))
+        self.Bce = np.zeros((R, A))
         # Optional trade journal for a single-realization run (row 0 only). The simulators
         # set ``m`` (month) and ``ctx`` (why the trade happens) before each operation.
         self.journal: list | None = None
@@ -45,12 +58,18 @@ class Book:
     def total(self) -> np.ndarray:
         return self.V.sum(axis=1)
 
+    def _gain(self, V, Bn, Bc, cpi_now) -> np.ndarray:
+        if not self.real_tax:
+            return V - Bn
+        indexed = Bc * cpi_now[:, None]
+        return np.where(V >= indexed, V - indexed, -np.maximum(Bn - V, 0.0))
+
     def gains(self, cpi_now) -> np.ndarray:
         """(R, A) taxable gain per asset if everything were sold now."""
-        if not self.real_tax:
-            return self.V - self.Bn
-        indexed = self.Bc * cpi_now[:, None]
-        return np.where(self.V >= indexed, self.V - indexed, -np.maximum(self.Bn - self.V, 0.0))
+        if not self.split:
+            return self._gain(self.V, self.Bn, self.Bc, cpi_now)
+        taxed = self._gain(self.V - self.Ve, self.Bn - self.Bne, self.Bc - self.Bce, cpi_now)
+        return taxed if self.exempt else taxed + self._gain(self.Ve, self.Bne, self.Bce, cpi_now)
 
     def tax_on(self, G: np.ndarray) -> np.ndarray:
         """Tax due on realized gains G (R,), consuming or building the loss shield."""
@@ -65,13 +84,21 @@ class Book:
         G = self.gains(cpi_now).sum(axis=1)
         return self.total - self.rate * np.maximum(G - self.shield, 0.0)
 
-    def buy(self, amount: np.ndarray, w: np.ndarray, cpi_now) -> None:
+    def buy(self, amount: np.ndarray, w: np.ndarray, cpi_now, exempt: np.ndarray | None = None) -> None:
+        """Buy ``amount`` (R,) at weights ``w``; ``exempt`` (R,) of it is the tax-exempt part
+        of a split book (all of it when omitted)."""
         add = amount[:, None] * w
         self._log("buy", add[0])
         self.V += add
         self.Bn += add
         if self.real_tax:
             self.Bc += add / cpi_now[:, None]
+        if self.split:
+            ex = add if exempt is None else exempt[:, None] * w
+            self.Ve += ex
+            self.Bne += ex
+            if self.real_tax:
+                self.Bce += ex / cpi_now[:, None]
 
     def sell_fraction(self, frac: np.ndarray, cpi_now) -> tuple[np.ndarray, np.ndarray]:
         """Sell ``frac`` (R, A) of each holding. Returns (gross proceeds, tax) per realization."""
@@ -83,6 +110,10 @@ class Book:
         self.V *= 1 - frac
         self.Bn *= 1 - frac
         self.Bc *= 1 - frac
+        if self.split:
+            self.Ve *= 1 - frac
+            self.Bne *= 1 - frac
+            self.Bce *= 1 - frac
         return gross, tax
 
     def withdraw_net(self, want: np.ndarray, cpi_now) -> np.ndarray:
@@ -109,7 +140,8 @@ class Book:
         ``rows`` (bool, R) limits the move to some realizations; the others are left as they are.
         Tax-free: the cost basis travels with the money (tax deferred to the end).
         Taxable: only the holdings that shrink are sold; the cash after tax buys the ones
-        that grow, and a holding that is kept keeps its basis.
+        that grow, and a holding that is kept keeps its basis. A split book (an Israeli
+        savings account) always moves tax-free.
         """
         on = np.ones(self.V.shape[0], dtype=bool) if rows is None else rows
         log = bool(on[0])
@@ -123,7 +155,12 @@ class Book:
             self.V = np.where(m, target, self.V)
             self.Bn = np.where(m, self.Bn.sum(axis=1)[:, None] * w, self.Bn)
             self.Bc = np.where(m, self.Bc.sum(axis=1)[:, None] * w, self.Bc)
+            if self.split:
+                self.Ve = np.where(m, self.Ve.sum(axis=1)[:, None] * w, self.Ve)
+                self.Bne = np.where(m, self.Bne.sum(axis=1)[:, None] * w, self.Bne)
+                self.Bce = np.where(m, self.Bce.sum(axis=1)[:, None] * w, self.Bce)
             return
+        assert not self.split, "a split book moves tax-free"
         sell = np.where(on[:, None], np.maximum(self.V - target, 0.0), 0.0)
         frac = np.divide(sell, self.V, out=np.zeros_like(self.V), where=self.V > 0)
         journal, self.journal = self.journal, (self.journal if log else None)
@@ -149,8 +186,29 @@ class Book:
     def grow(self, growth: np.ndarray, fee: float) -> None:
         grown = self.V * growth
         self.V = grown * fee
+        if self.split:
+            self.Ve = self.Ve * growth * fee
         if fee != 1.0:
             self.fees = self.fees + grown.sum(axis=1) * (1.0 - fee)
+
+    def pay_dividends(self, rate: np.ndarray, cpi_now) -> None:
+        """Tax the dividends paid this month: ``rate`` (A,) is each asset's monthly yield.
+
+        The prices are total-return (dividends reinvested), so a dividend d already sits in
+        V. Paying it out and reinvesting what is left after the tax leaves V - tax, with
+        d - tax of new cost basis. The tax uses (and builds) the loss shield like any gain.
+        """
+        d = self.V * rate
+        D = d.sum(axis=1)
+        if not (D > 0).any():
+            return
+        tax = self.tax_on(D)
+        self.dividend_tax = self.dividend_tax + tax
+        share = d * np.divide(tax, D, out=np.zeros_like(D), where=D > 0)[:, None]
+        self.V -= share
+        self.Bn += d - share
+        if self.real_tax:
+            self.Bc += (d - share) / cpi_now[:, None]
 
 
 def rebalance_rows(book: Book, rule: str, band: float, w: np.ndarray, j: int) -> np.ndarray | None:

@@ -589,6 +589,8 @@ function CostsCard({ res, ui, setUi }) {
   const drag = raw.final_nofee ? summarize(raw.final_nofee.map((v, i) => v - raw.final[i])) : null;
   const dragPct = raw.final_nofee ? summarize(raw.final_nofee.map((v, i) => (v > 0 ? (100 * (v - raw.final[i])) / v : 0))) : null;
   const taxPaid = summarize(raw.tax_paid);
+  const divTax = raw.dividend_tax ? summarize(raw.dividend_tax) : null;
+  const depFees = raw.deposit_fees ? summarize(raw.deposit_fees) : null;
   const deferred = summarize(modes.gross.final.map((v, i) => v - modes.net.final[i]));
   const swr = ui.swr ?? 4;
   const income = summarize(raw.final.map((v) => (Math.max(v, 0) * swr) / 1200));
@@ -596,9 +598,11 @@ function CostsCard({ res, ui, setUi }) {
     <div class="card-head"><div><h2>${res.lifecycle ? "עלויות" : "עלויות והכנסה בסוף"}</h2>
       <p class="muted">חציון על כל תאריכי ההתחלה${plan.real ? ", בכסף של היום" : ""}. דמי ניהול: כמה נגבו בפועל, וכמה פחות יש בסוף בגללם (כולל הריבית דריבית שהם מנעו).</p></div></div>
     <dl class="stats">
-      <div><dt>דמי ניהול שנגבו</dt><dd dir="ltr">${plan.annual_fee > 0 ? mo(fees?.median) : "אין"}</dd></div>
+      <div><dt>דמי ניהול שנגבו</dt><dd dir="ltr">${plan.annual_fee > 0 || plan.deposit_fee > 0 ? mo(fees?.median) : "אין"}</dd></div>
+      ${plan.deposit_fee > 0 ? html`<div><dt>מתוכם מההפקדות</dt><dd dir="ltr">${mo(depFees?.median)}</dd></div>` : null}
       <div><dt>הסכום הסופי שאבד לדמי ניהול</dt><dd dir="ltr">${drag ? html`${mo(drag.median)} <span class="muted">(${pct(dragPct.median, 1)})</span>` : "אין"}</dd></div>
-      <div><dt>מס ששולם בדרך <${Hint} text="מס על מכירות במהלך התוכנית: מעבר שלב או איזון שהם אירוע מס, ומשיכות חד-פעמיות." /></dt><dd dir="ltr">${mo(taxPaid?.median)}</dd></div>
+      <div><dt>מס ששולם בדרך <${Hint} text="מס על מכירות במהלך התוכנית (מעבר שלב או איזון שהם אירוע מס, ומשיכות) ומס על דיבידנדים בתיק רגיל." /></dt><dd dir="ltr">${mo(taxPaid?.median)}</dd></div>
+      ${divTax && divTax.max > 0 ? html`<div><dt>מתוכו על דיבידנדים <${Hint} text="בתיק רגיל כל דיבידנד ממוסה כשהוא מחולק, והשאר מושקע מחדש. בקרן השתלמות ובקופת גמל אין מס על דיבידנדים." /></dt><dd dir="ltr">${mo(divTax.median)}</dd></div>` : null}
       <div><dt>מס נדחה למכירה בסוף</dt><dd dir="ltr">${mo(deferred?.median)}</dd></div>
     </dl>
     ${res.lifecycle ? null : html`<div class="income">

@@ -1,3 +1,3 @@
 """Stock Plan App: historical back-testing of investment plans."""
 
-__version__ = "0.15.1"
+__version__ = "0.16.0"

@@ -7,11 +7,11 @@ import numpy as np
 
 from ..data.base import DataError, MarketData
 from .market import Market, available_range, prepare_market
-from .models import (DEPOSIT_EVERY, REBALANCE_RULES, DepositEvent, SOLVE_AMOUNT, SOLVE_WITHDRAWAL, SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_START,
+from .models import (ACCOUNTS, DEPOSIT_EVERY, REBALANCE_RULES, DepositEvent, SOLVE_AMOUNT, SOLVE_WITHDRAWAL, SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_START,
                      TRINITY_SOLVE_MODES, Holding, PlanRequest, SimulationResult, Stage,
                      WithdrawRequest, WithdrawResult, WithdrawStage)
 from .simulate import cohort_values, simulate
-from .solve import irr_annual, solve_monotone, trace_illinois
+from .solve import irr_annual, newton_bracketed, solve_monotone, trace_illinois
 from .withdraw import simulate_withdraw
 
 
@@ -31,6 +31,7 @@ def validate(req: PlanRequest) -> None:
             raise ValueError(f"בשלב {i} המשקלים חייבים להיות חיוביים")
         if any(h.leverage < 0 for h in s.holdings):
             raise ValueError(f"בשלב {i} המינוף לא יכול להיות שלילי")
+        _validate_dividends(s, i)
         if s.kind not in ("deposit", "withdraw"):
             raise ValueError(f"בשלב {i} סוג השלב לא מוכר ({s.kind})")
         if s.withdraws:
@@ -55,6 +56,11 @@ def validate(req: PlanRequest) -> None:
     if not -10 <= req.cash_rate <= 50:
         raise ValueError("הריבית על המזומן חייבת להיות בין -10% ל-50%")
     _validate_rebalance(req)
+    _validate_account(req)
+    if req.account_ceiling < 0:
+        raise ValueError("תקרת ההפקדה השנתית לא יכולה להיות שלילית")
+    if not 0 <= req.deposit_fee < 100:
+        raise ValueError("דמי הניהול מההפקדה חייבים להיות בין 0% ל-100%")
     for k, e in enumerate(req.events, 1):
         if e.kind not in ("deposit", "withdraw", "pause"):
             raise ValueError(f"אירוע {k}: סוג לא מוכר ({e.kind})")
@@ -75,6 +81,16 @@ def _validate_withdraw_stage(s, i: int) -> None:
     if s.rate_unit not in ("pct", "money") or s.basis not in ("initial", "current") \
             or s.guard_unit not in ("pct", "money") or s.one_time_unit not in ("pct", "money"):
         raise ValueError(f"בשלב {i} הגדרת המשיכה לא מוכרת")
+
+
+def _validate_dividends(s, i: int) -> None:
+    if any(not 0 <= h.dividend <= 50 for h in s.holdings):
+        raise ValueError(f"בשלב {i} תשואת הדיבידנד חייבת להיות בין 0% ל-50%")
+
+
+def _validate_account(req) -> None:
+    if req.account not in ACCOUNTS:
+        raise ValueError(f"סוג חשבון לא מוכר: {req.account}")
 
 
 def _validate_rebalance(req) -> None:
@@ -200,8 +216,8 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
     # The same deposits with no fees, and with the start amount invested at once.
     x_same = x_run if solved is not None else None
     final_nofee = final_nofee_gross = final_lump = final_lump_gross = None
-    if req.annual_fee > 0:
-        alt = simulate(replace(req, annual_fee=0.0), market, x=x_same)
+    if req.annual_fee > 0 or req.deposit_fee > 0:
+        alt = simulate(replace(req, annual_fee=0.0, deposit_fee=0.0), market, x=x_same)
         final_nofee, final_nofee_gross = alt.final_net * D[:, T], alt.final_gross * D[:, T]
     if req.lump_spread > 0 and (req.start_amount + req.stages[0].initial_deposit > 0 or req.solve_for == SOLVE_START):
         alt = simulate(replace(req, lump_spread=0), market, x=x_same)
@@ -244,7 +260,9 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
                             final_nofee=final_nofee, final_nofee_gross=final_nofee_gross,
                             final_lump=final_lump, final_lump_gross=final_lump_gross,
                             success=success, depleted_at=depleted_at, retire_value=retire_value,
-                            retire_month=req.retire_month, withdraw_monthly=withdraw_monthly)
+                            retire_month=req.retire_month, withdraw_monthly=withdraw_monthly,
+                            dividend_tax=(out.dividend_tax * D).sum(axis=1),
+                            deposit_fees=(out.deposit_fees * D).sum(axis=1))
 
 
 def first_reach(paths: np.ndarray, target: float) -> np.ndarray:
@@ -259,8 +277,9 @@ def _cohort_irr(req: PlanRequest, market: Market, out, D: np.ndarray) -> tuple[n
     """(R, years) annual return of each plan year's deposits held to the end, gross and net.
 
     Net takes the plan's tax rate off the cohort's own gain (value minus its deposits); the
-    loss shield and a real tax basis are left out, so it is the simple "tax on the profit"
-    the user expects, not the book's exact tax.
+    loss shield, a real tax basis and the dividend tax are left out, so it is the simple
+    "tax on the profit" the user expects, not the book's exact tax. In an Israeli savings
+    account the rate applies only to the part of the final value that is not tax-free.
     """
     T = req.total_months
     years = max(T // 12, 1)
@@ -274,24 +293,31 @@ def _cohort_irr(req: PlanRequest, market: Market, out, D: np.ndarray) -> tuple[n
         flows[:, y, :L] = deposits[:, 12 * y:12 * y + L]
         exps[y, :L] = T - (12 * y + np.arange(L))
     cost = flows.sum(axis=2)
-    v_net = value - req.tax_rate / 100 * np.maximum(value - cost, 0.0)
+    rate = req.tax_rate / 100 * (1 - out.exempt_share)[:, None]
+    v_net = value - rate * np.maximum(value - cost, 0.0)
     return _irr_cohorts(flows, exps, cost, value), _irr_cohorts(flows, exps, cost, v_net)
 
 
 def _irr_cohorts(flows: np.ndarray, exps: np.ndarray, cost: np.ndarray, value: np.ndarray) -> np.ndarray:
     """Annual IRR (percent) of 12 monthly flows (R, Y, 12) compounding ``exps`` (Y, 12) months
-    to ``value`` (R, Y). Bisection on the monthly rate, every cohort at once."""
-    lo = np.full(value.shape, -0.9999)
-    hi = np.full(value.shape, 1.0)
-    with np.errstate(over="ignore", invalid="ignore"):
-        for _ in range(70):
-            mid = 0.5 * (lo + hi)
-            fv = (flows * (1.0 + mid)[:, :, None] ** exps[None]).sum(axis=2)
-            above = fv > value
-            hi = np.where(above, mid, hi)
-            lo = np.where(above, lo, mid)
-    i = 0.5 * (lo + hi)
-    out = ((1 + i) ** 12 - 1) * 100
+    to ``value`` (R, Y). Bracketed Newton on the monthly rate, every cohort at once, from the
+    guess of a single deposit at the flows' mean time."""
+    R, Y = value.shape
+    f2, v1 = flows.reshape(R * Y, 12), value.reshape(-1)
+    c1 = cost.reshape(-1)
+    e2 = np.broadcast_to(exps[None], flows.shape).reshape(R * Y, 12)
+
+    def F(i, rows):
+        f, e = f2[rows], e2[rows]
+        g = np.exp(e * np.log1p(i)[:, None])
+        return (f * g).sum(axis=1) - v1[rows], (f * e * g).sum(axis=1) / (1 + i)
+
+    skip = (c1 <= 0) | (v1 <= 0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        mean_e = np.where(c1 > 0, (f2 * e2).sum(axis=1) / np.where(c1 > 0, c1, 1.0), 1.0)
+        guess = np.where(skip, 0.0, (np.maximum(v1, 1e-300) / np.where(c1 > 0, c1, 1.0)) ** (1 / np.maximum(mean_e, 1.0)) - 1)
+    i = newton_bracketed(F, np.full(R * Y, -0.9999), np.full(R * Y, 1.0), np.nan_to_num(guess), done=skip)
+    out = (((1 + i) ** 12 - 1) * 100).reshape(R, Y)
     out[value <= 0] = -100.0
     out[cost <= 0] = np.nan          # a year without deposits (a pause) has no return
     return out
@@ -313,8 +339,10 @@ def validate_withdraw(req: WithdrawRequest) -> None:
             raise ValueError(f"בשלב {i} אין נכסים")
         if any(h.weight < 0 for h in s.holdings) or sum(h.weight for h in s.holdings) <= 0:
             raise ValueError(f"בשלב {i} המשקלים חייבים להיות חיוביים")
+        _validate_dividends(s, i)
         _validate_withdraw_stage(s, i)
     _validate_rebalance(req)
+    _validate_account(req)
     if not 0 <= req.tax_rate < 100:
         raise ValueError("שיעור המס חייב להיות בין 0 ל-100")
     if req.solve_for == SOLVE_START and req.target_amount <= 0:

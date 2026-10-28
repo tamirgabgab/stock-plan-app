@@ -3,6 +3,7 @@ import { html } from "../vendor/preact-htm.module.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel } from "./format.js";
 import { DatePicker, DualRange, Field, Hint, IconButton, NumberField, NumberInput, Segmented, SymbolPicker, Toggle } from "./ui.js";
 import { WithdrawFields } from "./withdrawal.js";
+import { defaultDividend } from "./dividends.js";
 
 // Plan state -> API body: drop the UI ids and empty holdings (shared with the math tab).
 export function toPayload(plan) {
@@ -38,17 +39,17 @@ export function newStage(n) {
   return {
     id: newId(), name: `שלב ${n}`, months: 120, kind: "deposit", initial_deposit: 0, monthly_deposit: 1000,
     ...WITHDRAW_DEFAULTS,
-    holdings: [{ ticker: "^GSPC", name: "S&P 500", weight: 100, leverage: 1 }],
+    holdings: [{ ticker: "^GSPC", name: "S&P 500", weight: 100, leverage: 1, dividend: 0 }],
   };
 }
 
 // The withdrawal rule a stage gets when it is switched to "withdraw" (the 4% rule).
 const WITHDRAW_DEFAULTS = { rate: 4, amount: 5000, rate_unit: "pct", basis: "initial", floor: 0, ceiling: 0,
-                            guard_unit: "pct", one_time: 0, one_time_unit: "money" };
+                            guard_unit: "pct", one_time: 0, one_time_unit: "money", annuity: false };
 
 // Example lifecycle plan: 25 years of indexed deposits, then 30 years of the 4% rule.
 function retirementPreset(p) {
-  const holdings = [{ ticker: "^GSPC", name: "S&P 500", weight: 100, leverage: 1 }];
+  const holdings = [{ ticker: "^GSPC", name: "S&P 500", weight: 100, leverage: 1, dividend: 0 }];
   return {
     ...p, solve_for: "final", real: true, index_deposits: true, index_withdrawals: true, start_amount: 0,
     target_amount: 0, lump_spread: 0, events: [],
@@ -107,7 +108,7 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
     </details>
 
     <${ScheduleSection} plan=${plan} set=${set} setPlan=${setPlan} sym=${sym} totalMonths=${totalMonths} />
-    <${TaxSection} plan=${plan} set=${set} />
+    <${TaxSection} plan=${plan} set=${set} setPlan=${setPlan} deposits />
     <${RebalanceSection} plan=${plan} set=${set} />
     <${PeriodSection} plan=${plan} set=${set} range=${range} rangeError=${rangeError} totalMonths=${totalMonths} />
 
@@ -135,9 +136,49 @@ export function RawPreset({ plan, setPlan, indexKey }) {
   </div>`;
 }
 
-export function TaxSection({ plan, set }) {
+// Account types: a regular account, or an Israeli savings account (see models.ACCOUNTS).
+export const ACCOUNT_OPTIONS = [
+  { value: "regular", label: "תיק רגיל" }, { value: "hishtalmut", label: "קרן השתלמות" }, { value: "gemel", label: "גמל להשקעה" },
+];
+// Yearly deposit ceilings for 2026, in shekels: the tax-exempt part of the deposits.
+const CEILINGS = {
+  hishtalmut: [{ label: "שכיר", value: 18854 }, { label: "עצמאי", value: 20566 }],
+  gemel: [{ label: "2026", value: 83641 }],
+};
+export const isSavings = (plan) => (plan.account || "regular") !== "regular";
+
+function accountHint(account, deposits) {
+  if (account === "hishtalmut") {
+    return deposits
+      ? "קרן השתלמות: הרווח פטור ממס אחרי 6 שנים מתחילת התוכנית, על ההפקדות עד התקרה. משיכה לפני כן ממוסה כמו בתיק רגיל, והרווח על הפקדות מעל התקרה ממוסה תמיד. מעבר בין שלבים ואיזון פטורים ממס, ואין מס על דיבידנדים."
+      : "קרן השתלמות: בלשונית הזו הקרן נחשבת ותיקה מ-6 שנים וכולה בתוך התקרה, ולכן הרווח פטור ממס. מעבר בין שלבים ואיזון פטורים, ואין מס על דיבידנדים.";
+  }
+  if (account === "gemel") {
+    return "קופת גמל להשקעה: מעבר בין שלבים (מסלולים) ואיזון פטורים ממס, ואין מס על דיבידנדים. משיכה כסכום חד-פעמי משלמת מס רווחי הון על הרווח. משיכה כקצבה מגיל 60 פטורה: סמן 'משיכה כקצבה' בשלב המשיכה.";
+  }
+  return "תיק השקעות רגיל: מס רווחי הון בכל מכירה, ומס על כל דיבידנד שמחולק (לפי תשואת הדיבידנד של כל נכס בשלבים).";
+}
+
+export function TaxSection({ plan, set, setPlan, deposits = false }) {
+  const account = plan.account || "regular";
+  const savings = account !== "regular";
+  const setAccount = (v) => (deposits && setPlan
+    ? setPlan((p) => ({ ...p, account: v, account_ceiling: v === "regular" ? p.account_ceiling || 0 : CEILINGS[v][0].value }))
+    : set("account")(v));
+  const ceiling = plan.account_ceiling || 0;
   return html`<details open class="section">
-    <summary>מס ועמלות</summary>
+    <summary>חשבון, מס ועמלות</summary>
+    <${Segmented} label="סוג החשבון" options=${ACCOUNT_OPTIONS} value=${account} onChange=${setAccount}
+      hint=${accountHint(account, deposits)} />
+    ${savings && deposits ? html`<div class="grid-2">
+      <${NumberField} label="תקרת הפקדה שנתית" value=${ceiling} onChange=${set("account_ceiling")} step=${1000}
+        suffix=${CURRENCY_SYMBOL[plan.currency]} note=${ceiling ? `${money(ceiling, plan.currency)} בכל שנת תוכנית` : "0: בלי תקרה"}
+        hint="ההפקדות עד התקרה בכל שנת תוכנית (12 חודשים מתחילת התוכנית) פטורות. מה שמעליה נכנס לחשבון, אבל הרווח עליו ממוסה. התקרה ביחידות של ההפקדות: בכסף של היום במצב ריאלי. 0 מבטל את התקרה." />
+      <div class="field"><span class="field-label">תקרות 2026</span>
+        <div class="chips">${CEILINGS[account].map((c) => html`<button type="button" class=${"chip" + (ceiling === c.value ? " on" : "")}
+          onClick=${() => set("account_ceiling")(c.value)}>${c.label}: ₪${c.value.toLocaleString("he-IL")}</button>`)}</div></div>
+    </div>
+    ${plan.currency === "USD" ? html`<p class="callout warn">התקרות בשקלים, והתוכנית בדולרים: הזן את התקרה בדולרים.</p>` : null}` : null}
     <div class="grid-2">
       <${NumberField} label="מס רווחי הון" value=${plan.tax_rate} onChange=${set("tax_rate")} step=${0.5}
         max=${99} suffix="%" />
@@ -145,11 +186,15 @@ export function TaxSection({ plan, set }) {
         value=${plan.tax_basis} onChange=${set("tax_basis")}
         hint="ריאלי: רק הרווח שמעל האינפלציה ממוסה, ורווח אינפלציוני לא יוצר הפסד לקיזוז (כמו בחוק בישראל)." />
     </div>
-    <${Toggle} label="מעבר בין שלבים הוא אירוע מס" checked=${plan.tax_on_switch} onChange=${set("tax_on_switch")}
-      hint="כבוי: המעבר בין שלבים פטור ממס והמס נדחה לסוף (כמו בהחלפת מסלול). דלוק: מה שנמכר במעבר ממוסה מיד, והפסדים נצברים כמגן מס." />
-    <div class="grid-2">
+    <${Toggle} label="מעבר בין שלבים הוא אירוע מס" checked=${plan.tax_on_switch && !savings} onChange=${set("tax_on_switch")}
+      disabled=${savings}
+      hint=${savings ? "בקרן השתלמות ובקופת גמל להשקעה המעבר בין מסלולים פטור ממס, והמס נדחה למשיכה."
+        : "כבוי: המעבר בין שלבים פטור ממס והמס נדחה לסוף (כמו בהחלפת מסלול). דלוק: מה שנמכר במעבר ממוסה מיד, והפסדים נצברים כמגן מס."} />
+    <div class=${deposits ? "grid-3" : "grid-2"}>
       <${NumberField} label="דמי ניהול שנתיים" value=${plan.annual_fee} onChange=${set("annual_fee")} step=${0.05}
-        max=${20} suffix="%" />
+        max=${20} suffix="%" hint="אחוז מהצבירה בכל שנה, נגבה חודשית." />
+      ${deposits ? html`<${NumberField} label="דמי ניהול מההפקדה" value=${plan.deposit_fee || 0} onChange=${set("deposit_fee")}
+        step=${0.1} max=${10} suffix="%" hint="אחוז מכל הפקדה שנלקח לפני שהיא מושקעת, כמו בקרנות ובקופות בישראל. נכלל בעלויות." />` : null}
       <${NumberField} label="עלות מינוף שנתית" value=${plan.leverage_cost} onChange=${set("leverage_cost")}
         step=${0.25} max=${30} suffix="%" hint="ריבית שנתית על החלק הממונף (מינוף פחות 1), כמו בקרנות ממונפות." />
     </div>
@@ -237,7 +282,7 @@ export function RebalanceSection({ plan, set }) {
   return html`<details open class="section">
     <summary>איזון מחדש</summary>
     <${Segmented} label="החזרה למשקלי השלב" options=${REBALANCE_OPTIONS} value=${rule} onChange=${set("rebalance")}
-      hint=${`בלי: כל הפקדה נשארת כמו שנקנתה, והמשקלים זזים עם השוק. חודשי, רבעוני או שנתי: מתחילת כל שלב, התיק חוזר למשקלים בכל תקופה. לפי סף: רק כשמשקל של נכס מתרחק מהיעד ביותר מהסף. ${plan.tax_on_switch ? "המעבר בין שלבים מוגדר כאירוע מס, ולכן גם האיזון ממוסה (מה שנמכר משלם מס על הרווח)." : "המעבר בין שלבים מוגדר כפטור ממס (כמו בקופת גמל להשקעה), ולכן גם האיזון פטור והמס נדחה לסוף."}`} />
+      hint=${`בלי: כל הפקדה נשארת כמו שנקנתה, והמשקלים זזים עם השוק. חודשי, רבעוני או שנתי: מתחילת כל שלב, התיק חוזר למשקלים בכל תקופה. לפי סף: רק כשמשקל של נכס מתרחק מהיעד ביותר מהסף. ${isSavings(plan) ? "בקרן השתלמות ובקופת גמל האיזון פטור ממס, והמס נדחה למשיכה." : plan.tax_on_switch ? "המעבר בין שלבים מוגדר כאירוע מס, ולכן גם האיזון ממוסה (מה שנמכר משלם מס על הרווח)." : "המעבר בין שלבים מוגדר כפטור ממס (כמו בקופת גמל להשקעה), ולכן גם האיזון פטור והמס נדחה לסוף."}`} />
     ${rule === "band" ? html`<${NumberField} label="סף (נקודות אחוז)" value=${plan.rebalance_band ?? 5} onChange=${set("rebalance_band")}
       step=${1} max=${50} suffix="%" hint="למשל 5: בתיק של 60/40, האיזון קורה כשמשקל המניות יורד מתחת ל-55% או עולה מעל 65%." />` : null}
   </details>`;
@@ -302,15 +347,16 @@ export function StageHead({ stage, index, count, set, onMove, onRemove }) {
   </div>`;
 }
 
-export function HoldingsTable({ stage, onChange }) {
+// ``dividends``: show each holding's dividend yield (it is taxed only in a regular account).
+export function HoldingsTable({ stage, onChange, dividends = false }) {
   const setHolding = (j, key, value) => onChange((s) => ({
     ...s, holdings: s.holdings.map((h, k) => (k === j ? { ...h, [key]: value } : h)),
   }));
-  const addHolding = () => onChange((s) => ({ ...s, holdings: [...s.holdings, { ticker: "", weight: 0, leverage: 1 }] }));
+  const addHolding = () => onChange((s) => ({ ...s, holdings: [...s.holdings, { ticker: "", weight: 0, leverage: 1, dividend: 0 }] }));
   const removeHolding = (j) => onChange((s) => ({ ...s, holdings: s.holdings.filter((_, k) => k !== j) }));
   const totalWeight = stage.holdings.reduce((a, h) => a + (Number(h.weight) || 0), 0);
   const setSymbol = (j, { ticker, name }) => onChange((s) => ({
-    ...s, holdings: s.holdings.map((h, k) => (k === j ? { ...h, ticker, name } : h)),
+    ...s, holdings: s.holdings.map((h, k) => (k === j ? { ...h, ticker, name, dividend: ticker === h.ticker ? h.dividend : defaultDividend(ticker) } : h)),
   }));
   return html`<div class="holdings">
       <div class="holdings-title">נכסים <${Hint} text="הקלד שם (למשל S&P 500, אפל, נאסדק) ובחר מהרשימה, או הקלד טיקר של Yahoo Finance ישירות; השדה השני מתמלא לבד. המחירים כוללים דיבידנדים, חוץ ממדדים שמתחילים ב-^ (למשל ^GSPC). למדד S&P 500 עם דיבידנדים השתמש ב-^SP500TR או SPY." /></div>
@@ -325,6 +371,8 @@ export function HoldingsTable({ stage, onChange }) {
             <${NumberInput} value=${h.weight} onChange=${(v) => setHolding(j, "weight", v)} step=${5} max=${100} suffix="%" /></label>
           <label class="mini-field"><span>מינוף</span>
             <${NumberInput} value=${h.leverage} onChange=${(v) => setHolding(j, "leverage", v)} step=${0.5} max=${10} suffix="×" /></label>
+          ${dividends ? html`<label class="mini-field" title="תשואת דיבידנד שנתית. בתיק רגיל כל דיבידנד ממוסה במס רווחי הון, והשאר מושקע מחדש. ברירת המחדל היא התשואה האחרונה בקירוב; במדדים שמתחילים ב-^ הדיבידנד לא במחיר, ולכן 0."><span>דיבידנד</span>
+            <${NumberInput} value=${h.dividend ?? 0} onChange=${(v) => setHolding(j, "dividend", v)} step=${0.1} max=${50} suffix="%" /></label>` : null}
         </div>
       </div>`)}
     </div>
@@ -354,9 +402,9 @@ function StageCard({ stage, index, count, plan, sym, currency, solveMonthly, eve
         note=${monthsLabel(stage.months || 0)} />
       <${WithdrawFields} stage=${stage} set=${set} onChange=${onChange} sym=${sym} currency=${currency}
         indexed=${plan.index_withdrawals !== false} solveAmount=${plan.solve_for === "withdrawal"} base="היתרה בפרישה"
-        moneyWhen=${plan.real ? " בכסף של היום" : " במחירי תחילת הפרישה"}
+        moneyWhen=${plan.real ? " בכסף של היום" : " במחירי תחילת הפרישה"} annuity=${plan.account === "gemel"}
         baseNote=${(st) => `${st.rate}% לשנה מהיתרה בתחילת שלב המשיכה הראשון${plan.index_withdrawals !== false ? ", צמוד" : ""}`} />
-      <${HoldingsTable} stage=${stage} onChange=${onChange} />
+      <${HoldingsTable} stage=${stage} onChange=${onChange} dividends=${!isSavings(plan)} />
     </div>`;
   }
   return html`<div class="stage-card">
@@ -369,6 +417,6 @@ function StageCard({ stage, index, count, plan, sym, currency, solveMonthly, eve
       <${NumberField} label=${depositLabel(every)} value=${stage.monthly_deposit} onChange=${set("monthly_deposit")}
         step=${100} suffix=${sym} disabled=${solveMonthly} note=${solveMonthly ? "מחושב" : null} />
     </div>
-    <${HoldingsTable} stage=${stage} onChange=${onChange} />
+    <${HoldingsTable} stage=${stage} onChange=${onChange} dividends=${!isSavings(plan)} />
   </div>`;
 }

@@ -3,7 +3,7 @@
 import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
 import { heatmapFigure, observeResize, PLOT_CONFIG } from "./charts.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
-import { HoldingsTable, PeriodSection, RawPreset, RebalanceSection, StageHead, TaxSection, TickerList, newId } from "./inputs.js";
+import { HoldingsTable, isSavings, PeriodSection, RawPreset, RebalanceSection, StageHead, TaxSection, TickerList, newId } from "./inputs.js";
 import { CrossSection, DetailModal, FanChart, OutcomeByStart, RealizationsTable, SOLVED_SOURCE, Tile, VALUE_SOURCE,
          dateColumns, solvedLabel, useActive } from "./results.js";
 import { columnStats, decodeMatrix, summarize } from "./stats.js";
@@ -21,7 +21,7 @@ export function newWithdrawStage(n) {
   return {
     id: newId(), name: `שלב ${n}`, months: 360, rate: 4, amount: 4000, rate_unit: "pct", basis: "initial",
     floor: 0, ceiling: 0, guard_unit: "pct", one_time: 0, one_time_unit: "money",
-    holdings: [{ ticker: "^GSPC", name: "S&P 500", weight: 100, leverage: 1 }],
+    annuity: false, holdings: [{ ticker: "^GSPC", name: "S&P 500", weight: 100, leverage: 1, dividend: 0 }],
   };
 }
 
@@ -29,7 +29,7 @@ export const DEFAULT_TPLAN = {
   solve_for: "final", start_amount: 1_000_000, target_amount: 0, currency: "ILS", real: true,
   index_withdrawals: true, tax_rate: 25, tax_basis: "nominal", tax_on_switch: false, annual_fee: 0,
   leverage_cost: 0, min_start: null, max_start: null, step: "M", rebalance: "none", rebalance_band: 5,
-  stages: [newWithdrawStage(1)],
+  account: "regular", stages: [newWithdrawStage(1)],
 };
 
 export const DEFAULT_HEAT = { rate_from: 2, rate_to: 8, rate_step: 0.25, years_from: 10, years_to: 40, years_step: 5, kind: "survival" };
@@ -119,8 +119,9 @@ function WithdrawStageCard({ stage, index, count, sym, plan, onChange, onMove, o
       note=${monthsLabel(stage.months || 0)} />
     <${WithdrawFields} stage=${stage} set=${set} onChange=${onChange} sym=${sym} currency=${plan.currency}
       indexed=${plan.index_withdrawals} solveRate=${plan.solve_for === "rate"} solveAmount=${plan.solve_for === "amount"}
+      annuity=${plan.account === "gemel"}
       baseNote=${(st) => `${money((st.rate / 1200) * plan.start_amount, plan.currency)} לחודש${indexed}`} />
-    <${HoldingsTable} stage=${stage} onChange=${onChange} />
+    <${HoldingsTable} stage=${stage} onChange=${onChange} dividends=${!isSavings(plan)} />
   </div>`;
 }
 

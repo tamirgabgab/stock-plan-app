@@ -61,7 +61,14 @@ the UI — it is not real market history).
 - **Currency** – USD or ILS. Assets are assumed to trade in USD; ILS converts every
   deposit and valuation at that day's USD/ILS rate.
 - **Taxes** – capital-gains rate on nominal or real gains, tax-deferred or taxable
-  stage switches, loss carry-forward (tax shield). Management fee and leverage cost.
+  stage switches, loss carry-forward (tax shield). Management fee (yearly, and a percent
+  of every deposit) and leverage cost.
+- **Israeli account types** – a regular account taxes every dividend (each holding has a
+  dividend yield, filled in for the built-in symbols) and every sale. A *keren hishtalmut*
+  is tax-free from six years after it opens, a *kupat gemel lehashkaa* is tax-free when
+  withdrawn as an annuity (a switch on the withdrawal stage); in both the stage switches
+  and rebalancing are tax-free, dividends are not taxed, and the gain on deposits above
+  the yearly ceiling (the 2026 ceilings are one click away) is always taxed. Both tabs.
 - **Statistics** – median (bold), mean (dashed) and a p1–p2 percentile band over time;
   optional *representative paths* (the real realizations that ended at p1, the median
   and p2) and a percentile-rank-over-time chart for the hovered or pinned path;
@@ -206,8 +213,11 @@ python -m pytest
 
 CI (`.github/workflows/ci.yml`, GitHub Actions) runs on every push to `main` and every pull
 request, on demo data: the test suite on Python 3.11 and 3.13, a syntax check of every
-JavaScript file, and a smoke test that starts the app, loads the page and its files and runs
-an apartment-tab simulation.
+JavaScript file, a smoke test that starts the app, loads the page and its files and runs
+an apartment-tab simulation, and a browser test (`tests/test_browser.py`, Playwright with
+headless Chromium) that opens every tab, switches the account types and checks the phone
+layout, failing on any JavaScript error. Locally it runs when Playwright is installed
+(`pip install playwright && python -m playwright install chromium`) and is skipped otherwise.
 
 The previous Streamlit version is kept in `legacy/` for reference (`streamlit run
 legacy/main.py`, requirements in `legacy/requirements.txt`); it is no longer maintained.

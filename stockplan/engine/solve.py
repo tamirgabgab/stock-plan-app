@@ -70,37 +70,70 @@ def solve_monotone(F: Callable[[np.ndarray, np.ndarray], np.ndarray], target: fl
     return x
 
 
+def newton_bracketed(F: Callable[[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]],
+                     lo: np.ndarray, hi: np.ndarray, x0: np.ndarray, done: np.ndarray | None = None,
+                     tol: float = 1e-13, max_iter: int = 80) -> np.ndarray:
+    """Root of increasing functions on the brackets [lo, hi], every row at once.
+
+    ``F(x, rows)`` returns (f, f') for those rows. Newton steps, with a bisection step
+    whenever Newton would leave the bracket or is not at least halving the step (far from the
+    root an exponential crawls), as in ``rtsafe``: it cannot diverge or stall. Rows marked ``done`` keep ``x0``. A row with no root inside the bracket
+    ends at its edge, as plain bisection would.
+    """
+    lo, hi = lo.astype(float), hi.astype(float)
+    x = np.clip(x0.astype(float), lo, hi)
+    active = np.arange(len(x)) if done is None else np.where(~done)[0]
+    dx_old = hi - lo
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        for _ in range(max_iter):
+            if len(active) == 0:
+                break
+            xa = x[active]
+            f, df = F(xa, active)
+            above = f > 0
+            hi[active] = np.where(above, xa, hi[active])
+            lo[active] = np.where(above, lo[active], xa)
+            step = xa - f / df
+            bad = (~np.isfinite(step) | (step <= lo[active]) | (step >= hi[active])
+                   | (np.abs(step - xa) > 0.5 * np.abs(dx_old[active])))
+            xn = np.where(f == 0, xa, np.where(bad, 0.5 * (lo[active] + hi[active]), step))
+            x[active] = xn
+            dx_old[active] = xn - xa
+            moving = (np.abs(xn - xa) > tol) & (hi[active] - lo[active] > tol)
+            active = active[moving & (f != 0)]
+    return x
+
+
 def irr_annual(deposits: np.ndarray, final: np.ndarray) -> np.ndarray:
     """Annual money-weighted return (percent) of monthly deposits ending at ``final``.
 
     ``deposits`` has shape (R, T+1) with the amount put in at each month (in the same units
     as ``final``); a negative amount is money taken out (a withdrawal). With deposits first
-    and withdrawals later the flows change sign once, so the root is unique and the
-    bisection below finds it. Solved by bisection on the monthly rate, using Horner's rule so each
-    evaluation is T vector operations.
+    and withdrawals later the flows change sign once, so the root is unique. Solved by
+    bracketed Newton on the monthly rate (-99.99% .. +100%), using Horner's rule so each
+    evaluation (with its derivative) is T vector operations.
     """
     R, T1 = deposits.shape
-    lo = np.full(R, -0.9999)
-    hi = np.full(R, 1.0)          # monthly rates: -99.99% .. +100%
 
-    def fv(i):
-        acc = np.zeros(R)
+    def F(i, rows):
+        d = deposits[rows]
+        acc = np.zeros(len(rows))
+        dacc = np.zeros(len(rows))
         g = 1.0 + i
         for m in range(T1 - 1):
-            acc = (acc + deposits[:, m]) * g
-        return acc + deposits[:, T1 - 1]
+            acc = acc + d[:, m]
+            dacc = dacc * g + acc
+            acc = acc * g
+        return acc + d[:, T1 - 1] - final[rows], dacc
 
-    for _ in range(70):
-        mid = 0.5 * (lo + hi)
-        above = fv(mid) > final
-        hi = np.where(above, mid, hi)
-        lo = np.where(above, lo, mid)
-    i = 0.5 * (lo + hi)
+    got_back = (deposits < 0).any(axis=1)
+    put_in = np.where(deposits > 0, deposits, 0.0).sum(axis=1)
+    lost = (final <= 0) & ~got_back
+    i = newton_bracketed(F, np.full(R, -0.9999), np.full(R, 1.0), np.full(R, 0.005), done=lost | (put_in <= 0))
     out = ((1 + i) ** 12 - 1) * 100
     # Nothing came back (no withdrawals, nothing left): everything was lost. Nothing went in: no return.
-    got_back = (deposits < 0).any(axis=1)
-    out[(final <= 0) & ~got_back] = -100.0
-    out[np.where(deposits > 0, deposits, 0.0).sum(axis=1) <= 0] = np.nan
+    out[lost] = -100.0
+    out[put_in <= 0] = np.nan
     return out
 
 

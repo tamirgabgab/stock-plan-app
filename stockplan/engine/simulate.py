@@ -21,6 +21,12 @@ Withdrawal stages make a lifecycle plan: no periodic deposits, and every month t
 withdrawal rule (the Trinity tab's, ``portfolio.withdrawal_want``) sells a pro-rata slice net
 of tax. Its "initial" basis is the net balance when the first withdrawal stage starts.
 
+The account type (``models.ACCOUNTS``): a regular account pays tax on the dividends every
+month (each holding's yield, reinvested net) and may tax the stage switches; an Israeli
+savings account (קרן השתלמות, קופת גמל להשקעה) moves tax-free, pays no dividend tax, and
+keeps the deposits up to the yearly ceiling (per plan year) in the tax-exempt part of a
+split ``Book``. A deposit fee is a percent of every deposit, taken before it is bought.
+
 Real mode: amounts entered by the user (deposits, events, target) are in today's money, i.e.
 the CPI of the last data month; see ``deposit_scale``.
 
@@ -36,7 +42,7 @@ import numpy as np
 
 from .market import Market
 from .portfolio import Book, paid_short, rebalance_rows, withdrawal_want
-from .models import PlanRequest, SOLVE_MONTHLY, SOLVE_START, SOLVE_WITHDRAWAL
+from .models import PlanRequest, SOLVE_MONTHLY, SOLVE_START, SOLVE_WITHDRAWAL, exempt_now
 
 
 @dataclass
@@ -58,9 +64,12 @@ class SimOutput:
     realloc: Optional[np.ndarray] = None      # (R, T+1) bool: the portfolio was moved to the weights at m
     fees: Optional[np.ndarray] = None         # (R, T+1) nominal fees charged during the month ending at m
     taxes: Optional[np.ndarray] = None        # (R, T+1) nominal tax paid at month m
+    dividend_tax: Optional[np.ndarray] = None # (R, T+1) nominal tax on dividends at month m (part of ``taxes``)
+    deposit_fees: Optional[np.ndarray] = None # (R, T+1) nominal deposit fees at month m (part of ``fees``)
+    exempt_share: Optional[np.ndarray] = None # (R,) part of the final value that is tax-free at the end
 
 
-def _stage_weights(req: PlanRequest, market: Market) -> np.ndarray:
+def _stage_weights(req, market: Market) -> np.ndarray:
     """(n_stages, A) normalized weights over the union of assets."""
     W = np.zeros((len(req.stages), len(market.asset_keys)))
     for s, stage in enumerate(req.stages):
@@ -71,6 +80,24 @@ def _stage_weights(req: PlanRequest, market: Market) -> np.ndarray:
             raise ValueError(f"סכום המשקלים בשלב {s + 1} הוא אפס")
         W[s] /= total
     return W
+
+
+def stage_dividends(req, market: Market) -> Optional[np.ndarray]:
+    """(n_stages, A) monthly dividend yield of every asset (a fraction), or None when no
+    dividend is taxed: an Israeli savings account, a zero tax rate or no yields at all.
+    An asset listed twice in a stage takes the weighted mean of its yields."""
+    if req.account != "regular" or req.tax_rate <= 0:
+        return None
+    Y = np.zeros((len(req.stages), len(market.asset_keys)))
+    W = np.zeros_like(Y)
+    for s, stage in enumerate(req.stages):
+        for h in stage.holdings:
+            a = market.asset_keys.index(h.key)
+            Y[s, a] += h.dividend * h.weight
+            W[s, a] += h.weight
+    if not (Y > 0).any():
+        return None
+    return np.divide(Y, W, out=np.zeros_like(Y), where=W > 0) / 1200
 
 
 def stage_of_month(req: PlanRequest) -> np.ndarray:
@@ -120,16 +147,23 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
     rate = 0.0 if unit_growth else req.tax_rate / 100
     real_tax = req.tax_basis == "real" and market.cpi_daily is not None
     fee = (1 - req.annual_fee / 100) ** (1 / 12)
-    taxable_moves = req.tax_on_switch and not unit_growth
+    regular = req.account == "regular"
+    taxable_moves = req.tax_on_switch and not unit_growth and regular
+    divs = None if unit_growth else stage_dividends(req, market)
+    deposit_fee = 0.0 if unit_growth else req.deposit_fee / 100
+    ceiling = req.account_ceiling if not regular else 0.0
 
     cpi = market.cpi_daily[idx] if market.cpi_daily is not None else None
     ones = np.ones(R)
     book = Book(R, A, rate, real_tax)
     book.journal = journal
+    book.split = not regular and not unit_growth
+    used = np.zeros(R)                # deposits this plan year, nominal (against the ceiling)
 
     def rec():
         return np.zeros((R, T + 1)) if record else None
-    paths, gross, deposits, withdrawn, buys, spread_buys, fees, taxes, stage_paid = (rec() for _ in range(9))
+    paths, gross, deposits, withdrawn, buys, spread_buys, fees, taxes, stage_paid, div_tax, dep_fees = (
+        rec() for _ in range(11))
     realloc = np.zeros((R, T + 1), dtype=bool) if record else None
     unpaid, events_unpaid = np.zeros(R), np.zeros(R)
     shortfall_at = np.full(R, -1, dtype=np.int64)
@@ -172,6 +206,23 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
         cash = cash - from_cash
         return from_cash + book.withdraw_net(want - from_cash, cpi_m)
 
+    def deposit(amount, w, cpi_m, sc):
+        """Invest ``amount`` (R,) nominal, less the deposit fee. In a savings account with a
+        ceiling, only the part within this plan year's room is tax-exempt. Returns what was bought."""
+        nonlocal used
+        net = amount * (1 - deposit_fee)
+        if deposit_fee:
+            book.fees = book.fees + (amount - net)
+            if record:
+                dep_fees[:, m] += amount - net
+        exempt = None
+        if book.split and ceiling > 0:
+            room = np.maximum(ceiling * sc - used, 0.0)
+            exempt = net * np.divide(np.minimum(amount, room), amount, out=np.zeros_like(amount), where=amount > 0)
+            used = used + amount
+        book.buy(net, w, cpi_m, exempt=exempt)
+        return net
+
     # Resolve deposits once (they may be overridden per realization by ``x``).
     stage_starts = np.cumsum([0] + [s.months for s in req.stages])
     if unit_growth:
@@ -211,10 +262,14 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
             lump = initial + start_amount
             initial = 0.0 * ones if spread else lump
 
+        annuity = stage.withdraws and stage.annuity
         for j in range(stage.months):
             m = m0 + j
             cpi_m = cpi[:, m] if cpi is not None else None
             sc = deposit_scale(m)
+            book.exempt = exempt_now(req.account, m, annuity)
+            if m % 12 == 0:
+                used = np.zeros(R)
 
             moved = rebalance_rows(book, req.rebalance, req.rebalance_band, w, j)
             if moved is not None:
@@ -226,7 +281,9 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
             if ev_out[m] > 0:
                 book.m, book.ctx = m, "event"
                 want = ev_out[m] * sc
+                book.exempt = exempt_now(req.account, m, False)        # a lump sum, not an annuity
                 got = withdraw(want, cpi_m)
+                book.exempt = exempt_now(req.account, m, annuity)
                 unpaid += want - got
                 events_unpaid += want - got
                 if record:
@@ -234,7 +291,7 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
 
             amount = (monthly * factor[m] + ev_in[m] + (initial if j == 0 else 0.0)) * sc
             book.m, book.ctx = m, "deposit"
-            book.buy(amount, w, cpi_m)
+            bought = deposit(amount, w, cpi_m, sc)
             put_in = amount
             if spread and m < spread:
                 if m == 0:
@@ -243,9 +300,9 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
                 part = cash / (spread - m)
                 cash = cash - part
                 book.ctx = "spread"
-                book.buy(part, w, cpi_m)
+                part_bought = deposit(part, w, cpi_m, sc)
                 if record:
-                    spread_buys[:, m] = part
+                    spread_buys[:, m] = part_bought
 
             if stage.withdraws and not unit_growth:
                 sw = withdrawal_scale(m)
@@ -262,31 +319,42 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
                     stage_paid[:, m] = got
             if record:
                 deposits[:, m] = put_in
-                buys[:, m] = amount
+                buys[:, m] = bought
                 taxes[:, m] = book.tax_paid
+                div_tax[:, m] = book.dividend_tax
                 gross[:, m] = book.total + cash
                 paths[:, m] = (book.liquidation_value(cpi_m) if not unit_growth else book.total) + cash
                 fees[:, m] = book.fees
 
             book.grow(month_growth(market, idx, m), fee)
+            if divs is not None:
+                book.pay_dividends(divs[s], cpi[:, m + 1] if cpi is not None else None)
             cash = cash * cash_growth
 
     cpi_T = cpi[:, T] if cpi is not None else None
+    last = req.stages[-1]
+    book.exempt = exempt_now(req.account, T, last.withdraws and last.annuity)
     final_gross = book.total + cash
     final = final_gross if unit_growth else book.liquidation_value(cpi_T) + cash
+    exempt_share = np.zeros(R)
+    if book.split and book.exempt:
+        exempt_share = np.divide(book.Ve.sum(axis=1), final_gross, out=np.zeros(R), where=final_gross > 0)
     if record:
         paths[:, T] = final
         gross[:, T] = final_gross
         taxes[:, T] = book.tax_paid
+        div_tax[:, T] = book.dividend_tax
         fees[:, T] = book.fees
         # Running totals -> per month amounts.
         taxes = np.diff(taxes, axis=1, prepend=0.0)
+        div_tax = np.diff(div_tax, axis=1, prepend=0.0)
         fees = np.diff(fees, axis=1, prepend=0.0)
     return SimOutput(final_net=final, paths_net=paths, deposits=deposits, cpi=cpi,
                      final_gross=final_gross, paths_gross=gross, withdrawn=withdrawn, unpaid=unpaid,
                      events_unpaid=events_unpaid, shortfall_at=shortfall_at, retire_value=retire_value,
                      stage_withdrawn=stage_paid,
-                     buys=buys, spread_buys=spread_buys, realloc=realloc, fees=fees, taxes=taxes)
+                     buys=buys, spread_buys=spread_buys, realloc=realloc, fees=fees, taxes=taxes,
+                     dividend_tax=div_tax, deposit_fees=dep_fees, exempt_share=exempt_share)
 
 
 def lot_growth(req: PlanRequest, market: Market, realloc: np.ndarray) -> np.ndarray:

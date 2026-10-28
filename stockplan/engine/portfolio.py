@@ -169,6 +169,14 @@ def rebalance_rows(book: Book, rule: str, band: float, w: np.ndarray, j: int) ->
     return np.ones(book.V.shape[0], dtype=bool) if j % period == 0 else None
 
 
+SHORT_TOLERANCE = 1e-4   # a withdrawal paid within 0.01% counts as paid (solver rounding)
+
+
+def paid_short(got: np.ndarray, want: np.ndarray) -> np.ndarray:
+    """(R,) bool: the withdrawal ``want`` was not paid in full (more than 0.01% missing)."""
+    return want - got > SHORT_TOLERANCE * want + 1e-9
+
+
 def withdrawal_want(stage, j: int, total: np.ndarray, start: np.ndarray, sc: np.ndarray,
                     rate: np.ndarray | None = None, amount: np.ndarray | None = None) -> np.ndarray:
     """(R,) net cash a withdrawal stage asks for at its month ``j``, nominal.

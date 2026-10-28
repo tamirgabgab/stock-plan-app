@@ -6,10 +6,11 @@ import { money } from "./format.js";
 import { NumberField, Segmented } from "./ui.js";
 
 // ``solveRate``/``solveAmount``: the rate or the monthly amount is the unknown (locked).
+// ``moneyWhen``: which money a fixed amount is in, e.g. " במחירי תחילת הפרישה".
 // ``base``: what "initial" means, e.g. "הסכום ההתחלתי"; ``baseNote(stage)``: the note under
 // the rate when it is a percent of that basis.
 export function WithdrawFields({ stage, set, onChange, sym, currency, indexed, solveRate = false, solveAmount = false,
-                                 base = "הסכום ההתחלתי", baseNote }) {
+                                 base = "הסכום ההתחלתי", baseNote, moneyWhen = "" }) {
   const locked = solveRate || solveAmount;
   const pctUnit = solveRate || (!solveAmount && stage.rate_unit === "pct");
   const unitOptions = [{ value: "pct", label: "% לשנה" }, { value: "money", label: `${sym} לחודש` }];
@@ -25,7 +26,7 @@ export function WithdrawFields({ stage, set, onChange, sym, currency, indexed, s
             suffix="%" disabled=${solveRate}
             note=${solveRate ? "מחושב" : stage.basis === "initial" ? (baseNote ? baseNote(stage) : null) : "מהיתרה בכל חודש"} />`
         : html`<${NumberField} label="משיכה חודשית" value=${stage.amount} onChange=${set("amount")} step=${500}
-            suffix=${sym} disabled=${solveAmount} note=${solveAmount ? `מחושב (אותו סכום בכל השלבים${idx})` : `${money(stage.amount, currency)} לחודש${idx}`} />`}
+            suffix=${sym} disabled=${solveAmount} note=${solveAmount ? `מחושב (אותו סכום בכל השלבים${idx})` : `${money(stage.amount, currency)} לחודש${moneyWhen}${idx}`} />`}
     </div>
     ${pctUnit ? html`<${Segmented} label="האחוז נמדד מ" options=${[{ value: "initial", label: base }, { value: "current", label: "היתרה הנוכחית" }]}
         value=${stage.basis} onChange=${set("basis")}

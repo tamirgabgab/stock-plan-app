@@ -115,6 +115,49 @@ def _initial_guess(req: PlanRequest) -> float:
     return max(req.target_amount - req.start_amount * growth, 0.1 * req.target_amount) / annuity
 
 
+def objective(req, market: Market):
+    """The solvers' objective, shared by the results and the math tab's trace: the final net
+    value minus the withdrawals that could not be paid, in display units, as a function of
+    the unknown ``x`` on the rows ``rows``. Strictly monotone in the unknown even after the
+    account runs dry (where the final value alone is flat)."""
+    sim = simulate_withdraw if isinstance(req, WithdrawRequest) else simulate
+    T = req.total_months
+    cpi_all = market.cpi_daily[market.day_idx] if market.cpi_daily is not None else None
+
+    def score(x, rows):
+        out = sim(req, market, x=x, rows=rows)
+        v = out.final_net - out.unpaid
+        if req.real and cpi_all is not None:
+            v = v * market.cpi_base / cpi_all[rows, T]
+        return v
+    return score
+
+
+def _decreasing(req) -> bool:
+    """The objective falls as the unknown rises (it is a withdrawal)."""
+    trinity = isinstance(req, WithdrawRequest)
+    return req.solve_for == SOLVE_WITHDRAWAL or (trinity and req.solve_for in (SOLVE_RATE, SOLVE_AMOUNT))
+
+
+def _guess(req) -> float:
+    return _trinity_guess(req) if isinstance(req, WithdrawRequest) else _initial_guess(req)
+
+
+def solve_unknown(req, market: Market, score) -> np.ndarray:
+    """The unknown for every realization (NaN where there is none). A withdrawal is solved on
+    the negated objective; a row that misses the target even with no withdrawal at all has
+    no solution (the solver alone would report 0)."""
+    R, target = len(market.start_dates), req.target_amount
+    if not _decreasing(req):
+        return solve_monotone(score, target, R, _guess(req))
+    solved = solve_monotone(lambda x, rows: -score(x, rows), -target, R, _guess(req))
+    zero = np.where(solved == 0)[0]
+    if len(zero):
+        miss = score(np.zeros(len(zero)), zero) < target - max(abs(target) * 1e-7, 1e-4)
+        solved[zero[miss]] = np.nan
+    return solved
+
+
 def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
     validate(req)
     market = prepare_market(req, md)
@@ -124,27 +167,7 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
 
     solved = None
     if req.solve_for != SOLVE_FINAL:
-        cpi_all = market.cpi_daily[market.day_idx] if market.cpi_daily is not None else None
-
-        def score(x, rows):
-            # Final value minus the withdrawals that could not be paid: strictly monotone in the
-            # unknown even after the account runs dry (where the final value alone is flat).
-            out = simulate(req, market, x=x, rows=rows)
-            v = out.final_net - out.unpaid
-            if req.real and cpi_all is not None:
-                v = v * market.cpi_base / cpi_all[rows, T]
-            return v
-
-        if req.solve_for == SOLVE_WITHDRAWAL:
-            # The score falls as the withdrawal rises: solve on the negated function. A row
-            # that misses the target even with no withdrawal at all has no solution.
-            solved = solve_monotone(lambda x, rows: -score(x, rows), -req.target_amount, R, _initial_guess(req))
-            zero = np.where(solved == 0)[0]
-            if len(zero):
-                miss = score(np.zeros(len(zero)), zero) < req.target_amount - max(abs(req.target_amount) * 1e-7, 1e-4)
-                solved[zero[miss]] = np.nan
-        else:
-            solved = solve_monotone(score, req.target_amount, R, _initial_guess(req))
+        solved = solve_unknown(req, market, objective(req, market))
         n_bad = int(np.isnan(solved).sum())
         if n_bad:
             warnings.append(f"ב-{n_bad} תקופות לא ניתן להגיע ליעד (למשל התיק התאפס)")
@@ -184,10 +207,16 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
         alt = simulate(replace(req, lump_spread=0), market, x=x_same)
         final_lump, final_lump_gross = alt.final_net * D[:, T], alt.final_gross * D[:, T]
 
-    success = depleted_at = retire_value = None
+    success = depleted_at = retire_value = withdraw_monthly = None
     if req.has_withdrawals:
         depleted_at = out.shortfall_at
         retire_value = out.retire_value * D[:, req.retire_month]
+        months_out = sum(s.months for s in req.stages if s.withdraws)
+        withdraw_monthly = (out.stage_withdrawn * D).sum(axis=1) / months_out
+        if solved is not None:
+            # No solution: that start date is simulated with 0 for the unknown, which says
+            # nothing; it counts as running out when the withdrawals start.
+            depleted_at = np.where(np.isnan(solved), req.retire_month, depleted_at)
         if solved is None:
             success = depleted_at < 0
             n_fail = int((~success).sum())
@@ -215,7 +244,7 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
                             final_nofee=final_nofee, final_nofee_gross=final_nofee_gross,
                             final_lump=final_lump, final_lump_gross=final_lump_gross,
                             success=success, depleted_at=depleted_at, retire_value=retire_value,
-                            retire_month=req.retire_month)
+                            retire_month=req.retire_month, withdraw_monthly=withdraw_monthly)
 
 
 def first_reach(paths: np.ndarray, target: float) -> np.ndarray:
@@ -309,25 +338,7 @@ def run_trinity(req: WithdrawRequest, md: MarketData) -> WithdrawResult:
     R = len(market.start_dates)
     T = req.total_months
     warnings = []
-    cpi_all = market.cpi_daily[market.day_idx] if market.cpi_daily is not None else None
-
-    def display(final, rows):
-        if req.real and cpi_all is not None:
-            return final * market.cpi_base / cpi_all[rows, T]
-        return final
-
-    def score(x, rows):
-        # Final value minus the withdrawals that could not be paid: strictly monotone in the
-        # unknown even after the portfolio is exhausted (where the final value alone is flat).
-        out = simulate_withdraw(req, market, x=x, rows=rows)
-        return display(out.final_net - out.unpaid, rows)
-
-    solved = None
-    if req.solve_for in (SOLVE_RATE, SOLVE_AMOUNT):
-        # The score falls as the withdrawal rises: solve on the negated function.
-        solved = solve_monotone(lambda x, rows: -score(x, rows), -req.target_amount, R, _trinity_guess(req))
-    elif req.solve_for == SOLVE_START:
-        solved = solve_monotone(score, req.target_amount, R, max(req.start_amount, req.target_amount, 1.0))
+    solved = None if req.solve_for == SOLVE_FINAL else solve_unknown(req, market, objective(req, market))
     if solved is not None:
         n_bad = int(np.isnan(solved).sum())
         if n_bad:
@@ -349,9 +360,11 @@ def run_trinity(req: WithdrawRequest, md: MarketData) -> WithdrawResult:
     else:
         # The solved plan sits exactly on the success boundary; "success" means a solution exists.
         success = ~np.isnan(solved)
+    # A start date with no solution is simulated with 0 for the unknown; it counts as running out.
+    depleted = out.shortfall_at if solved is None else np.where(np.isnan(solved), 0, out.shortfall_at)
     return WithdrawResult(start_dates=list(market.start_dates), end_dates=list(market.calendar[market.day_idx[:, -1]]),
                           months=T, final=final, withdrawn_total=paid.sum(axis=1), min_balance=paths.min(axis=1),
-                          depleted_at=out.shortfall_at, success=success, paths=paths,
+                          depleted_at=depleted, success=success, paths=paths,
                           withdrawals_path=np.cumsum(paid, axis=1), solved=solved, warnings=warnings)
 
 
@@ -408,23 +421,11 @@ def solve_trace(req, md: MarketData) -> dict:
     else:
         validate(req)
     market = prepare_market(req, md)
-    R, T = len(market.start_dates), req.total_months
-    cpi_all = market.cpi_daily[market.day_idx] if market.cpi_daily is not None else None
-
-    def value(x, rows):
-        if trinity:
-            out = simulate_withdraw(req, market, x=x, rows=rows)
-            v = out.final_net - out.unpaid
-        else:
-            out = simulate(req, market, x=x, rows=rows)
-            v = out.final_net - out.unpaid
-        if req.real and cpi_all is not None:
-            v = v * market.cpi_base / cpi_all[rows, T]
-        return v
-
-    sign = -1.0 if (req.solve_for == SOLVE_WITHDRAWAL or (trinity and req.solve_for in (SOLVE_RATE, SOLVE_AMOUNT))) else 1.0
-    guess = _trinity_guess(req) if trinity else _initial_guess(req)
-    solved = solve_monotone(lambda x, rows: sign * value(x, rows), sign * req.target_amount, R, guess)
+    R = len(market.start_dates)
+    value = objective(req, market)
+    sign = -1.0 if _decreasing(req) else 1.0
+    guess = _guess(req)
+    solved = solve_unknown(req, market, value)
     finite = np.where(np.isfinite(solved))[0]
     if len(finite) == 0:
         raise ValueError("אין פתרון באף תקופה")

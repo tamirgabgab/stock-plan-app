@@ -639,7 +639,8 @@ function LifecycleCard({ res, themeKey }) {
   const solveMode = plan.solve_for !== "final";
   const ok = raw.success.filter(Boolean).length;
   const yrs = (m) => (m === null || m === undefined ? "—" : `${((m - raw.retire_month) / 12).toFixed(1)} שנים`);
-  const wdPerMonth = summarize(raw.withdrawn_total.map((v) => v / Math.max(res.T - raw.retire_month, 1)));
+  const wdPerMonth = summarize(raw.withdraw_monthly);
+  const noSolution = solveMode ? raw.solved.filter((v) => v === null).length : 0;
   return html`<section class="card" aria-label="פרישה">
     <div class="card-head"><div><h2>פרישה: האם הכסף מחזיק?</h2>
       <p class="muted">שלבי המשיכה מתחילים אחרי ${monthsLabel(raw.retire_month)}. הגרף: אחוז התקופות שבהן הכסף עוד לא נגמר בכל רגע (הקו המקווקו הוא תחילת המשיכות)${plan.real ? ". הסכומים בכסף של היום" : ""}.</p></div></div>
@@ -648,8 +649,9 @@ function LifecycleCard({ res, themeKey }) {
       <div><dt>יתרה בפרישה (חציון) <${Hint} text="השווי נטו (אחרי מס על הרווח) ברגע ששלב המשיכה הראשון מתחיל. ממנו נמדד אחוז המשיכה." /></dt><dd dir="ltr">${mo(retire?.median)}</dd></div>
       <div><dt>יתרה בפרישה: אחוזון 10</dt><dd dir="ltr">${mo(retire?.p10)}</dd></div>
       <div><dt>יתרה בפרישה: אחוזון 90</dt><dd dir="ltr">${mo(retire?.p90)}</dd></div>
-      <div><dt>משיכה חודשית ממוצעת (חציון)</dt><dd dir="ltr">${mo(wdPerMonth?.median)}</dd></div>
-      ${life.out.length ? html`
+      <div><dt>משיכה חודשית ממוצעת (חציון) <${Hint} text="סך המשיכות של שלבי המשיכה חלקי מספר החודשים שלהם. משיכות חד-פעמיות מתוכננות בשלבי ההפקדה לא נכללות." /></dt><dd dir="ltr">${mo(wdPerMonth?.median)}</dd></div>
+      ${solveMode ? (noSolution ? html`<div><dt>אין פתרון</dt><dd dir="ltr">${pct((100 * noSolution) / res.n, 1)}</dd></div>` : null)
+        : life.out.length ? html`
         <div><dt>נגמר אחרי (חציון, מתחילת הפרישה)</dt><dd dir="ltr">${yrs(life.out[Math.floor((life.out.length - 1) / 2)])}</dd></div>
         <div><dt>הכי מוקדם</dt><dd dir="ltr">${yrs(life.out[0])}</dd></div>` : null}
     </dl>
@@ -721,9 +723,11 @@ function accumulationColumns(res) {
     { key: "irr", label: "תשואה שנתית (IRR)", get: (i) => raw.irr[i], fmt: (v) => pct(v) },
     ...(res.lifecycle ? [
       { key: "retire", label: "יתרה בפרישה", get: (i) => raw.retire_value[i], fmt: (v) => money(v, cur) },
-      { key: "lasted", label: "הכסף החזיק", get: (i) => (raw.depleted_at[i] === null ? res.T + 1 : raw.depleted_at[i]), rtl: true,
-        fmt: (v) => (v > res.T ? "✓" : `נגמר אחרי ${monthsLabel(v - raw.retire_month)}`),
-        csv: (i) => (raw.depleted_at[i] === null ? "" : raw.depleted_at[i] - raw.retire_month) },
+      // Sorted worst first: no solution (-1), then the earliest to run out, then the ones that lasted.
+      { key: "lasted", label: "הכסף החזיק", rtl: true,
+        get: (i) => (raw.solved && raw.solved[i] === null ? -1 : raw.depleted_at[i] === null ? res.T + 1 : raw.depleted_at[i]),
+        fmt: (v) => (v < 0 ? "אין פתרון" : v > res.T ? "✓" : `נגמר אחרי ${monthsLabel(v - raw.retire_month)}`),
+        csv: (i) => (raw.solved && raw.solved[i] === null ? "no solution" : raw.depleted_at[i] === null ? "" : raw.depleted_at[i] - raw.retire_month) },
     ] : []),
     yearColumn(res, "best", `שנה מקסימלית ${word}`, res.bestYear),
     yearColumn(res, "worst", `שנה מינימלית ${word}`, res.worstYear),

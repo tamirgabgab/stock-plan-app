@@ -367,6 +367,7 @@ def simulate(plan: PlanIn):
         "depleted_at": None if res.depleted_at is None else _months(res.depleted_at),
         "retire_value": _opt(res.retire_value),
         "retire_month": res.retire_month,
+        "withdraw_monthly": _opt(res.withdraw_monthly),
         "warnings": res.warnings,
         "demo": get_market_data().is_demo,
     }

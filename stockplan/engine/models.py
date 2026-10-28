@@ -116,9 +116,21 @@ class PlanRequest:
         return -1
 
     @property
+    def withdrawals_use_cpi(self) -> bool:
+        """Some withdrawal is an amount that the CPI indexation changes. A percent of the
+        current balance with no money floor, ceiling or one-time amount is not one."""
+        if not self.has_withdrawals:
+            return False
+        if self.solve_for == SOLVE_WITHDRAWAL:
+            return True
+        return any(not (s.rate_unit == "pct" and s.basis == "current" and s.floor == 0 and s.ceiling == 0
+                        and (s.one_time == 0 or s.one_time_unit == "pct"))
+                   for s in self.stages if s.withdraws)
+
+    @property
     def needs_cpi(self) -> bool:
         return (self.real or self.index_deposits or self.tax_basis == "real"
-                or (self.index_withdrawals and self.has_withdrawals))
+                or (self.index_withdrawals and self.withdrawals_use_cpi))
 
 
 @dataclass
@@ -165,6 +177,7 @@ class SimulationResult:
     depleted_at: "object" = None          # (R,) first month a withdrawal was not paid in full, or -1
     retire_value: "object" = None         # (R,) net balance when the withdrawals start, display units
     retire_month: int = -1
+    withdraw_monthly: "object" = None     # (R,) average monthly withdrawal of the withdrawal stages
 
 
 # ------------------------------------------------------------------ withdrawal (Trinity)

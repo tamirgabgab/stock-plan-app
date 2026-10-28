@@ -122,7 +122,7 @@ function AccountChart({ data, res, themeKey, view, setP, error }) {
     let acc = 0;
     return perMonth.map((v) => (acc += v));
   }, [data]);
-  const flowLabel = data.trinity ? "סך משיכות נטו" : "סך הפקדות";
+  const flowLabel = data.trinity ? "סך משיכות נטו" : data.summary.withdrawn_total > 0 ? "הפקדות פחות משיכות" : "סך הפקדות";
   const benchLabel = `השוואה: ${p}% ${res.plan.real ? "ריאלי " : ""}לשנה (${word})`;
   useEffect(() => {
     if (!ref.current) return;
@@ -163,6 +163,12 @@ function DetailSummary({ data, res, net }) {
   const word = net ? "נטו" : "ברוטו";
   const final = net ? s.final : s.final_gross;
   const endTax = s.final_gross - s.final;
+  const out = s.withdrawn_total || 0;
+  // Lifecycle plans: did this start date's money last? (no solution counts as running out)
+  const lasted = s.success === undefined ? null
+    : s.success ? "הכסף החזיק עד הסוף"
+    : res.plan.solve_for !== "final" ? "אין פתרון"
+    : `הכסף נגמר אחרי ${monthsLabel(s.depleted_at - s.retire_month)} של משיכות`;
   const items = data.trinity ? [
     ["יתרה סופית", m(s.final)],
     ["סך משיכות נטו", m(s.withdrawn_total)],
@@ -173,7 +179,9 @@ function DetailSummary({ data, res, net }) {
   ] : [
     [`סכום סופי ${word}`, m(final)],
     ["סך הפקדות", m(s.deposits_total)],
-    [`רווח ${word}`, m(final - s.deposits_total)],
+    ...(out > 0 ? [["סך משיכות נטו", m(out)]] : []),
+    ...(s.retire_value !== undefined ? [["יתרה בפרישה", m(s.retire_value)], ["תוצאה", lasted]] : []),
+    [`רווח ${word}`, m(final + out - s.deposits_total)],
     [`תשואה שנתית (IRR) ${word}`, pct(net ? s.irr : s.irr_gross)],
     ...(endTax > 0.5 ? [["מס במכירת הכל בסוף", m(endTax)]] : []),
     ["תשואת התיק (שנתית)", pct(s.cagr)],

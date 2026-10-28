@@ -128,7 +128,7 @@ def realization_detail(req, md: MarketData, start: date) -> dict:
 
     summary = {k: _num(np.asarray(getattr(res, k))[0]) for k in
                (("final", "withdrawn_total", "min_balance") if trinity else
-                ("final", "deposits_total", "irr", "cagr", "max_drawdown", "account_drawdown"))}
+                ("final", "deposits_total", "withdrawn_total", "irr", "cagr", "max_drawdown", "account_drawdown"))}
     if trinity:
         summary["depleted_at"] = None if res.depleted_at[0] < 0 else int(res.depleted_at[0])
         summary["success"] = bool(res.success[0])
@@ -136,6 +136,11 @@ def realization_detail(req, md: MarketData, start: date) -> dict:
     summary["final_gross"] = _num(path_gross[T])
     if not trinity:
         summary["irr_gross"] = _num(np.asarray(res.irr_gross)[0])
+        if res.success is not None:     # a lifecycle plan: did this start date's money last?
+            summary["depleted_at"] = None if res.depleted_at[0] < 0 else int(res.depleted_at[0])
+            summary["success"] = bool(res.success[0])
+            summary["retire_value"] = _num(res.retire_value[0])
+            summary["retire_month"] = int(res.retire_month)
 
     return {
         "start_date": dates[0].strftime("%Y-%m-%d"), "end_date": dates[T].strftime("%Y-%m-%d"),

@@ -18,7 +18,7 @@ import numpy as np
 
 from .market import Market
 from .models import SOLVE_AMOUNT, SOLVE_RATE, SOLVE_START, WithdrawRequest
-from .portfolio import Book, rebalance_rows, withdrawal_want
+from .portfolio import Book, paid_short, rebalance_rows, withdrawal_want
 from .simulate import month_growth
 
 
@@ -107,7 +107,7 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
 
             book.m, book.ctx = m, ("one_time" if j == 0 and stage.one_time > 0 else "withdraw")
             got = book.withdraw_net(want, cpi_m)
-            short = (got < want - 1e-6) & (shortfall_at < 0)
+            short = paid_short(got, want) & (shortfall_at < 0)
             shortfall_at[short] = m
             unpaid += want - got
             if record:

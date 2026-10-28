@@ -177,7 +177,9 @@ function ScheduleSection({ plan, set, setPlan, sym, totalMonths }) {
           hint="ההפקדות גדלות עם האינפלציה, כך שערכן הריאלי נשמר. כבוי: הסכום הנומינלי קבוע מתחילת התוכנית." />
         ${hasWithdrawals(plan) ? html`<${Toggle} label="הצמדת המשיכות למדד" checked=${plan.index_withdrawals !== false}
           onChange=${set("index_withdrawals")}
-          hint="דלוק (כמו במחקר טריניטי): המשיכה הקבועה של שלבי המשיכה שומרת על כוח הקנייה שלה מתחילת הפרישה. כבוי: הסכום הנומינלי קבוע." />` : null}</div>
+          hint=${plan.real
+            ? "דלוק (כמו במחקר טריניטי): סכום משיכה קבוע הוא בכסף של היום בכל חודש. כבוי: הסכום הנומינלי נקבע בתחילת הפרישה ונשאר קבוע, כך שכוח הקנייה שלו נשחק."
+            : "דלוק (כמו במחקר טריניטי): סכום משיכה קבוע הוא בכסף של תחילת הפרישה, ומשם גדל עם המדד. כבוי: אותו סכום נומינלי בכל חודש."} />` : null}</div>
     </div>
     <div class="grid-2">
       <${NumberField} label="פריסת הסכום ההתחלתי" value=${spread} onChange=${set("lump_spread")} step=${1} max=${totalMonths}
@@ -352,6 +354,7 @@ function StageCard({ stage, index, count, plan, sym, currency, solveMonthly, eve
         note=${monthsLabel(stage.months || 0)} />
       <${WithdrawFields} stage=${stage} set=${set} onChange=${onChange} sym=${sym} currency=${currency}
         indexed=${plan.index_withdrawals !== false} solveAmount=${plan.solve_for === "withdrawal"} base="היתרה בפרישה"
+        moneyWhen=${plan.real ? " בכסף של היום" : " במחירי תחילת הפרישה"}
         baseNote=${(st) => `${st.rate}% לשנה מהיתרה בתחילת שלב המשיכה הראשון${plan.index_withdrawals !== false ? ", צמוד" : ""}`} />
       <${HoldingsTable} stage=${stage} onChange=${onChange} />
     </div>`;

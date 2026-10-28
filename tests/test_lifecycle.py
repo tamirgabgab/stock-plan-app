@@ -1,6 +1,7 @@
 """Lifecycle plans: deposit stages followed by withdrawal stages in the accumulation tab."""
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
@@ -8,8 +9,12 @@ from fastapi.testclient import TestClient
 import stockplan.data as data_mod
 from stockplan.api import app
 from stockplan.data import DemoMarketData
-from stockplan.engine import Holding, Stage, WithdrawRequest, WithdrawStage, run_plan, run_trinity
-from test_engine import DAYS, FakeData, START, exp_series, one, step_series
+from stockplan.data.base import DataError
+from stockplan.engine import (DepositEvent, Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage,
+                              realization_detail, run_plan, run_trinity, solve_trace)
+from stockplan.engine.market import prepare_market
+from stockplan.engine.simulate import simulate
+from test_engine import DAYS, FakeData, START, exp_series, one, plan, step_series
 
 FLAT = {"A": step_series({})}
 A = [Holding("A", 100)]
@@ -111,3 +116,86 @@ def test_irr_counts_withdrawals_as_money_back():
     grow = one([saving(24), retiring(24, rate=50.0)], FakeData({"A": exp_series(0.10)}))
     assert grow.withdrawn_total[0] > grow.deposits_total[0]
     assert grow.irr_gross[0] == pytest.approx(10.0, abs=0.05)
+
+
+# ------------------------------------------------------------ fixes from the code review
+
+def rising_cpi():
+    idx = pd.date_range(DAYS[0], DAYS[-1], freq="MS")
+    return pd.Series(100 * 1.05 ** ((idx - DAYS[0]).days / 365.25), index=idx)
+
+
+def demo_life(amount=3000.0):
+    spy = [Holding("SPY", 100)]
+    return [Stage(months=120, monthly_deposit=2000, holdings=spy),
+            Stage(months=120, kind="withdraw", rate_unit="money", amount=amount, holdings=spy)]
+
+
+@pytest.mark.parametrize("mode", ["withdrawal", "monthly_deposit", "start_amount"])
+def test_a_solved_plan_does_not_report_running_out(mode):
+    # The solver stops a few cents from the boundary; that is not "the money ran out".
+    req = PlanRequest(stages=demo_life(), currency="USD", real=True, step="M", solve_for=mode, target_amount=0)
+    res = run_plan(req, DemoMarketData(end="2026-01-01"))
+    ok = ~np.isnan(res.solved)
+    assert ok.all() and (res.depleted_at == -1).all() and res.success.all()
+
+
+def test_a_fixed_withdrawal_is_in_money_of_the_start_of_retirement():
+    data = FakeData(FLAT, cpi=rising_cpi())
+    req = plan([saving(), retiring(rate_unit="money", amount=1000.0)])          # nominal, indexed
+    market = prepare_market(req, data)
+    cpi = market.cpi_daily[market.day_idx[0]]
+    out = simulate(req, market, record=True)
+    assert out.withdrawn[0, 12] == pytest.approx(1000)
+    assert out.withdrawn[0, 18] == pytest.approx(1000 * cpi[18] / cpi[12])
+    # Real and not indexed: today's money at the start of retirement, then a fixed nominal amount.
+    req = plan([saving(), retiring(rate_unit="money", amount=1000.0)], real=True, index_withdrawals=False)
+    out = simulate(req, prepare_market(req, data), record=True)
+    assert out.withdrawn[0, 12] == pytest.approx(1000 * cpi[12] / market.cpi_base)
+    assert out.withdrawn[0, 20] == pytest.approx(out.withdrawn[0, 12])
+
+
+def test_no_solution_counts_as_running_out_at_retirement():
+    res = one([saving(), retiring()], FakeData(FLAT), solve_for="withdrawal", target_amount=50_000)
+    assert np.isnan(res.solved[0]) and not res.success[0] and res.depleted_at[0] == 12
+
+
+def test_the_waiting_cash_pays_the_withdrawals_first():
+    # 1,000,000 spread over 12 months buys 83,333 a month; 90,000 a month is still paid from the
+    # cash until the money really runs out in the last month.
+    res = one([retiring(rate_unit="money", amount=90_000.0)], FakeData(FLAT), start_amount=1_000_000, lump_spread=12)
+    assert res.depleted_at[0] == 11
+    assert res.withdrawn_total[0] == pytest.approx(1_000_000)
+
+
+def test_a_percent_of_the_current_balance_needs_no_cpi():
+    class NoCpi(FakeData):
+        def cpi(self, country):
+            raise DataError("no CPI")
+    req = plan([saving(), retiring(basis="current")])
+    assert not req.needs_cpi and plan([saving(), retiring()]).needs_cpi
+    assert run_plan(req, NoCpi(FLAT)).success[0]
+
+
+def test_the_math_trace_uses_the_same_solutions_as_the_results():
+    md = DemoMarketData(end="2026-01-01")
+    base = PlanRequest(stages=demo_life(0.0), currency="USD", real=True, step="M")
+    target = float(np.median(run_plan(base, md).final))       # about half the start dates cannot reach it
+    req = PlanRequest(stages=demo_life(), currency="USD", real=True, step="M", solve_for="withdrawal",
+                      target_amount=target)
+    res = run_plan(req, md)
+    assert np.isnan(res.solved).any()
+    assert solve_trace(req, md)["solved_median"] == pytest.approx(np.nanmedian(res.solved), rel=1e-9)
+
+
+def test_the_average_monthly_withdrawal_counts_only_withdrawal_stages():
+    stages = [saving(), retiring(rate_unit="money", amount=100.0), saving(), retiring(rate_unit="money", amount=100.0)]
+    res = one(stages, FakeData(FLAT), events=[DepositEvent(month=3, kind="withdraw", amount=500)])
+    assert res.withdraw_monthly[0] == pytest.approx(100)
+
+
+def test_the_detail_view_knows_a_lifecycle_plan():
+    req = plan([Stage(months=12, holdings=A), retiring(rate_unit="money", amount=100.0)], start_amount=1000)
+    s = realization_detail(req, FakeData(FLAT), START)["summary"]
+    assert s["success"] is False and s["depleted_at"] == 22 and s["retire_month"] == 12
+    assert s["withdrawn_total"] == pytest.approx(1000) and s["retire_value"] == pytest.approx(1000)

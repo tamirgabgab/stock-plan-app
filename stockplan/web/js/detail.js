@@ -5,7 +5,7 @@ import { accountFigure, basketFigure, observeResize, ZOOM_CONFIG } from "./chart
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
 import { toPayload } from "./inputs.js";
 import { Segmented, Toggle } from "./ui.js";
-import { addMonths } from "./results.js";
+import { addMonths, isSynthetic, realName } from "./results.js";
 
 const ACTION = {
   "buy:deposit": "קנייה · הפקדה", "buy:start": "קנייה · סכום התחלתי", "buy:switch": "קנייה · מעבר שלב",
@@ -25,14 +25,16 @@ async function postJSON(url, body, signal) {
 export function RealizationDetail({ res, index, onClose, onNav, themeKey }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const synthetic = isSynthetic(res);
   const start = res.raw.start_dates[index];
+  const which = synthetic ? { path: index } : { start_date: start };
   useEffect(() => {
     const c = new AbortController();
     setError(null);
-    postJSON(res.labels.detailApi, { plan: toPayload(res.plan), start_date: start }, c.signal)
+    postJSON(res.labels.detailApi, { plan: toPayload(res.plan), ...which }, c.signal)
       .then(setData).catch((e) => { if (e.name !== "AbortError") setError(e.message); });
     return () => c.abort();
-  }, [res, start]);
+  }, [res, index]);
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") onClose();
@@ -44,13 +46,14 @@ export function RealizationDetail({ res, index, onClose, onNav, themeKey }) {
     return () => { document.removeEventListener("keydown", onKey); document.body.classList.remove("modal-open"); };
   }, [index, res]);
 
-  const ready = data && data.start_date === start;
+  const ready = data && (synthetic ? data.path_index === index : data.start_date === start);
   return html`<div class="modal-back" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
     <div class="modal" role="dialog" aria-modal="true" aria-label="פירוט ריאליזציה">
       <div class="modal-head">
-        <div><h2>ריאליזציה: התחלה <bdi>${dateHe(start)}</bdi>, סיום <bdi>${dateHe(res.raw.end_dates[index])}</bdi></h2>
+        <div><h2>${synthetic ? html`${realName(res, index)} (סינתטי)`
+            : html`ריאליזציה: התחלה <bdi>${dateHe(start)}</bdi>, סיום <bdi>${dateHe(res.raw.end_dates[index])}</bdi>`}</h2>
           <p class="muted">${monthsLabel(res.T)} · ${res.plan.real ? "ריאלי, בכסף של היום" : "נומינלי"} · ${res.plan.currency === "ILS" ? "שקלים" : "דולרים"}.
-            החיצים במקלדת עוברים לתאריך הקודם או הבא, ו-Esc סוגר.</p></div>
+            ${synthetic ? "מסלול שהורכב מבלוקים של חודשים היסטוריים, ולכן אין לו תאריכים: הזמן הוא מתחילת התוכנית. " : ""}החיצים במקלדת עוברים ל${synthetic ? "מסלול" : "תאריך"} הקודם או הבא, ו-Esc סוגר.</p></div>
         <div class="modal-actions">
           <button class="btn ghost" disabled=${index === 0} onClick=${() => onNav(index - 1)}>→ הקודם</button>
           <button class="btn ghost" disabled=${index >= res.n - 1} onClick=${() => onNav(index + 1)}>הבא ←</button>
@@ -77,7 +80,8 @@ function DetailBody({ data, res, themeKey }) {
   useEffect(() => {
     const c = new AbortController();
     const id = setTimeout(() => {
-      postJSON(`${res.labels.detailApi}/benchmark`, { plan: toPayload(res.plan), start_date: data.start_date, rate: p,
+      const which = data.synthetic ? { path: data.path_index } : { start_date: data.start_date };
+      postJSON(`${res.labels.detailApi}/benchmark`, { plan: toPayload(res.plan), ...which, rate: p,
         x: data.summary.solved }, c.signal)
         .then((b) => { setBench(b); setBenchError(null); }).catch((e) => { if (e.name !== "AbortError") setBenchError(e.message); });
     }, 250);
@@ -94,9 +98,9 @@ function DetailBody({ data, res, themeKey }) {
     </div>` : null}
     <${DetailSummary} data=${data} res=${res} net=${net} />
     <${AccountChart} data=${data} res=${res} themeKey=${themeKey} view=${view} setP=${setP} error=${benchError} />
-    <div class="detail-grid">
+    <div class=${data.synthetic ? "" : "detail-grid"}>
       <${Journal} data=${data} res=${res} setHl=${setHl} view=${view} />
-      <${BasketChart} data=${data} themeKey=${themeKey} hl=${hl} />
+      ${data.synthetic ? null : html`<${BasketChart} data=${data} themeKey=${themeKey} hl=${hl} />`}
     </div>
   </div>`;
 }
@@ -110,7 +114,8 @@ function AccountChart({ data, res, themeKey, view, setP, error }) {
   const cur = data.currency;
   const sym = CURRENCY_SYMBOL[cur];
   const word = net ? "נטו" : "ברוטו";
-  const dates = useMemo(() => data.path.map((_, m) => addMonths(data.start_date, m)), [data]);
+  // A synthetic path has no dates: years from the start of the plan.
+  const dates = useMemo(() => data.path.map((_, m) => (data.synthetic ? m / 12 : addMonths(data.start_date, m))), [data]);
   // Cumulative net deposits (accumulation, from the server) or net withdrawals (Trinity, from the journal).
   const flow = useMemo(() => {
     if (data.flow) return data.flow;
@@ -126,7 +131,8 @@ function AccountChart({ data, res, themeKey, view, setP, error }) {
   const benchLabel = `השוואה: ${p}% ${res.plan.real ? "ריאלי " : ""}לשנה (${word})`;
   useEffect(() => {
     if (!ref.current) return;
-    const fig = accountFigure({ dates, account, accountLabel: `שווי החשבון (${word})`, bench: benchPath, flow, flowLabel, benchLabel, sym });
+    const fig = accountFigure({ dates, account, accountLabel: `שווי החשבון (${word})`, bench: benchPath, flow, flowLabel, benchLabel, sym,
+      years: data.synthetic });
     window.Plotly.react(ref.current, fig.data, fig.layout, ZOOM_CONFIG);
   }, [data, bench, net, themeKey]);
   useEffect(() => {
@@ -197,7 +203,7 @@ function DetailSummary({ data, res, net }) {
   return html`<div class="detail-summary">
     ${items.map(([k, v]) => html`<div class="ds-item"><span class="muted">${k}</span><b dir="auto">${v}</b></div>`)}
     <div class="ds-stages">${data.stages.map((st, i) => html`<span class="chip static">
-      ${st.name}: מ-<bdi>${dateHe(st.start_date)}</bdi> · <bdi dir="ltr">${data.assets.map((a, j) => (st.weights[j] > 0 ? `${a.ticker}${a.leverage !== 1 ? ` ×${a.leverage}` : ""} ${Math.round(st.weights[j] * 100)}%` : null)).filter(Boolean).join(" + ")}</bdi></span>`)}</div>
+      ${st.name}: ${data.synthetic ? `מחודש ${st.start_m + 1}` : html`מ-<bdi>${dateHe(st.start_date)}</bdi>`} · <bdi dir="ltr">${data.assets.map((a, j) => (st.weights[j] > 0 ? `${a.ticker}${a.leverage !== 1 ? ` ×${a.leverage}` : ""} ${Math.round(st.weights[j] * 100)}%` : null)).filter(Boolean).join(" + ")}</bdi></span>`)}</div>
   </div>`;
 }
 
@@ -229,26 +235,26 @@ function Journal({ data, res, setHl, view }) {
       <${Segmented} small options=${[{ value: "all", label: "הכל" }, { value: "buy", label: "קניות" }, { value: "sell", label: "מכירות" }]}
         value=${filter} onChange=${setFilter} />
     </div>
-    <p class="muted small">מחיר: מחיר הנכס ביום הפעולה${cur === "ILS" ? " בשקלים (ומתחתיו בדולרים)" : ""}.
+    <p class="muted small">${data.synthetic ? "במסלול סינתטי אין מחירים אמיתיים, ולכן אין עמודת מחיר." : `מחיר: מחיר הנכס ביום הפעולה${cur === "ILS" ? " בשקלים (ומתחתיו בדולרים)" : ""}.`}
       "החשבון" ו"השוואה": שווי החשבון ${word} באותו חודש, ולידו אותה תוכנית בתשואה קבועה של ${p}% לשנה (הקו המקווקו בגרף שלמעלה).
       ${hasExit ? " בקנייה, הרווח הוא תשואת המחיר מהקנייה ועד שהנכס יצא מהתיק או עד סוף התקופה, לפני דמי ניהול ומס." : ""}
       ${res.plan.real ? " הסכומים בכסף של היום." : ""}</p>
     <div class="journal-wrap"><table class="data journal-table">
-      <thead><tr><th>תאריך</th><th>פעולה</th><th>נכס</th><th>מחיר</th><th>סכום</th>${hasTax ? html`<th>מס</th>` : null}
+      <thead><tr><th>${data.synthetic ? "מתי" : "תאריך"}</th><th>פעולה</th><th>נכס</th>${data.synthetic ? null : html`<th>מחיר</th>`}<th>סכום</th>${hasTax ? html`<th>מס</th>` : null}
         <th>החשבון (${word})</th><th>השוואה ${p}%</th>${hasExit ? html`<th>רווח עד היציאה</th><th>שנתי</th>` : null}</tr></thead>
       <tbody onMouseLeave=${() => setHl(null)}>
         ${rows.slice(0, limit).map((t) => html`<tr class=${t.kind}
             onMouseEnter=${() => setHl({ date: t.date, kind: t.kind })}>
-          <td>${dateHe(t.date)}</td>
+          <td>${data.synthetic ? `שנה ${Math.floor(t.m / 12) + 1}, חודש ${(t.m % 12) + 1}` : dateHe(t.date)}</td>
           <td class="act">${ACTION[`${t.kind}:${t.ctx}`] || t.kind}</td>
           <td dir="ltr">${assetName(t.asset)}</td>
-          <td dir="ltr">${money(t.price, cur, { decimals: 2 })}${cur === "ILS" ? html`<div class="muted small">$${t.price_usd?.toFixed(2)}</div>` : null}</td>
+          ${data.synthetic ? null : html`<td dir="ltr">${money(t.price, cur, { decimals: 2 })}${cur === "ILS" ? html`<div class="muted small">$${t.price_usd?.toFixed(2)}</div>` : null}</td>`}
           <td dir="ltr">${money(t.amount, cur)}</td>
           ${hasTax ? html`<td dir="ltr">${t.tax > 0.005 ? money(t.tax, cur) : "—"}</td>` : null}
           <td dir="ltr">${money(account[t.m], cur)}</td>
           <td dir="ltr" class=${benchPath ? cls(account[t.m] - benchPath[t.m]) : ""} title=${benchPath ? `החשבון ${account[t.m] >= benchPath[t.m] ? "מעל" : "מתחת"} ההשוואה ב-${money(Math.abs(account[t.m] - benchPath[t.m]), cur)}` : ""}>${benchPath ? money(benchPath[t.m], cur) : "…"}</td>
           ${hasExit ? html`
-          <td dir="ltr" class=${cls(t.return_pct)} title=${t.exit_date ? `עד ${dateHe(t.exit_date)} · שווי ${money(t.value_exit, cur)}` : ""}>${ret(t.return_pct)}</td>
+          <td dir="ltr" class=${cls(t.return_pct)} title=${t.exit_date ? `עד ${data.synthetic ? `חודש ${t.exit_m + 1}` : dateHe(t.exit_date)} · שווי ${money(t.value_exit, cur)}` : ""}>${ret(t.return_pct)}</td>
           <td dir="ltr" class=${cls(t.annual_pct)}>${ret(t.annual_pct)}</td>` : null}
         </tr>`)}
       </tbody>

@@ -94,7 +94,7 @@ function DepositsMath({ plan, res }) {
       </tbody></table></div>
       ${raw ? html`<h3>התוצאות הנוכחיות</h3>
         <div class="table-wrap"><table class="vals"><tbody>
-          <tr><th>ריאליזציות</th><td class="num">${T(S`n = ${n(raw.n)}`)}</td><td>תאריכי התחלה מ-${dateHe(raw.start_dates[0])} עד ${dateHe(raw.start_dates[raw.n - 1])}</td></tr>
+          <tr><th>ריאליזציות</th><td class="num">${T(S`n = ${n(raw.n)}`)}</td><td>${raw.synthetic ? `מסלולים סינתטיים (בלוקים של ${plan.block} חודשים, זרע ${plan.seed})` : `תאריכי התחלה מ-${dateHe(raw.start_dates[0])} עד ${dateHe(raw.start_dates[raw.n - 1])}`}</td></tr>
           ${sol ? html`<tr><th>${plan.solve_for === "monthly_deposit" ? "הפקדה חודשית נדרשת" : "סכום התחלתי נדרש"}</th>
             <td class="num">${m(sol.median)}</td><td>חציון על פני הריאליזציות; אחוזון 90: ${m(sol.p90)}</td></tr>` : null}
           <tr><th>סכום סופי נטו</th><td class="num">${m(sum?.median)}</td><td>חציון של ${T(S`N_T`)}; ממוצע ${m(sum?.mean)}</td></tr>
@@ -119,6 +119,10 @@ function DepositsMath({ plan, res }) {
       ${D(S`g_{i,m} = \frac{P_i(t_{m+1})}{P_i(t_m)}, \qquad \varphi = (1-f)^{1/12}${fee ? S` = ${fr(phi, 6)}` : ""}`)}
       <p><b>מדד המחירים.</b> ${T(S`C_m`)} הוא מדד המחירים לצרכן של מטבע ההצגה בחודש ${T(S`t_m`)}, ו-${T(S`C^\star`)} הוא המדד של החודש האחרון בנתונים, "היום".
         ${plan.real || plan.index_deposits || plan.tax_basis === "real" ? "בתוכנית הנוכחית המדד בשימוש." : "בתוכנית הנוכחית (נומינלית, לא צמודה, מס נומינלי) המדד לא משפיע על שום חישוב."}</p>
+      <p><b>מסלולים סינתטיים (ערבוב בלוקים).</b> ${plan.mode === "synthetic" ? "בתוכנית הנוכחית זה המצב הפעיל. " : ""}במקום תאריכי התחלה, כל ריאליזציה ${T(S`r`)} היא מסלול שמורכב מ-${T(S`K = \lceil T/b \rceil`)} בלוקים של ${T(S`b`)} חודשים רצופים.
+        בלוק ${T(S`k`)} מתחיל בחודש היסטורי ${T(S`u_{r,k}`)} שנבחר באחידות מתוך ${T(S`\{0, \dots, N-b\}`)}, כאשר ${T(S`N`)} הוא מספר התשואות החודשיות בתקופת הדגימה. כך החודש ה-${T(S`m`)} של המסלול לוקח את החודש ההיסטורי</p>
+      ${D(S`h_r(m) = u_{r,\lfloor m/b \rfloor} + (m \bmod b), \qquad g^{(r)}_{i,m} = g_{i,\,h_r(m)}, \qquad \frac{C^{(r)}_{m+1}}{C^{(r)}_m} = \frac{C_{h_r(m)+1}}{C_{h_r(m)}}`)}
+      <p>כל הנכסים והמדד באותו חודש זזים יחד, ולכן המתאמים, הקשר בין אינפלציה לתשואה והזנבות של ההיסטוריה נשמרים; רק סדר הבלוקים חדש. המסלול מתחיל היום, ${T(S`C^{(r)}_0 = C^\star`)}, ולכן "בכסף של היום" הוא הכסף של חודש 0. הזרע קובע את ההגרלה: אותו זרע נותן אותם מסלולים.</p>
     </section>
 
     <section class="card" id="deposits">
@@ -428,7 +432,7 @@ function SolverSection({ plan, api, kind }) {
     ${!hasUnknown ? html`<${Segmented} small options=${choices} value=${demoSolve} onChange=${setDemoSolve} />` : null}
     ${error ? html`<p class="note warn">${error}</p>` : null}
     ${data ? html`
-      <p>ריאליזציה שמתחילה ב-${dateHe(data.start_date)}, יעד ${T(S`F^\star = ${n(data.target)}`)}. הפתרון: <b dir="ltr">${data.x === null ? "—" : fx(data.x)}</b>
+      <p>${data.path !== null && data.path !== undefined ? `מסלול סינתטי ${data.path + 1}` : `ריאליזציה שמתחילה ב-${dateHe(data.start_date)}`}, יעד ${T(S`F^\star = ${n(data.target)}`)}. הפתרון: <b dir="ltr">${data.x === null ? "—" : fx(data.x)}</b>
         אחרי ${data.steps.length} הערכות של הפונקציה${data.converged ? "" : " (לא התכנס)"}. החציון על פני כל ${data.n.toLocaleString("he-IL")} הריאליזציות: <span dir="ltr">${fx(data.solved_median)}</span>.</p>
       <div class="time-slider">
         <div class="time-slider-label">צעד <b>${step}</b> מתוך ${data.steps.length - 1}: ${PHASE_HE[cur.phase]}.

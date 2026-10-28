@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import List, Optional
 
+MODES = ("history", "synthetic")
+
 SOLVE_FINAL = "final"
 SOLVE_MONTHLY = "monthly_deposit"
 SOLVE_START = "start_amount"
@@ -118,6 +120,16 @@ class PlanRequest:
     account: str = "regular"
     account_ceiling: float = 0.0
     deposit_fee: float = 0.0       # percent of every deposit, taken before it is invested
+    # Market scenarios: "history" (every start date in the window) or "synthetic" (block
+    # bootstrap, see market.synthetic_market): ``paths`` paths of blocks of ``block``
+    # months drawn with ``seed`` from the history between ``sample_from`` and ``sample_to``.
+    mode: str = "history"
+    paths: int = 2000
+    block: int = 12
+    seed: int = 1
+    sample_from: Optional[date] = None
+    sample_to: Optional[date] = None
+    only_path: Optional[int] = None  # keep one synthetic path (the detail view)
 
     @property
     def total_months(self) -> int:
@@ -249,6 +261,16 @@ class WithdrawRequest:
     rebalance_band: float = 5.0
     # An Israeli savings account is taken as at least six years old and within its ceilings.
     account: str = "regular"
+    # Market scenarios: "history" (every start date in the window) or "synthetic" (block
+    # bootstrap, see market.synthetic_market): ``paths`` paths of blocks of ``block``
+    # months drawn with ``seed`` from the history between ``sample_from`` and ``sample_to``.
+    mode: str = "history"
+    paths: int = 2000
+    block: int = 12
+    seed: int = 1
+    sample_from: Optional[date] = None
+    sample_to: Optional[date] = None
+    only_path: Optional[int] = None  # keep one synthetic path (the detail view)
 
     @property
     def total_months(self) -> int:

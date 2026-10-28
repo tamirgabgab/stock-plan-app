@@ -73,11 +73,22 @@ Rebalance = Literal["none", "monthly", "quarterly", "annual", "band"]
 Account = Literal["regular", "hishtalmut", "gemel"]
 
 
+class Scenarios(BaseModel):
+    """Where the market scenarios come from: every historical start date, or synthetic
+    paths made of blocks of historical months (see engine.market.synthetic_market)."""
+    mode: Literal["history", "synthetic"] = "history"
+    paths: int = Field(2000, ge=1, le=10_000)
+    block: int = Field(12, ge=1, le=120)
+    seed: int = Field(1, ge=0, le=2**31 - 1)
+    sample_from: Optional[date] = None
+    sample_to: Optional[date] = None
+
+
 def _holdings(holdings) -> list:
     return [Holding(h.ticker, h.weight, h.leverage, h.dividend) for h in holdings]
 
 
-class PlanIn(BaseModel):
+class PlanIn(Scenarios):
     stages: List[StageIn] = Field(min_length=1)
     start_amount: float = Field(0.0, ge=0)
     target_amount: float = Field(1_000_000.0, ge=0)
@@ -118,7 +129,7 @@ class WithdrawStageIn(WithdrawRule):
     holdings: List[HoldingIn] = Field(min_length=1)
 
 
-class TrinityIn(BaseModel):
+class TrinityIn(Scenarios):
     stages: List[WithdrawStageIn] = Field(min_length=1)
     start_amount: float = Field(1_000_000.0, ge=0)
     target_amount: float = Field(0.0, ge=0)
@@ -156,12 +167,14 @@ class HeatmapIn(BaseModel):
 
 class RealizationIn(BaseModel):
     plan: PlanIn
-    start_date: date
+    start_date: Optional[date] = None             # a historical start date, or
+    path: Optional[int] = Field(None, ge=0)       # a synthetic path
 
 
 class TrinityRealizationIn(BaseModel):
     plan: TrinityIn
-    start_date: date
+    start_date: Optional[date] = None
+    path: Optional[int] = Field(None, ge=0)
 
 
 class BenchmarkIn(RealizationIn):
@@ -208,8 +221,9 @@ async def no_stale_assets(request, call_next):
     return response
 
 
-def _too_many(R: int, T1: int) -> str:
-    msg = f"יותר מדי נקודות ({R:,} תקופות × {T1:,} חודשים). בחר דגימה גסה יותר"
+def _too_many(R: int, T1: int, synthetic: bool = False) -> str:
+    msg = (f"יותר מדי נקודות ({R:,} מסלולים × {T1:,} חודשים). בחר פחות מסלולים" if synthetic else
+           f"יותר מדי נקודות ({R:,} תקופות × {T1:,} חודשים). בחר דגימה גסה יותר")
     if ON_VERCEL:
         msg += " (בגרסה המקוונת המגבלה קטנה יותר; במחשב שלך עם python run.py אין מגבלה כזו)"
     return msg
@@ -276,9 +290,9 @@ def trinity_solve_trace(plan: TrinityIn):
     return _trace(plan.to_request())
 
 
-def _detail(req, start):
+def _detail(req, body):
     try:
-        return realization_detail(req, get_market_data(), start)
+        return realization_detail(req, get_market_data(), body.start_date, body.path)
     except (DataError, ValueError) as exc:
         raise _bad_request(exc)
     except Exception as exc:
@@ -288,17 +302,17 @@ def _detail(req, start):
 
 @app.post("/api/realization")
 def plan_realization(body: RealizationIn):
-    return _detail(body.plan.to_request(), body.start_date)
+    return _detail(body.plan.to_request(), body)
 
 
 @app.post("/api/trinity/realization")
 def trinity_realization(body: TrinityRealizationIn):
-    return _detail(body.plan.to_request(), body.start_date)
+    return _detail(body.plan.to_request(), body)
 
 
 def _bench(req, body):
     try:
-        return benchmark_path(req, get_market_data(), body.start_date, body.rate, body.x)
+        return benchmark_path(req, get_market_data(), body.start_date, body.rate, body.x, body.path)
     except (DataError, ValueError) as exc:
         raise _bad_request(exc)
 
@@ -337,7 +351,7 @@ def simulate(plan: PlanIn):
     R, T1 = res.paths.shape
     if R * T1 > MAX_CELLS:
         raise HTTPException(status_code=400,
-                            detail=_too_many(R, T1))
+                            detail=_too_many(R, T1, plan.mode == "synthetic"))
     return {
         "months": res.months,
         "n": R,
@@ -379,6 +393,7 @@ def simulate(plan: PlanIn):
         "retire_value": _opt(res.retire_value),
         "retire_month": res.retire_month,
         "withdraw_monthly": _opt(res.withdraw_monthly),
+        "synthetic": plan.mode == "synthetic",
         "warnings": res.warnings,
         "demo": get_market_data().is_demo,
     }
@@ -411,7 +426,7 @@ def trinity_simulate(plan: TrinityIn):
     R, T1 = res.paths.shape
     if R * T1 > MAX_CELLS:
         raise HTTPException(status_code=400,
-                            detail=_too_many(R, T1))
+                            detail=_too_many(R, T1, plan.mode == "synthetic"))
     return {
         "months": res.months,
         "n": R,
@@ -425,6 +440,7 @@ def trinity_simulate(plan: TrinityIn):
         "solved": None if res.solved is None else _floats(res.solved),
         "paths": _matrix_b64(res.paths),
         "withdrawals_path": _matrix_b64(res.withdrawals_path),
+        "synthetic": plan.mode == "synthetic",
         "warnings": res.warnings,
         "demo": get_market_data().is_demo,
     }

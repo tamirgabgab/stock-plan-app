@@ -5,6 +5,11 @@ Friday's close and there is no look-ahead), converted to the display currency, a
 leveraged on trading-day returns. Each realization r is a start date; its month-m
 date is ``start + m months`` (day clipped to the month length), and ``day_idx[r, m]``
 is that date's position on the calendar grid.
+
+Synthetic mode (``req.mode == "synthetic"``, see ``synthetic_market``): the realizations
+are paths glued together from blocks of consecutive historical months (a block
+bootstrap). Every path gets its own stretch of the "calendar", so the simulators run on
+it unchanged.
 """
 from __future__ import annotations
 
@@ -32,11 +37,14 @@ class Market:
     day_idx: np.ndarray                 # (R, months+1) calendar positions
     first_dates: Dict[str, date]        # first available date per ticker
     fx_daily: Optional[np.ndarray] = None   # (n_days,) USD/ILS when the display currency is ILS
+    synthetic: bool = False             # block-bootstrap paths instead of start dates
+    cpi_ref: Optional[float] = None     # "today's" CPI when it is not the last calendar day
 
     @property
     def cpi_base(self) -> float:
-        """CPI of the last data month: real values are expressed in this money ("today")."""
-        return float(self.cpi_daily[-1])
+        """CPI of the last data month: real values are expressed in this money ("today").
+        A synthetic path starts today, so there it is the CPI at month 0 (1.0)."""
+        return float(self.cpi_ref) if self.cpi_ref is not None else float(self.cpi_daily[-1])
 
 
 def apply_leverage(prices: pd.Series, leverage: float, annual_cost_pct: float = 0.0) -> pd.Series:
@@ -130,6 +138,13 @@ def _calendar_bounds(raw, fx, cpi) -> tuple[pd.Timestamp, pd.Timestamp]:
 
 
 def prepare_market(req: PlanRequest, md: MarketData) -> Market:
+    if getattr(req, "mode", "history") == "synthetic":
+        return synthetic_market(req, md)
+    return _history_market(req, md)
+
+
+def _daily(req, md: MarketData):
+    """Every asset, the FX rate and the CPI on one daily calendar (display currency)."""
     raw, fx, cpi = load_series(req, md)
     lo, hi = _calendar_bounds(raw, fx, cpi)
     calendar = pd.date_range(lo, hi, freq="D")
@@ -157,7 +172,11 @@ def prepare_market(req: PlanRequest, md: MarketData) -> Market:
         uniq = months.unique()
         cpi_m = cpi.reindex(cpi.index.union(uniq)).ffill().reindex(uniq)
         cpi_daily = cpi_m.to_numpy()[uniq.get_indexer(months)]
+    return raw, lo, hi, calendar, keys, prices, cpi_daily, fx_daily
 
+
+def _history_market(req, md: MarketData) -> Market:
+    raw, lo, hi, calendar, keys, prices, cpi_daily, fx_daily = _daily(req, md)
     T = req.total_months
     last_start = hi - pd.DateOffset(months=T)
     first_start = max(lo, ILS_NOMINAL_FROM) if _nominal_ils(req) else lo
@@ -167,7 +186,7 @@ def prepare_market(req: PlanRequest, md: MarketData) -> Market:
     if len(starts) == 0:
         raise DataError(
             f"אין תאריכי התחלה אפשריים: הנתונים מכסים {lo:%d/%m/%Y}–{hi:%d/%m/%Y}, "
-            f"והתוכנית נמשכת {T} חודשים"
+            f"והתוכנית נמשכת {T} חודשים. לתוכנית ארוכה מההיסטוריה בחר 'מסלולים סינתטיים' בתקופת הבדיקה"
         )
 
     grid = month_grid(starts, T)
@@ -177,3 +196,73 @@ def prepare_market(req: PlanRequest, md: MarketData) -> Market:
     return Market(calendar=calendar, asset_keys=keys, prices=prices, cpi_daily=cpi_daily,
                   start_dates=starts, day_idx=day_idx,
                   first_dates={t: s.index[0].date() for t, s in raw.items()}, fx_daily=fx_daily)
+
+
+# ------------------------------------------------------------------ synthetic paths
+
+MAX_PATHS = 10_000
+
+
+def sample_window(req, lo: pd.Timestamp, hi: pd.Timestamp) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """The stretch of history the synthetic paths are drawn from: all of it, or the
+    user's ``sample_from``/``sample_to``, and never nominal shekels before July 1985."""
+    first = max(lo, ILS_NOMINAL_FROM) if _nominal_ils(req) else lo
+    s_lo = max(first, pd.Timestamp(req.sample_from)) if req.sample_from else first
+    s_hi = min(hi, pd.Timestamp(req.sample_to)) if req.sample_to else hi
+    return s_lo.normalize(), s_hi.normalize()
+
+
+def synthetic_market(req, md: MarketData) -> Market:
+    """Block bootstrap: ``req.paths`` paths of ``T`` months, each made of blocks of
+    ``req.block`` consecutive historical months starting at uniformly random months of the
+    sample window (the last block is cut at T). A month moves every asset, and the CPI,
+    together, so correlations, the link between inflation and returns, and the fat tails
+    of the history are kept; only the order of the blocks is new.
+
+    Path r occupies calendar positions r*(T+1) .. r*(T+1)+T, with prices and CPI starting
+    at 1, so ``day_idx`` simply walks along it. The calendar repeats the months from the
+    end of the data, as the paths are possible futures that start today. ``req.only_path``
+    keeps a single path (the detail view) from the same draw.
+    """
+    raw, lo, hi, calendar, keys, prices, cpi_daily, _ = _daily(req, md)
+    T = req.total_months
+    s_lo, s_hi = sample_window(req, lo, hi)
+    span = (s_hi.year - s_lo.year) * 12 + s_hi.month - s_lo.month
+    grid = pd.DatetimeIndex(month_grid(pd.DatetimeIndex([s_lo]), max(span, 0))[0])
+    grid = grid[grid <= s_hi]
+    N = len(grid) - 1                        # monthly returns in the sample
+    block = int(req.block)
+    if N < max(block, 12):
+        raise DataError(f"תקופת הדגימה קצרה מדי: {max(N, 0)} חודשים, וצריך לפחות {max(block, 12)} "
+                        f"(שנה אחת, ולא פחות מאורך הבלוק)")
+    pos = calendar.get_indexer(grid)
+    now, nxt = prices[:, pos[:-1]], prices[:, pos[1:]]
+    G = np.divide(nxt, now, out=np.zeros_like(now), where=now > 0)          # (A, N)
+
+    R = int(req.paths)
+    rng = np.random.default_rng(int(req.seed))
+    K = -(-T // block)
+    starts = rng.integers(0, N - block + 1, size=(R, K))
+    src = (starts[:, :, None] + np.arange(block)).reshape(R, K * block)[:, :T]   # (R, T)
+    if req.only_path is not None:
+        src = src[[int(req.only_path)]]
+        R = 1
+
+    def paths_of(g):                         # (..., N) monthly growth -> (..., R, T+1) from 1
+        out = np.ones(g.shape[:-1] + (R, T + 1))
+        out[..., 1:] = np.cumprod(g[..., src], axis=-1)
+        return out
+
+    A = len(keys)
+    syn_prices = paths_of(G).reshape(A, R * (T + 1))
+    syn_cpi = None
+    if cpi_daily is not None:
+        c = cpi_daily[pos]
+        syn_cpi = paths_of(c[1:] / c[:-1]).reshape(R * (T + 1))
+    today = pd.Timestamp(hi).to_period("M").to_timestamp()
+    months = pd.DatetimeIndex(month_grid(pd.DatetimeIndex([today]), T)[0])
+    return Market(calendar=pd.DatetimeIndex(np.tile(months.values, R)), asset_keys=keys, prices=syn_prices,
+                  cpi_daily=syn_cpi, start_dates=pd.DatetimeIndex([today] * R),
+                  day_idx=np.arange(R * (T + 1), dtype=np.int64).reshape(R, T + 1),
+                  first_dates={t: s.index[0].date() for t, s in raw.items()}, fx_daily=None,
+                  synthetic=True, cpi_ref=1.0 if syn_cpi is not None else None)

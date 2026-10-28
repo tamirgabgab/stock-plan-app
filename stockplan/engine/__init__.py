@@ -6,8 +6,8 @@ from dataclasses import replace
 import numpy as np
 
 from ..data.base import DataError, MarketData
-from .market import Market, available_range, prepare_market
-from .models import (ACCOUNTS, DEPOSIT_EVERY, REBALANCE_RULES, DepositEvent, SOLVE_AMOUNT, SOLVE_WITHDRAWAL, SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_START,
+from .market import MAX_PATHS, Market, available_range, prepare_market
+from .models import (ACCOUNTS, DEPOSIT_EVERY, MODES, REBALANCE_RULES, DepositEvent, SOLVE_AMOUNT, SOLVE_WITHDRAWAL, SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_START,
                      TRINITY_SOLVE_MODES, Holding, PlanRequest, SimulationResult, Stage,
                      WithdrawRequest, WithdrawResult, WithdrawStage)
 from .simulate import cohort_values, simulate
@@ -91,6 +91,22 @@ def _validate_dividends(s, i: int) -> None:
 def _validate_account(req) -> None:
     if req.account not in ACCOUNTS:
         raise ValueError(f"סוג חשבון לא מוכר: {req.account}")
+    _validate_mode(req)
+
+
+def _validate_mode(req) -> None:
+    if req.mode not in MODES:
+        raise ValueError(f"מקור תרחישים לא מוכר: {req.mode}")
+    if req.mode != "synthetic":
+        return
+    if not 1 <= req.paths <= MAX_PATHS:
+        raise ValueError(f"מספר המסלולים חייב להיות בין 1 ל-{MAX_PATHS:,}")
+    if not 1 <= req.block <= 120:
+        raise ValueError("אורך הבלוק חייב להיות בין 1 ל-120 חודשים")
+    if req.sample_from and req.sample_to and req.sample_from >= req.sample_to:
+        raise ValueError("תחילת תקופת הדגימה חייבת להיות לפני סופה")
+    if req.only_path is not None and not 0 <= req.only_path < req.paths:
+        raise ValueError("מספר המסלול מחוץ לטווח")
 
 
 def _validate_rebalance(req) -> None:
@@ -180,13 +196,14 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
     R = len(market.start_dates)
     T = req.total_months
     warnings = []
+    unit = "מסלולים" if market.synthetic else "תקופות"      # how the warnings count the realizations
 
     solved = None
     if req.solve_for != SOLVE_FINAL:
         solved = solve_unknown(req, market, objective(req, market))
         n_bad = int(np.isnan(solved).sum())
         if n_bad:
-            warnings.append(f"ב-{n_bad} תקופות לא ניתן להגיע ליעד (למשל התיק התאפס)")
+            warnings.append(f"ב-{n_bad} {unit} לא ניתן להגיע ליעד (למשל התיק התאפס)")
         x_run = np.where(np.isnan(solved), 0.0, solved)
         out = simulate(req, market, x=x_run, record=True)
     else:
@@ -204,7 +221,7 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
     year_gross, year_net = _cohort_irr(req, market, out, D)
     n_unpaid = int((out.events_unpaid > 1e-6).sum())
     if n_unpaid:
-        warnings.append(f"ב-{n_unpaid} תקופות לא היה מספיק כסף בתיק לכל המשיכות החד-פעמיות")
+        warnings.append(f"ב-{n_unpaid} {unit} לא היה מספיק כסף בתיק לכל המשיכות החד-פעמיות")
 
     unit = simulate(req, market, record=True, unit_growth=True).paths_net * D
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -237,14 +254,14 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
             success = depleted_at < 0
             n_fail = int((~success).sum())
             if n_fail:
-                warnings.append(f"ב-{n_fail} תקופות הכסף נגמר לפני סוף שלבי המשיכה")
+                warnings.append(f"ב-{n_fail} {unit} הכסף נגמר לפני סוף שלבי המשיכה")
         else:
             success = ~np.isnan(solved)
 
     starts = list(market.start_dates)
     ends = list(market.calendar[market.day_idx[:, -1]])
     if (final <= 0).any() and not req.has_withdrawals:
-        warnings.append(f"ב-{int((final <= 0).sum())} תקופות התיק התאפס")
+        warnings.append(f"ב-{int((final <= 0).sum())} {unit} התיק התאפס")
 
     return SimulationResult(start_dates=starts, end_dates=ends, months=T, final=final,
                             deposits_total=deposits.sum(axis=1), irr=irr, cagr=cagr,
@@ -366,11 +383,12 @@ def run_trinity(req: WithdrawRequest, md: MarketData) -> WithdrawResult:
     R = len(market.start_dates)
     T = req.total_months
     warnings = []
+    unit = "מסלולים" if market.synthetic else "תקופות"      # how the warnings count the realizations
     solved = None if req.solve_for == SOLVE_FINAL else solve_unknown(req, market, objective(req, market))
     if solved is not None:
         n_bad = int(np.isnan(solved).sum())
         if n_bad:
-            warnings.append(f"ב-{n_bad} תקופות אין פתרון")
+            warnings.append(f"ב-{n_bad} {unit} אין פתרון")
         out = simulate_withdraw(req, market, x=np.where(np.isnan(solved), 0.0, solved), record=True)
     else:
         out = simulate_withdraw(req, market, record=True)
@@ -384,7 +402,7 @@ def run_trinity(req: WithdrawRequest, md: MarketData) -> WithdrawResult:
         success = out.shortfall_at < 0
         n_fail = int((~success).sum())
         if n_fail:
-            warnings.append(f"ב-{n_fail} תקופות הכסף נגמר לפני הסוף")
+            warnings.append(f"ב-{n_fail} {unit} הכסף נגמר לפני הסוף")
     else:
         # The solved plan sits exactly on the success boundary; "success" means a solution exists.
         success = ~np.isnan(solved)
@@ -405,6 +423,7 @@ def trinity_heatmap(req: WithdrawRequest, md: MarketData, rates, years) -> dict:
     the start amount, in display units) as percent matrices [year][rate]; None where the
     data is too short for that horizon.
     """
+    req = replace(req, mode="history")      # the heat map is over historical start dates
     validate_withdraw(replace(req, solve_for=SOLVE_FINAL))
     rates = np.asarray(rates, dtype=float)
     survival, preserve, counts = [], [], []
@@ -471,7 +490,8 @@ def solve_trace(req, md: MarketData) -> dict:
     x_max = max(x_star * 1.6, max((s["x"] for s in trace["steps"]), default=1.0) * 1.05, 1e-6)
     grid = np.linspace(0.0, x_max, 60)
     ys = value(grid, np.full(len(grid), r))
-    return {"start_date": market.start_dates[r].strftime("%Y-%m-%d"), "x": trace["x"],
+    return {"start_date": market.start_dates[r].strftime("%Y-%m-%d"), "path": r if market.synthetic else None,
+            "x": trace["x"],
             "converged": trace["converged"], "target": req.target_amount, "steps": trace["steps"],
             "grid_x": [float(v) for v in grid], "grid_y": [None if not np.isfinite(v) else float(v) for v in ys],
             "n": R, "solved_median": med}

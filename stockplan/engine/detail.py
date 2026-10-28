@@ -34,14 +34,27 @@ def _num(v) -> float | None:
     return round(v, 6) if np.isfinite(v) else None
 
 
-def realization_detail(req, md: MarketData, start: date) -> dict:
+def one_realization(req, start: date | None, path: int | None):
+    """The request narrowed to one realization: a start date, or a synthetic path."""
+    if req.mode == "synthetic":
+        if path is None:
+            raise ValueError("במצב סינתטי צריך לבחור מסלול")
+        return replace(req, only_path=int(path))
+    if start is None:
+        raise ValueError("צריך לבחור תאריך התחלה")
+    return replace(req, min_start=start, max_start=start)
+
+
+def realization_detail(req, md: MarketData, start: date | None, path: int | None = None) -> dict:
+    """Everything about one realization. A synthetic path has no real dates: its months
+    run from the end of the data, there is no FX view and no basket of raw prices."""
     # Imported here: the engine package imports this module.
     from . import run_plan, run_trinity
     from .simulate import simulate
     from .withdraw import simulate_withdraw
 
     trinity = isinstance(req, WithdrawRequest)
-    one = replace(req, min_start=start, max_start=start)
+    one = one_realization(req, start, path)
     res = run_trinity(one, md) if trinity else run_plan(one, md)
     market = prepare_market(one, md)
     T = one.total_months
@@ -62,7 +75,7 @@ def realization_detail(req, md: MarketData, start: date) -> dict:
     deflate = (market.cpi_base / cpi) if (req.real and cpi is not None) else np.ones(T + 1)
     path_gross = out.paths_gross[0] * deflate
     fx = market.fx_daily
-    if fx is None:                      # dollars: still offer the shekel view when the rate is available
+    if fx is None and not market.synthetic:   # dollars: still offer the shekel view when the rate is available
         try:
             s = md.fx_usd_ils()
             fx = s.reindex(s.index.union(market.calendar)).ffill().reindex(market.calendar).to_numpy()
@@ -108,7 +121,8 @@ def realization_detail(req, md: MarketData, start: date) -> dict:
             })
         trades.append(row)
 
-    # Basket price: per day, the weights of the stage that holds that day.
+    synthetic = market.synthetic
+    # Basket price: per day, the weights of the stage that holds that day (history only).
     d0, d1 = int(idx[0]), int(idx[T])
     days = np.arange(d0, d1 + 1)
     stage_day = np.searchsorted(idx[stage_starts[1:-1]], days, side="right") if len(one.stages) > 1 \
@@ -154,15 +168,18 @@ def realization_detail(req, md: MarketData, start: date) -> dict:
         "path_gross": [_num(v) for v in path_gross],
         # Cumulative money put in, net of withdrawal events (accumulation only).
         "flow": None if trinity else [_num(v) for v in np.asarray(res.deposits_path)[0]],
-        "basket": series_at(days[keep]), "buys": series_at(marker_days), "sells": series_at(sale_days),
-        "has_fx": fx is not None,
+        "basket": None if synthetic else series_at(days[keep]),
+        "buys": None if synthetic else series_at(marker_days),
+        "sells": None if synthetic else series_at(sale_days),
+        "has_fx": fx is not None, "synthetic": synthetic, "path_index": path if synthetic else None,
     }
 
 
 BENCH = "__BENCH__"
 
 
-def benchmark_path(req, md: MarketData, start: date, rate_pct: float, x: float | None = None) -> dict:
+def benchmark_path(req, md: MarketData, start: date | None, rate_pct: float, x: float | None = None,
+                   path: int | None = None) -> dict:
     """The same plan on one start date, with every stage's portfolio replaced by a single
     asset that earns a fixed ``rate_pct`` a year. Deposits, withdrawals, fees and tax follow
     exactly the same rules as the real account (one asset, so a stage switch sells nothing).
@@ -175,10 +192,10 @@ def benchmark_path(req, md: MarketData, start: date, rate_pct: float, x: float |
     from .models import Holding
 
     trinity = isinstance(req, WithdrawRequest)
-    one = replace(req, min_start=start, max_start=start)
+    one = one_realization(req, start, path)
     market = prepare_market(one, md)
     T = one.total_months
-    days = np.arange(len(market.calendar), dtype=float)
+    days = np.asarray((market.calendar - market.calendar[0]).days, dtype=float)
     growth = (1 + rate_pct / 100) ** (days / 365.25)
     if req.real and market.cpi_daily is not None:
         growth = growth * market.cpi_daily / market.cpi_daily[0]

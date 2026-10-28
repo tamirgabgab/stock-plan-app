@@ -693,3 +693,7 @@ fieldset.apt-fields:disabled > :not(.field-note) { opacity: 0.45; }
   position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 40;
   box-shadow: var(--shadow); border-radius: 999px; padding: 10px 20px;
 }
+
+/* Synthetic scenarios: the seed and its "draw again" button */
+.seed-row { display: flex; gap: 6px; align-items: center; }
+.seed-row .input-wrap { flex: 1; }

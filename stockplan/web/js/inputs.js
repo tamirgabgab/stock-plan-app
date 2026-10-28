@@ -288,9 +288,57 @@ export function RebalanceSection({ plan, set }) {
   </details>`;
 }
 
+const MODE_OPTIONS = [{ value: "history", label: "תאריכים היסטוריים" }, { value: "synthetic", label: "מסלולים סינתטיים" }];
+
+// Market scenarios: every historical start date in a window, or synthetic paths made of
+// blocks of historical months (shared by the accumulation and the Trinity panels).
 export function PeriodSection({ plan, set, range, rangeError, totalMonths }) {
+  const synthetic = plan.mode === "synthetic";
   return html`<details open class="section">
-    <summary>תקופת הבדיקה</summary>
+    <summary>${synthetic ? "תרחישי השוק" : "תקופת הבדיקה"}</summary>
+    <${Segmented} label="מקור התרחישים" options=${MODE_OPTIONS} value=${plan.mode || "history"} onChange=${set("mode")}
+      hint="תאריכים היסטוריים: כל תאריך התחלה בהיסטוריה הוא תרחיש, ולכן לתוכנית ארוכה יש מעט תרחישים שחופפים זה לזה. מסלולים סינתטיים: כל מסלול מורכב מבלוקים של חודשים רצופים אמיתיים (כל הנכסים, שער הדולר והאינפלציה יחד) שנבחרים באקראי מההיסטוריה. כך יש אלפי תרחישים גם לתוכנית של 50 שנה, עם המתאמים והקריסות האמיתיים, אבל בסדר חדש." />
+    ${synthetic ? html`<${SyntheticFields} plan=${plan} set=${set} range=${range} rangeError=${rangeError} totalMonths=${totalMonths} />`
+      : html`<${HistoryFields} plan=${plan} set=${set} range=${range} rangeError=${rangeError} totalMonths=${totalMonths} />`}
+  </details>`;
+}
+
+function SyntheticFields({ plan, set, range, rangeError, totalMonths }) {
+  const lo = range?.min_start, hi = range?.data_end;
+  const from = plan.sample_from && lo && plan.sample_from > lo ? plan.sample_from : lo;
+  const to = plan.sample_to && hi && plan.sample_to < hi ? plan.sample_to : hi;
+  const months = from && to ? Math.max(0, (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 + Number(to.slice(5, 7)) - Number(from.slice(5, 7))) : null;
+  const block = plan.block || 12;
+  return html`
+    ${rangeError ? html`<p class="callout error">${rangeError}</p>`
+      : months !== null ? html`<p class="callout">${(plan.paths || 0).toLocaleString("he-IL")} מסלולים של ${monthsLabel(totalMonths)}, מבלוקים של ${monthsLabel(block)}
+          מתוך ${months.toLocaleString("he-IL")} חודשי היסטוריה (<b>${dateHe(from)}</b> עד <b>${dateHe(to)}</b>).
+          <br /><span class="muted">כל מסלול מתחיל היום. אותו זרע נותן אותם מסלולים, כך שאפשר להשוות שינויים בתוכנית על אותם תרחישים.</span></p>
+          ${(range.notes || []).map((n) => html`<p class="callout warn">${n}</p>`)}`
+      : html`<p class="callout muted">בודק את טווח הנתונים...</p>`}
+    <div class="grid-3">
+      <${NumberField} label="מספר מסלולים" value=${plan.paths ?? 2000} onChange=${set("paths")} step=${500} min=${1} max=${10000}
+        hint="יותר מסלולים נותנים אחוזונים יציבים יותר, ולוקחים יותר זמן. 2,000 מספיקים בדרך כלל." />
+      <${NumberField} label="אורך בלוק" value=${block} onChange=${set("block")} step=${6} min=${1} max=${120} suffix="חודשים"
+        hint="כמה חודשים רצופים נלקחים מההיסטוריה בכל פעם. בלוק ארוך שומר יותר על מחזורי שוק (ירידה ואחריה התאוששות), וקצר נותן יותר גיוון. 12 עד 36 הם בחירה מקובלת." />
+      <div class="field"><span class="field-label">זרע אקראי <${Hint} text="המספר שקובע את ההגרלה. אותו זרע נותן בדיוק אותם מסלולים; 'הגרל' מחליף אותו." /></span>
+        <div class="seed-row"><${NumberInput} value=${plan.seed ?? 1} onChange=${set("seed")} step=${1} min=${0} />
+          <button type="button" class="btn ghost small" onClick=${() => set("seed")(Math.floor(Math.random() * 1e6))}>הגרל</button></div></div>
+    </div>
+    <div class="grid-2">
+      <${Field} label="דגימה מתאריך">
+        <${DatePicker} value=${plan.sample_from} min=${lo} max=${plan.sample_to || hi}
+          onChange=${set("sample_from")} label="דגימה מתאריך" placeholder=${lo ? dateHe(lo) : "כל ההיסטוריה"} />
+      </${Field}>
+      <${Field} label="דגימה עד תאריך">
+        <${DatePicker} value=${plan.sample_to} min=${plan.sample_from || lo} max=${hi}
+          onChange=${set("sample_to")} label="דגימה עד תאריך" placeholder=${hi ? dateHe(hi) : "כל ההיסטוריה"} />
+      </${Field}>
+    </div>`;
+}
+
+function HistoryFields({ plan, set, range, rangeError, totalMonths }) {
+  return html`
     ${rangeError
       ? html`<p class="callout error">${rangeError}</p>`
       : range
@@ -311,8 +359,7 @@ export function PeriodSection({ plan, set, range, rangeError, totalMonths }) {
     ${range ? html`<${DateRangeSlider} range=${range} plan=${plan} set=${set} />` : null}
     <${Segmented} label="מרווח בין תאריכי התחלה" options=${[{ value: "D", label: "יום" }, { value: "W", label: "שבוע" }, { value: "M", label: "חודש" }]}
       value=${plan.step} onChange=${set("step")}
-      hint="כל תאריך התחלה הוא ריאליזציה אחת. יום נותן הכי הרבה דגימות, אבל הן חופפות מאוד זו לזו." />
-  </details>`;
+      hint="כל תאריך התחלה הוא ריאליזציה אחת. יום נותן הכי הרבה דגימות, אבל הן חופפות מאוד זו לזו." />`;
 }
 
 // Two-handle slider over the whole available history: a fast way to pick the start-date window.

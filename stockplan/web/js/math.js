@@ -300,6 +300,14 @@ function WithdrawSection({ tplan, tres }) {
       המשיכה נטו שרוצים בחודש ${T(S`m`)} של שלב ${T(S`k`)} עם אחוז שנתי ${T(S`\rho_k`)}:</p>
     ${D(S`W_m = \begin{cases} \sigma_m\,\dfrac{\rho_k}{1200}\,S_0 & \text{fixed: percent of the start amount} \\[10pt] \sigma_m\,A_k & \text{fixed: amount per month} \\[6pt] \operatorname{clip}\!\Big(\dfrac{\rho_k}{1200}\,V_m,\;\sigma_m L_k,\;\sigma_m U_k\Big) & \text{percent of the current balance, with floor } L_k \text{ and ceiling } U_k \end{cases}`)}
     <p>ועוד ${T(S`\sigma_m O_k`)} או ${T(S`o_k V_m / 100`)} בחודש הראשון של השלב (משיכה חד-פעמית בכסף או באחוז מהיתרה). משיכה צמודה היא פשוט ${T(S`\sigma_m`)} שעוקב אחרי המדד: ${T(S`W_m`)} שומר על כוח הקנייה שלו.</p>
+    <h3>שיטות מתקדמות, שינוי בהוצאות והכנסות</h3>
+    <p><b>שינוי בהוצאות.</b> בשיטה הקבועה וב-Guyton-Klinger המשיכה מוכפלת ב-${T(S`(1+g)^{\lfloor j/12 \rfloor}`)}, כאשר ${T(S`g`)} הוא השינוי השנתי ו-${T(S`j`)} החודש בשלב.</p>
+    <p><b>Guyton-Klinger.</b> מתחילים במשיכה ${T(S`W`)} של הכלל הקבוע, והשיעור ההתחלתי הוא ${T(S`r_0 = 12W/V_0`)}. כל 12 חודשים, עם האינפלציה של השנה ${T(S`\pi`)} והשיעור ${T(S`r = 12W/V`)}:</p>
+    ${D(S`W \leftarrow \begin{cases} W & V < V_{-12} \text{ and } r(1+\pi) > r_0 \\ W(1+\pi) & \text{otherwise} \end{cases}, \qquad W \leftarrow \begin{cases} W(1-s) & r > r_0(1+b),\ \text{more than 15 years left} \\ W(1+s) & r < r_0(1-b) \\ W & \text{otherwise} \end{cases}`)}
+    <p>כאשר ${T(S`b`)} הוא הסף (20% כברירת מחדל) ו-${T(S`s`)} גודל השינוי (10%).</p>
+    <p><b>VPW.</b> בכל חודש מושכים את התשלום הקבוע, בתחילת כל חודש, שמכלה את השווי נטו ${T(S`N_m`)} עד סוף התוכנית (${T(S`n`)} חודשים שנשארו) בתשואה החודשית הצפויה ${T(S`i`)}. כך הכסף לא נגמר, והחודש האחרון לוקח את כל מה שנשאר:</p>
+    ${D(S`W_m = \frac{N_m\, i}{\big(1 - (1+i)^{-n}\big)(1+i)}`)}
+    <p><b>הכנסות לפי גיל.</b> הכנסה ${T(S`I`)} לחודש מגיל ${T(S`a`)} נכנסת מהחודש שבו ${T(S`a_0 + m/12 \ge a`)}, צמודה כמו המשיכות. בכלל שמגדיר הוצאה (סכום קבוע, אחוז מהיתרה בפרישה או Guyton-Klinger) נמשך מהתיק רק ${T(S`\max(W_m - \sigma_m I,\,0)`)}. באחוז מהיתרה הנוכחית וב-VPW ההכנסה באה בנוסף.</p>
     <h3>המכירה והמס</h3>
     <p>כדי לקבל ${T(S`W_m`)} ביד מוכרים חלק ${T(S`f`)} מכל נכס באופן יחסי. התמורה היא ${T(S`f V_m`)}, הרווח הממומש ${T(S`f G_m`)} (עם ${T(S`G_m`)} מסעיף 4), והמס
       ${T(S`\tau\max(fG_m - H_m, 0)`)}. דורשים שהנטו יהיה בדיוק המשיכה:</p>

@@ -2,7 +2,7 @@
 import { html } from "../vendor/preact-htm.module.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel } from "./format.js";
 import { DatePicker, DualRange, Field, Hint, IconButton, NumberField, NumberInput, Segmented, SymbolPicker, Toggle } from "./ui.js";
-import { WithdrawFields } from "./withdrawal.js";
+import { AgeIncomeSection, WithdrawFields } from "./withdrawal.js";
 import { defaultDividend } from "./dividends.js";
 
 // Plan state -> API body: drop the UI ids and empty holdings (shared with the math tab).
@@ -45,7 +45,8 @@ export function newStage(n) {
 
 // The withdrawal rule a stage gets when it is switched to "withdraw" (the 4% rule).
 const WITHDRAW_DEFAULTS = { rate: 4, amount: 5000, rate_unit: "pct", basis: "initial", floor: 0, ceiling: 0,
-                            guard_unit: "pct", one_time: 0, one_time_unit: "money", annuity: false };
+                            guard_unit: "pct", one_time: 0, one_time_unit: "money", annuity: false,
+                            method: "fixed", gk_band: 20, gk_step: 10, vpw_rate: 4, spending_change: 0 };
 
 // Example lifecycle plan: 25 years of indexed deposits, then 30 years of the 4% rule.
 function retirementPreset(p) {
@@ -111,6 +112,7 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites, top =
     <${ScheduleSection} plan=${plan} set=${set} setPlan=${setPlan} sym=${sym} totalMonths=${totalMonths} />
     <${TaxSection} plan=${plan} set=${set} setPlan=${setPlan} deposits />
     <${RebalanceSection} plan=${plan} set=${set} />
+    <${AgeIncomeSection} plan=${plan} setPlan=${setPlan} sym=${sym} showIncomes=${withdraws} />
     <${PeriodSection} plan=${plan} set=${set} range=${range} rangeError=${rangeError} totalMonths=${totalMonths} />
 
     <section class="section stages" aria-label="שלבי ההשקעה">

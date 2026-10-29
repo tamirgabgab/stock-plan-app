@@ -69,10 +69,28 @@ class Stage:
     one_time: float = 0.0
     one_time_unit: str = "money"
     annuity: bool = False         # קופת גמל: withdrawn as an annuity, so the exempt part is tax-free
+    # Advanced methods (see portfolio.StageWithdrawals): "fixed", "gk" (Guyton-Klinger
+    # guardrails: a band around the initial rate and a step, percent) or "vpw" (spend the
+    # balance over the months left, at an expected annual return); spending that changes by
+    # ``spending_change`` percent every stage year.
+    method: str = "fixed"
+    gk_band: float = 20.0
+    gk_step: float = 10.0
+    vpw_rate: float = 4.0
+    spending_change: float = 0.0
 
     @property
     def withdraws(self) -> bool:
         return self.kind == "withdraw"
+
+
+@dataclass
+class Income:
+    """Other income from an age on (a state pension, an occupational pension), per month in
+    input units, indexed like the withdrawals."""
+    age: float
+    amount: float
+    name: str = ""
 
 
 @dataclass
@@ -130,6 +148,10 @@ class PlanRequest:
     sample_from: Optional[date] = None
     sample_to: Optional[date] = None
     only_path: Optional[int] = None  # keep one synthetic path (the detail view)
+    # Age at the start of the plan (0 = not set): the charts' time axis, and when the
+    # incomes start.
+    start_age: float = 0.0
+    incomes: List[Income] = field(default_factory=list)
 
     @property
     def total_months(self) -> int:
@@ -212,6 +234,8 @@ class SimulationResult:
     retire_value: "object" = None         # (R,) net balance when the withdrawals start, display units
     retire_month: int = -1
     withdraw_monthly: "object" = None     # (R,) average monthly withdrawal of the withdrawal stages
+    # Sequence risk: the strategy's annual return in the first (up to) 5 years of retirement.
+    seq_return: "object" = None
     dividend_tax: "object" = None         # (R,) the part of ``tax_paid`` paid on dividends
     deposit_fees: "object" = None         # (R,) the part of ``fees_total`` taken from the deposits
 
@@ -237,6 +261,15 @@ class WithdrawStage:
     one_time: float = 0.0         # withdrawal at the start of the stage
     one_time_unit: str = "money"  # "money" or "pct" (of the balance at that moment)
     annuity: bool = False         # see Stage.annuity
+    # Advanced methods (see portfolio.StageWithdrawals): "fixed", "gk" (Guyton-Klinger
+    # guardrails: a band around the initial rate and a step, percent) or "vpw" (spend the
+    # balance over the months left, at an expected annual return); spending that changes by
+    # ``spending_change`` percent every stage year.
+    method: str = "fixed"
+    gk_band: float = 20.0
+    gk_step: float = 10.0
+    vpw_rate: float = 4.0
+    spending_change: float = 0.0
     name: str = ""
 
 
@@ -271,6 +304,10 @@ class WithdrawRequest:
     sample_from: Optional[date] = None
     sample_to: Optional[date] = None
     only_path: Optional[int] = None  # keep one synthetic path (the detail view)
+    # Age at the start of the plan (0 = not set): the charts' time axis, and when the
+    # incomes start.
+    start_age: float = 0.0
+    incomes: List[Income] = field(default_factory=list)
 
     @property
     def total_months(self) -> int:
@@ -299,3 +336,4 @@ class WithdrawResult:
     withdrawals_path: "object"    # (R, months+1) cumulative net withdrawals, display units
     solved: "object" = None
     warnings: List[str] = field(default_factory=list)
+    seq_return: "object" = None   # (R,) annual return of the strategy in the first (up to) 5 years

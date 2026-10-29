@@ -124,7 +124,7 @@ export function CompareCard({ resA, resB, rangeA, rangeB, otherError, busy, net,
       </div>
     </div>
     ${sameCur ? html`<h3>השווי לאורך הזמן</h3>
-      <${Plot} build=${() => compareFigure({ a: { cols: a.cs.sorted }, b: { cols: b.cs.sorted }, sym })} deps=${[a, b, themeKey]} cls="plot" />` : null}
+      <${Plot} build=${() => compareFigure({ a: { cols: a.cs.sorted }, b: { cols: b.cs.sorted }, sym, age0: a.plan.start_age === b.plan.start_age ? a.plan.start_age || 0 : 0 })} deps=${[a, b, themeKey]} cls="plot" />` : null}
   </section>`;
 }
 

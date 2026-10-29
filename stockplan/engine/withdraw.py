@@ -22,7 +22,7 @@ import numpy as np
 
 from .market import Market
 from .models import HISHTALMUT_MONTHS, SOLVE_AMOUNT, SOLVE_RATE, SOLVE_START, WithdrawRequest, exempt_now
-from .portfolio import Book, paid_short, rebalance_rows, withdrawal_want
+from .portfolio import Book, StageWithdrawals, income_months, paid_short, rebalance_rows
 from .simulate import _stage_weights, month_growth, stage_dividends
 
 
@@ -78,6 +78,7 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
     rate_override = x if (x is not None and req.solve_for == SOLVE_RATE) else None
     amount_override = x if (x is not None and req.solve_for == SOLVE_AMOUNT) else None
     stage_starts = np.cumsum([0] + [s.months for s in req.stages])
+    income = income_months(req, T)
 
     cpi0 = cpi[:, 0] if cpi is not None else None
     book.m, book.ctx = 0, "start"
@@ -90,6 +91,7 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
             book.m, book.ctx = m0, "switch"
             book.reallocate(w, cpi[:, m0] if cpi is not None else None, taxable=taxable_moves)
 
+        rule = StageWithdrawals(stage, T - m0)
         for j in range(stage.months):
             m = m0 + j
             cpi_m = cpi[:, m] if cpi is not None else None
@@ -99,8 +101,10 @@ def simulate_withdraw(req: WithdrawRequest, market: Market, x: Optional[np.ndarr
             if moved is not None:
                 book.m, book.ctx = m, "rebalance"
                 book.reallocate(w, cpi_m, taxable=taxable_moves, rows=moved)
-            want = withdrawal_want(stage, j, book.total, start_amount, sc,
-                                   rate=rate_override, amount=amount_override)
+            total = book.liquidation_value(cpi_m) if stage.method == "vpw" else book.total    # VPW: the net value
+            want = rule.want(j, total, start_amount, sc, rate=rate_override, amount=amount_override)
+            if rule.covers_spending and income[m]:
+                want = np.maximum(want - income[m] * sc, 0.0)       # other income pays part of it
 
             book.m, book.ctx = m, ("one_time" if j == 0 and stage.one_time > 0 else "withdraw")
             got = book.withdraw_net(want, cpi_m)

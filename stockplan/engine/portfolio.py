@@ -235,6 +235,13 @@ def paid_short(got: np.ndarray, want: np.ndarray) -> np.ndarray:
     return want - got > SHORT_TOLERANCE * want + 1e-9
 
 
+def one_time_want(stage, j: int, total: np.ndarray, sc: np.ndarray) -> np.ndarray:
+    """(R,) the one-time withdrawal at the start of a stage (zero in its other months)."""
+    if j != 0 or stage.one_time <= 0:
+        return np.zeros(len(total))
+    return stage.one_time / 100 * total if stage.one_time_unit == "pct" else stage.one_time * sc
+
+
 def withdrawal_want(stage, j: int, total: np.ndarray, start: np.ndarray, sc: np.ndarray,
                     rate: np.ndarray | None = None, amount: np.ndarray | None = None) -> np.ndarray:
     """(R,) net cash a withdrawal stage asks for at its month ``j``, nominal.
@@ -254,9 +261,7 @@ def withdrawal_want(stage, j: int, total: np.ndarray, start: np.ndarray, sc: np.
         fixed = np.full(R, float(stage.amount))          # per month, input units
     else:
         fixed = rate_v / 1200 * start                    # percent per year of the start amount
-    want = np.zeros(R)
-    if j == 0 and stage.one_time > 0:
-        want += stage.one_time / 100 * total if stage.one_time_unit == "pct" else stage.one_time * sc
+    want = one_time_want(stage, j, total, sc)
     if basis == "current":
         monthly = rate_v / 1200 * total
         pct = stage.guard_unit == "pct"
@@ -267,3 +272,105 @@ def withdrawal_want(stage, j: int, total: np.ndarray, start: np.ndarray, sc: np.
     else:
         monthly = fixed * sc
     return want + monthly
+
+
+# ------------------------------------------------------------ advanced withdrawal methods
+
+WITHDRAW_METHODS = ("fixed", "gk", "vpw")
+GK_PRESERVE_MONTHS = 180       # the capital-preservation cut is skipped in the last 15 years
+
+
+def gk_update(W, total, last_total, infl, r0, band, step, months_left):
+    """Guyton-Klinger's yearly review of the monthly withdrawal ``W`` (nominal), vectorized.
+
+    1. Inflation: W grows with the year's inflation ``infl``, except after a year in which
+       the portfolio fell (``total < last_total``) while the withdrawal rate is above the
+       initial rate ``r0``: then it stays.
+    2. Capital preservation: a withdrawal rate above r0 * (1 + band) cuts W by ``step``
+       (not in the last 15 years). 3. Prosperity: below r0 * (1 - band) raises it by ``step``.
+    Rates are yearly (12 W / total); ``band`` and ``step`` are fractions.
+    """
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rate = np.where(total > 0, 12 * W * infl / total, np.inf)
+        freeze = (total < last_total) & (rate > r0)
+        W = np.where(freeze, W, W * infl)
+        rate = np.where(total > 0, 12 * W / total, np.inf)
+    cut = (rate > r0 * (1 + band)) & (months_left > GK_PRESERVE_MONTHS)
+    up = rate < r0 * (1 - band)
+    return np.where(cut, W * (1 - step), np.where(up, W * (1 + step), W))
+
+
+def vpw_payment(total, rate_pct: float, months_left: int):
+    """(R,) VPW: the level monthly payment, paid at the start of each month, that spends
+    ``total`` in ``months_left`` months at an expected annual return of ``rate_pct`` (an
+    annuity due, recomputed every month). The last month takes everything that is left."""
+    i = (1 + rate_pct / 100) ** (1 / 12) - 1
+    n = max(int(months_left), 1)
+    if abs(i) < 1e-12:
+        return total / n
+    return total * i / (1 - (1 + i) ** -n) / (1 + i)
+
+
+class StageWithdrawals:
+    """The withdrawal rule of one withdrawal stage, with the state Guyton-Klinger needs.
+
+    ``method``: "fixed" (``withdrawal_want``), "gk" (Guyton-Klinger guardrails around the
+    fixed withdrawal, reviewed every 12 months of the stage) or "vpw" (spend the balance over
+    the months left in the plan; ``total`` is then the net value, after the tax of selling). ``spending_change`` (percent per year) scales the fixed and
+    Guyton-Klinger withdrawals by a step every stage year (spending that falls or rises with
+    age). ``months_left`` counts from the stage start to the end of the plan.
+    """
+
+    def __init__(self, stage, months_left: int):
+        self.stage = stage
+        self.months_left = months_left
+        self.W = None
+
+    @property
+    def covers_spending(self) -> bool:
+        """The rule is a spending need (other income pays part of it), not a share of the
+        balance: a fixed amount, a percent of the initial basis, or Guyton-Klinger."""
+        st = self.stage
+        return st.method == "gk" or (st.method == "fixed" and (st.rate_unit == "money" or st.basis == "initial"))
+
+    def want(self, j: int, total, start, sc, rate=None, amount=None):
+        st = self.stage
+        one = one_time_want(st, j, total, sc)
+        if st.method == "vpw":
+            return one + vpw_payment(np.maximum(total - one, 0.0), st.vpw_rate, self.months_left - j)
+        growth = (1 + st.spending_change / 100) ** (j // 12)
+        if st.method != "gk":
+            return withdrawal_want(st, j, total, start, sc, rate=rate, amount=amount) * growth
+        if j == 0:
+            R = len(total)
+            if amount is not None:
+                units = amount
+            elif st.rate_unit == "money" and rate is None:
+                units = np.full(R, float(st.amount))
+            else:
+                units = (rate if rate is not None else np.full(R, float(st.rate))) / 1200 * start
+            self.W = units * sc
+            base = np.maximum(total - one, 0.0)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                self.r0 = np.where(base > 0, 12 * self.W / base, 0.0)
+            self.last_total, self.last_sc = total, sc
+        elif j % 12 == 0:
+            self.W = gk_update(self.W, total, self.last_total, sc / self.last_sc, self.r0,
+                               st.gk_band / 100, st.gk_step / 100, self.months_left - j)
+            self.last_total, self.last_sc = total, sc
+        return one + self.W * growth
+
+
+def income_months(req, T: int) -> np.ndarray:
+    """(T+1,) other income per plan month in input units (pensions, from an age on).
+
+    Paid during the withdrawal stages; it lowers what a spending rule takes from the
+    portfolio (see ``StageWithdrawals.covers_spending``). Indexed like the withdrawals.
+    """
+    out = np.zeros(T + 1)
+    if not req.incomes or req.start_age <= 0:
+        return out
+    age = req.start_age + np.arange(T + 1) / 12
+    for inc in req.incomes:
+        out += np.where(age >= inc.age - 1e-9, inc.amount, 0.0)
+    return out

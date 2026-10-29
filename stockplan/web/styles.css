@@ -697,3 +697,15 @@ fieldset.apt-fields:disabled > :not(.field-note) { opacity: 0.45; }
 /* Synthetic scenarios: the seed and its "draw again" button */
 .seed-row { display: flex; gap: 6px; align-items: center; }
 .seed-row .input-wrap { flex: 1; }
+
+/* A/B comparison: the bar at the top of the panel and the comparison card */
+.ab-bar { background: var(--surface-2); }
+.ab-bar.on { border-inline-start: 3px solid var(--accent); }
+.ab-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.compare-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .compare-grid { grid-template-columns: minmax(0, 1fr); } }
+.compare-table th.a { color: var(--series-1); }
+.compare-table th.b { color: var(--series-2); }
+.compare-big { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.compare-big b { font-size: 28px; color: var(--accent); }
+.compare h3 { margin: 14px 0 4px; font-size: 14px; }

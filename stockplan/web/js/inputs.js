@@ -60,7 +60,7 @@ function retirementPreset(p) {
   };
 }
 
-export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
+export function InputsPanel({ plan, setPlan, range, rangeError, favorites, top = null }) {
   const sym = CURRENCY_SYMBOL[plan.currency];
   const set = (key) => (value) => setPlan((p) => ({ ...p, [key]: value }));
   const setStage = (id, fn) => setPlan((p) => ({ ...p, stages: p.stages.map((s) => (s.id === id ? fn(s) : s)) }));
@@ -75,6 +75,7 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites }) {
   const withdraws = hasWithdrawals(plan);
 
   return html`<aside class="panel inputs" aria-label="הגדרות">
+    ${top}
     <${TickerList} favorites=${favorites} />
 
     <details open class="section">

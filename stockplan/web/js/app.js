@@ -50,6 +50,8 @@ const DEFAULT_PLAN = {
   seed: 1,
   sample_from: null,
   sample_to: null,
+  start_age: 0,
+  incomes: [],
   stages: [{ ...newStage(1), months: 240, monthly_deposit: 1000 }],
 };
 

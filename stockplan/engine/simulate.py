@@ -18,8 +18,10 @@ spread over ``lump_spread`` months: it leaves the investor at month 0, waits as 
 ``cash_rate`` (taxed), and is invested in equal parts of what is left.
 
 Withdrawal stages make a lifecycle plan: no periodic deposits, and every month the stage's
-withdrawal rule (the Trinity tab's, ``portfolio.withdrawal_want``) sells a pro-rata slice net
-of tax. Its "initial" basis is the net balance when the first withdrawal stage starts.
+withdrawal rule (the Trinity tab's, ``portfolio.StageWithdrawals``: fixed, Guyton-Klinger or
+VPW) sells a pro-rata slice net of tax. Its "initial" basis is the net balance when the first
+withdrawal stage starts. Other income from an age on (``req.incomes``) pays part of a
+spending rule's withdrawal.
 
 The account type (``models.ACCOUNTS``): a regular account pays tax on the dividends every
 month (each holding's yield, reinvested net) and may tax the stage switches; an Israeli
@@ -41,7 +43,7 @@ from typing import Optional
 import numpy as np
 
 from .market import Market
-from .portfolio import Book, paid_short, rebalance_rows, withdrawal_want
+from .portfolio import Book, StageWithdrawals, income_months, paid_short, rebalance_rows
 from .models import PlanRequest, SOLVE_MONTHLY, SOLVE_START, SOLVE_WITHDRAWAL, exempt_now
 
 
@@ -172,6 +174,7 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
     retire_month = req.retire_month
     anchor = max(retire_month, 0)
     amount_override = x if (x is not None and req.solve_for == SOLVE_WITHDRAWAL) else None
+    income = income_months(req, T)
 
     def deposit_scale(m):
         """Nominal value of one input unit deposited at month m.
@@ -263,6 +266,7 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
             initial = 0.0 * ones if spread else lump
 
         annuity = stage.withdraws and stage.annuity
+        rule = StageWithdrawals(stage, T - m0) if stage.withdraws else None
         for j in range(stage.months):
             m = m0 + j
             cpi_m = cpi[:, m] if cpi is not None else None
@@ -309,7 +313,11 @@ def simulate(req: PlanRequest, market: Market, x: Optional[np.ndarray] = None,
                 if m == retire_month:
                     retire_value = book.liquidation_value(cpi_m) + cash
                     retire_units = retire_value / sw
-                want = withdrawal_want(stage, j, book.total + cash, retire_units, sw, amount=amount_override)
+                # VPW spends the net value; the other rules look at the market value.
+                total = (book.liquidation_value(cpi_m) if stage.method == "vpw" else book.total) + cash
+                want = rule.want(j, total, retire_units, sw, amount=amount_override)
+                if rule.covers_spending and income[m]:
+                    want = np.maximum(want - income[m] * sw, 0.0)       # other income pays part of it
                 book.m, book.ctx = m, ("one_time" if j == 0 and stage.one_time > 0 else "withdraw")
                 got = withdraw(want, cpi_m)
                 shortfall_at[paid_short(got, want) & (shortfall_at < 0)] = m

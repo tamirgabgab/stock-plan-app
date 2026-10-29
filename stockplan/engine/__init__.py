@@ -8,8 +8,9 @@ import numpy as np
 from ..data.base import DataError, MarketData
 from .market import MAX_PATHS, Market, available_range, prepare_market
 from .models import (ACCOUNTS, DEPOSIT_EVERY, MODES, REBALANCE_RULES, DepositEvent, SOLVE_AMOUNT, SOLVE_WITHDRAWAL, SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_START,
-                     TRINITY_SOLVE_MODES, Holding, PlanRequest, SimulationResult, Stage,
+                     TRINITY_SOLVE_MODES, Holding, Income, PlanRequest, SimulationResult, Stage,
                      WithdrawRequest, WithdrawResult, WithdrawStage)
+from .portfolio import WITHDRAW_METHODS
 from .simulate import cohort_values, simulate
 from .solve import irr_annual, newton_bracketed, solve_monotone, trace_illinois
 from .withdraw import simulate_withdraw
@@ -57,6 +58,7 @@ def validate(req: PlanRequest) -> None:
         raise ValueError("הריבית על המזומן חייבת להיות בין -10% ל-50%")
     _validate_rebalance(req)
     _validate_account(req)
+    _validate_retirement(req, req.solve_for == SOLVE_WITHDRAWAL)
     if req.account_ceiling < 0:
         raise ValueError("תקרת ההפקדה השנתית לא יכולה להיות שלילית")
     if not 0 <= req.deposit_fee < 100:
@@ -81,6 +83,28 @@ def _validate_withdraw_stage(s, i: int) -> None:
     if s.rate_unit not in ("pct", "money") or s.basis not in ("initial", "current") \
             or s.guard_unit not in ("pct", "money") or s.one_time_unit not in ("pct", "money"):
         raise ValueError(f"בשלב {i} הגדרת המשיכה לא מוכרת")
+    if s.method not in WITHDRAW_METHODS:
+        raise ValueError(f"בשלב {i} שיטת המשיכה לא מוכרת ({s.method})")
+    if s.method == "gk" and not (0 < s.gk_band < 100 and 0 <= s.gk_step < 100):
+        raise ValueError(f"בשלב {i} הסף והשינוי של Guyton-Klinger חייבים להיות בין 0% ל-100%")
+    if not -20 <= s.vpw_rate <= 30:
+        raise ValueError(f"בשלב {i} התשואה הצפויה של VPW חייבת להיות בין -20% ל-30%")
+    if not -50 <= s.spending_change <= 50:
+        raise ValueError(f"בשלב {i} השינוי השנתי בהוצאות חייב להיות בין -50% ל-50%")
+
+
+def _validate_retirement(req, solving_withdrawal: bool) -> None:
+    """The age, the other incomes, and VPW stages (no withdrawal to solve for in them)."""
+    if not 0 <= req.start_age <= 120:
+        raise ValueError("הגיל בתחילת התוכנית חייב להיות בין 0 ל-120")
+    if req.incomes and req.start_age <= 0:
+        raise ValueError("כדי להוסיף הכנסות לפי גיל צריך להזין את הגיל בתחילת התוכנית")
+    for k, inc in enumerate(req.incomes, 1):
+        if not 0 <= inc.age <= 120 or inc.amount < 0:
+            raise ValueError(f"הכנסה {k}: הגיל חייב להיות בין 0 ל-120 והסכום לא שלילי")
+    if solving_withdrawal and any(getattr(s, "method", "fixed") == "vpw" and getattr(s, "kind", "withdraw") == "withdraw"
+                                  for s in req.stages):
+        raise ValueError("בשיטת VPW המשיכה נקבעת מהיתרה, ולכן אי אפשר לחשב בה משיכה או אחוז משיכה")
 
 
 def _validate_dividends(s, i: int) -> None:
@@ -240,8 +264,9 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
         alt = simulate(replace(req, lump_spread=0), market, x=x_same)
         final_lump, final_lump_gross = alt.final_net * D[:, T], alt.final_gross * D[:, T]
 
-    success = depleted_at = retire_value = withdraw_monthly = None
+    success = depleted_at = retire_value = withdraw_monthly = seq_return = None
     if req.has_withdrawals:
+        seq_return = sequence_return(unit, req.retire_month)
         depleted_at = out.shortfall_at
         retire_value = out.retire_value * D[:, req.retire_month]
         months_out = sum(s.months for s in req.stages if s.withdraws)
@@ -277,9 +302,32 @@ def run_plan(req: PlanRequest, md: MarketData) -> SimulationResult:
                             final_nofee=final_nofee, final_nofee_gross=final_nofee_gross,
                             final_lump=final_lump, final_lump_gross=final_lump_gross,
                             success=success, depleted_at=depleted_at, retire_value=retire_value,
-                            retire_month=req.retire_month, withdraw_monthly=withdraw_monthly,
+                            retire_month=req.retire_month, withdraw_monthly=withdraw_monthly, seq_return=seq_return,
                             dividend_tax=(out.dividend_tax * D).sum(axis=1),
                             deposit_fees=(out.deposit_fees * D).sum(axis=1))
+
+
+SEQ_MONTHS = 60
+
+
+def sequence_return(unit: np.ndarray, start: int) -> np.ndarray:
+    """(R,) annual return (percent) of the strategy itself (one unit, no flows) over the
+    first five years from month ``start`` (fewer when the plan ends sooner): sequence risk."""
+    k = min(SEQ_MONTHS, unit.shape[1] - 1 - start)
+    if k <= 0:
+        return np.full(unit.shape[0], np.nan)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        g = np.where(unit[:, start] > 0, unit[:, start + k] / unit[:, start], np.nan)
+        return (np.maximum(g, 0.0) ** (12 / k) - 1) * 100
+
+
+def _trinity_unit(req: WithdrawRequest, market: Market, D: np.ndarray) -> np.ndarray:
+    """(R, T+1) one unit in the Trinity plan's portfolios (stage switches, rebalancing and
+    fees, no withdrawals or tax), display units: the strategy's own path."""
+    stages = [Stage(months=s.months, holdings=s.holdings) for s in req.stages]
+    plan = PlanRequest(stages=stages, currency=req.currency, real=req.real, annual_fee=req.annual_fee,
+                       rebalance=req.rebalance, rebalance_band=req.rebalance_band, tax_rate=0.0)
+    return simulate(plan, market, record=True, unit_growth=True).paths_net * D
 
 
 def first_reach(paths: np.ndarray, target: float) -> np.ndarray:
@@ -360,6 +408,7 @@ def validate_withdraw(req: WithdrawRequest) -> None:
         _validate_withdraw_stage(s, i)
     _validate_rebalance(req)
     _validate_account(req)
+    _validate_retirement(req, req.solve_for in (SOLVE_RATE, SOLVE_AMOUNT))
     if not 0 <= req.tax_rate < 100:
         raise ValueError("שיעור המס חייב להיות בין 0 ל-100")
     if req.solve_for == SOLVE_START and req.target_amount <= 0:
@@ -411,7 +460,8 @@ def run_trinity(req: WithdrawRequest, md: MarketData) -> WithdrawResult:
     return WithdrawResult(start_dates=list(market.start_dates), end_dates=list(market.calendar[market.day_idx[:, -1]]),
                           months=T, final=final, withdrawn_total=paid.sum(axis=1), min_balance=paths.min(axis=1),
                           depleted_at=depleted, success=success, paths=paths,
-                          withdrawals_path=np.cumsum(paid, axis=1), solved=solved, warnings=warnings)
+                          withdrawals_path=np.cumsum(paid, axis=1), solved=solved, warnings=warnings,
+                          seq_return=sequence_return(_trinity_unit(req, market, D), 0))
 
 
 def trinity_heatmap(req: WithdrawRequest, md: MarketData, rates, years) -> dict:
@@ -427,7 +477,7 @@ def trinity_heatmap(req: WithdrawRequest, md: MarketData, rates, years) -> dict:
     validate_withdraw(replace(req, solve_for=SOLVE_FINAL))
     rates = np.asarray(rates, dtype=float)
     survival, preserve, counts = [], [], []
-    base_stage = replace(req.stages[0], rate_unit="pct")
+    base_stage = replace(req.stages[0], rate_unit="pct", method="fixed")
     for y in years:
         req_y = replace(req, stages=[replace(base_stage, months=int(y) * 12)], solve_for=SOLVE_RATE)
         try:
@@ -499,6 +549,6 @@ def solve_trace(req, md: MarketData) -> dict:
 
 from .detail import benchmark_path, realization_detail  # noqa: E402  (uses run_plan / run_trinity above)
 
-__all__ = ["DepositEvent", "SOLVE_WITHDRAWAL", "benchmark_path", "realization_detail", "Holding", "Stage", "PlanRequest", "SimulationResult", "run_plan", "available_range",
+__all__ = ["DepositEvent", "Income", "SOLVE_WITHDRAWAL", "benchmark_path", "realization_detail", "Holding", "Stage", "PlanRequest", "SimulationResult", "run_plan", "available_range",
            "SOLVE_FINAL", "SOLVE_MONTHLY", "SOLVE_START", "SOLVE_RATE", "SOLVE_AMOUNT",
            "WithdrawStage", "WithdrawRequest", "WithdrawResult", "run_trinity", "trinity_heatmap", "solve_trace"]

@@ -8,7 +8,8 @@ import { CrossSection, DetailModal, FanChart, OutcomeByStart, RealizationsTable,
          dateColumns, isSynthetic, periods, realName, solvedLabel, useActive } from "./results.js";
 import { columnStats, decodeMatrix, summarize } from "./stats.js";
 import { NumberField, Segmented, Toggle } from "./ui.js";
-import { WithdrawFields } from "./withdrawal.js";
+import { AgeIncomeSection, WithdrawFields } from "./withdrawal.js";
+import { SequenceCard } from "./retirement.js";
 
 export const TRINITY_SOLVE_OPTIONS = [
   { value: "final", label: "יתרה סופית" },
@@ -21,7 +22,7 @@ export function newWithdrawStage(n) {
   return {
     id: newId(), name: `שלב ${n}`, months: 360, rate: 4, amount: 4000, rate_unit: "pct", basis: "initial",
     floor: 0, ceiling: 0, guard_unit: "pct", one_time: 0, one_time_unit: "money",
-    annuity: false, holdings: [{ ticker: "^GSPC", name: "S&P 500", weight: 100, leverage: 1, dividend: 0 }],
+    annuity: false, method: "fixed", gk_band: 20, gk_step: 10, vpw_rate: 4, spending_change: 0, holdings: [{ ticker: "^GSPC", name: "S&P 500", weight: 100, leverage: 1, dividend: 0 }],
   };
 }
 
@@ -29,7 +30,7 @@ export const DEFAULT_TPLAN = {
   solve_for: "final", start_amount: 1_000_000, target_amount: 0, currency: "ILS", real: true,
   index_withdrawals: true, tax_rate: 25, tax_basis: "nominal", tax_on_switch: false, annual_fee: 0,
   leverage_cost: 0, min_start: null, max_start: null, step: "M", rebalance: "none", rebalance_band: 5,
-  account: "regular", mode: "history", paths: 2000, block: 12, seed: 1, sample_from: null, sample_to: null,
+  account: "regular", start_age: 0, incomes: [], mode: "history", paths: 2000, block: 12, seed: 1, sample_from: null, sample_to: null,
   stages: [newWithdrawStage(1)],
 };
 
@@ -102,6 +103,7 @@ export function TrinityInputs({ plan, setPlan, range, rangeError, favorites, top
     </details>
     <${TaxSection} plan=${plan} set=${set} />
     <${RebalanceSection} plan=${plan} set=${set} />
+    <${AgeIncomeSection} plan=${plan} setPlan=${setPlan} sym=${sym} />
     <${PeriodSection} plan=${plan} set=${set} range=${range} rangeError=${rangeError} totalMonths=${totalMonths} />
     <section class="section stages" aria-label="שלבי המשיכה">
       <div class="section-head"><h2>שלבי המשיכה</h2>
@@ -219,6 +221,7 @@ export function TrinityResults({ res, ui, setUi, themeKey, plan, setPlan, payloa
     ${res.raw.warnings.length ? html`<div class="callout warn">${res.raw.warnings.join(" · ")}</div>` : null}
     <${TrinityKpis} res=${res} />
     <${FanChart} ...${shared} />
+    <${SequenceCard} res=${res} themeKey=${themeKey} />
     <${Heatmap} payload=${payload} plan=${plan} setPlan=${setPlan} heat=${heat} setHeat=${setHeat} themeKey=${themeKey} />
     <div class=${isSynthetic(res) ? "" : "row-2"}>
       <${CrossSection} ...${shared} sources=${TRINITY_SOURCES} />

@@ -69,6 +69,13 @@ the UI — it is not real market history).
   withdrawn as an annuity (a switch on the withdrawal stage); in both the stage switches
   and rebalancing are tax-free, dividends are not taxed, and the gain on deposits above
   the yearly ceiling (the 2026 ceilings are one click away) is always taxed. Both tabs.
+- **Retirement** – an age at the start of the plan (the charts then show age), other income
+  from an age on (state pension, occupational pension) that pays part of the spending,
+  advanced withdrawal methods per stage: Guyton-Klinger guardrails (skip the inflation
+  raise after a bad year, cut or raise 10% when the withdrawal rate leaves a ±20% band) and
+  VPW (spend the net balance over the months left at an expected return), spending that
+  rises or falls every year, and a sequence-of-returns card: the strategy's return in the
+  first five years of retirement against the outcome. Both tabs.
 - **A/B comparison** – two plans side by side in the accumulation or the Trinity tab: the
   panel edits plan A or B (with a copy button), and a card above the results compares them
   on the same scenarios (the shared start dates, or the same synthetic paths): percentiles,

@@ -134,3 +134,30 @@ def test_ab_comparison(server, browser):
     assert "0.0%" in card.locator(".compare-big").inner_text()
     assert not errors, "\n".join(errors)
     page.close()
+
+
+def test_retirement_settings(server, browser):
+    # The 55-year example on synthetic paths, with an age, a pension, then Guyton-Klinger
+    # and VPW: the age axis, the sequence-risk card, and no errors.
+    page, errors = open_page(browser, server)
+    page.evaluate("localStorage.clear()")
+    page.reload()
+    page.wait_for_selector("#app .topbar")
+    settle(page, "accumulation")
+    page.get_by_role("button", name="תוכנית פרישה לדוגמה").click()
+    click_option(page, "מסלולים סינתטיים")
+    settle(page, "retirement example")
+    section = page.locator("details.section", has_text="גיל והכנסות")
+    age = section.locator("input[type=number]").first
+    age.fill("40")
+    age.press("Tab")
+    section.get_by_role("button", name="+ הוסף הכנסה").click()
+    settle(page, "age and pension")
+    stage = page.locator(".stage-card.withdraw")
+    for method in ("Guyton-Klinger", "VPW"):
+        stage.get_by_role("radio", name=method).click()
+        settle(page, method)
+    page.locator("section.card", has_text="סיכון הסדר").wait_for()
+    assert "גיל" in page.locator("section.card", has_text="שווי התיק לאורך זמן").inner_text()
+    assert not errors, "\n".join(errors)
+    page.close()

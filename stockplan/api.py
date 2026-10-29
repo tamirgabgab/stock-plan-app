@@ -20,7 +20,7 @@ from . import __version__
 from .config import FAVORITES, ON_VERCEL
 from .data import DataError, demo_reason, get_market_data
 from .data.search import lookup, search
-from .engine import (DepositEvent, Holding, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range,
+from .engine import (DepositEvent, Holding, Income, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range,
                      benchmark_path, realization_detail, run_plan, run_trinity, solve_trace, trinity_heatmap)
 from .engine.property import METRICS, STATS, InputError, PropertyRequest, row_of, run_property, solve_equal
 
@@ -51,6 +51,11 @@ class WithdrawRule(BaseModel):
     one_time: float = Field(0.0, ge=0)
     one_time_unit: Literal["money", "pct"] = "money"
     annuity: bool = False                        # קופת גמל: paid as an annuity (tax-exempt)
+    method: Literal["fixed", "gk", "vpw"] = "fixed"   # fixed, Guyton-Klinger or VPW
+    gk_band: float = Field(20.0, gt=0, lt=100)
+    gk_step: float = Field(10.0, ge=0, lt=100)
+    vpw_rate: float = Field(4.0, ge=-20, le=30)
+    spending_change: float = Field(0.0, ge=-50, le=50)  # percent per year
 
 
 class StageIn(WithdrawRule):
@@ -73,6 +78,12 @@ Rebalance = Literal["none", "monthly", "quarterly", "annual", "band"]
 Account = Literal["regular", "hishtalmut", "gemel"]
 
 
+class IncomeIn(BaseModel):
+    age: float = Field(ge=0, le=120)
+    amount: float = Field(ge=0)
+    name: str = Field("", max_length=60)
+
+
 class Scenarios(BaseModel):
     """Where the market scenarios come from: every historical start date, or synthetic
     paths made of blocks of historical months (see engine.market.synthetic_market)."""
@@ -82,6 +93,13 @@ class Scenarios(BaseModel):
     seed: int = Field(1, ge=0, le=2**31 - 1)
     sample_from: Optional[date] = None
     sample_to: Optional[date] = None
+    # Retirement: the age at the start of the plan (0 = not set) and other income by age.
+    start_age: float = Field(0.0, ge=0, le=120)
+    incomes: List[IncomeIn] = Field(default_factory=list, max_length=20)
+
+
+def _incomes(incomes) -> list:
+    return [Income(**i.model_dump()) for i in incomes]
 
 
 def _holdings(holdings) -> list:
@@ -120,7 +138,8 @@ class PlanIn(Scenarios):
         stages = [Stage(holdings=_holdings(s.holdings), **s.model_dump(exclude={"holdings"}))
                   for s in self.stages]
         events = [DepositEvent(**e.model_dump()) for e in self.events]
-        return PlanRequest(stages=stages, events=events, **self.model_dump(exclude={"stages", "events"}))
+        return PlanRequest(stages=stages, events=events, incomes=_incomes(self.incomes),
+                           **self.model_dump(exclude={"stages", "events", "incomes"}))
 
 
 class WithdrawStageIn(WithdrawRule):
@@ -152,7 +171,7 @@ class TrinityIn(Scenarios):
     def to_request(self) -> WithdrawRequest:
         stages = [WithdrawStage(holdings=_holdings(s.holdings), **s.model_dump(exclude={"holdings"}))
                   for s in self.stages]
-        return WithdrawRequest(stages=stages, **self.model_dump(exclude={"stages"}))
+        return WithdrawRequest(stages=stages, incomes=_incomes(self.incomes), **self.model_dump(exclude={"stages", "incomes"}))
 
 
 class HeatmapIn(BaseModel):
@@ -393,6 +412,7 @@ def simulate(plan: PlanIn):
         "retire_value": _opt(res.retire_value),
         "retire_month": res.retire_month,
         "withdraw_monthly": _opt(res.withdraw_monthly),
+        "seq_return": _opt(res.seq_return),             # first five years of retirement, percent a year
         "synthetic": plan.mode == "synthetic",
         "warnings": res.warnings,
         "demo": get_market_data().is_demo,
@@ -440,6 +460,7 @@ def trinity_simulate(plan: TrinityIn):
         "solved": None if res.solved is None else _floats(res.solved),
         "paths": _matrix_b64(res.paths),
         "withdrawals_path": _matrix_b64(res.withdrawals_path),
+        "seq_return": _opt(res.seq_return),
         "synthetic": plan.mode == "synthetic",
         "warnings": res.warnings,
         "demo": get_market_data().is_demo,

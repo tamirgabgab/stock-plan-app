@@ -5,6 +5,7 @@ import { fanFigure, histFigure, observeResize, outcomeFigure, rankFigure, reachF
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
 import { column, fractionBetween, histogram, nearestRow, nearestToQuantile, quantileSorted, rankSeries, row,
          sortedFinite, summarize } from "./stats.js";
+import { SequenceCard } from "./retirement.js";
 import { DualRange, Hint, NumberInput, Segmented, Toggle } from "./ui.js";
 import { RealizationDetail } from "./detail.js";
 
@@ -116,7 +117,7 @@ export function Results({ res: full, ui, setUi, themeKey }) {
     </div>
     <${Kpis} res=${res} />
     <${FanChart} ...${shared} />
-    ${res.lifecycle ? html`<${LifecycleCard} ...${shared} />` : null}
+    ${res.lifecycle ? html`<${LifecycleCard} ...${shared} /><${SequenceCard} res=${res} themeKey=${themeKey} />` : null}
     <div class=${isSynthetic(res) ? "" : "row-2"}>
       <${CrossSection} ...${shared} sources=${ACCUMULATION_SOURCES} />
       ${isSynthetic(res) ? null : html`<${OutcomeByStart} ...${shared} />`}
@@ -209,6 +210,7 @@ export function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, 
     cols: res.cs.sorted, mean: res.cs.mean, deposits: res.depMean, p1: ui.p1, p2: ui.p2,
     target: targetShown(res) ? res.plan.target_amount : 0, showDeposits: ui.showDeposits, showTarget: ui.showTarget,
     logY: ui.logY, currencySymbol: sym, timeIdx, highlight, reps: repTraces, flowLabel: res.labels.flow,
+    age0: res.plan.start_age || 0,
   }), [res, ui.p1, ui.p2, ui.showDeposits, ui.showTarget, ui.logY, timeIdx, active, themeKey, repTraces], (gd) => {
     let frame = 0, last = null, curRow = null, side = "right";
     const locate = (e) => {
@@ -221,7 +223,7 @@ export function FanChart({ res, ui, setUi, active, setHover, pinned, setPinned, 
       const toPx = (v) => ya.c2p(log ? Math.log10(Math.max(v, 1e-9)) : v);
       let yv = ya.p2c(py);
       if (log) yv = Math.pow(10, yv);
-      const t = Math.max(0, Math.min(res.T, Math.round(xa.p2c(px) * 12)));
+      const t = Math.max(0, Math.min(res.T, Math.round((xa.p2c(px) - (res.plan.start_age || 0)) * 12)));
       let r = nearestRow(res.paths, t, yv);
       // Hysteresis: keep the current path unless the new one is clearly closer (3px),
       // so the highlight does not flicker when the cursor sits between two paths.
@@ -306,7 +308,7 @@ function RankChart({ res, ui, active, reps, timeIdx, themeKey }) {
     }
     return out;
   }, [res, reps, active, themeKey]);
-  usePlot(ref, () => rankFigure({ T: res.T, p1: ui.p1, p2: ui.p2, series, timeIdx }),
+  usePlot(ref, () => rankFigure({ T: res.T, p1: ui.p1, p2: ui.p2, series, timeIdx, age0: res.plan.start_age || 0 }),
     [res, ui.p1, ui.p2, series, timeIdx, themeKey]);
   const now = active !== null ? rankSeries(res.paths, res.cs.sorted, active)[timeIdx] : null;
   return html`<div class="rank">
@@ -329,7 +331,7 @@ function FanTip({ tip, res, ui }) {
   const left = tip.side === "left";
   const style = `top:${Math.max(tip.y - 20, 0)}px;${left ? `right:${tip.w - tip.x + 16}px` : `left:${tip.x + 16}px`}`;
   return html`<div class="fan-tip" style=${style} role="tooltip">
-    <div class="tip-title">${monthsLabel(tip.t)} מההתחלה</div>
+    <div class="tip-title">${monthsLabel(tip.t)} מההתחלה${res.plan.start_age > 0 ? ` · גיל ${(res.plan.start_age + tip.t / 12).toFixed(1)}` : ""}</div>
     <div class="tip-path"><span class="swatch violet"></span>
       <div>${isSynthetic(res) ? realName(res, tip.r) : html`התחלה ${dateHe(start)} · ${dateHe(addMonths(start, tip.t))}`}<br />
       שווי <b dir="ltr">${money(res.paths.at(tip.r, tip.t), cur)}</b>
@@ -568,7 +570,7 @@ function GoalCard({ res, themeKey }) {
     const half = Math.ceil(res.n / 2) - 1;           // never = infinitely late, so it only counts if half got there
     return { share, hits, median: hits.length > half ? hits[half] : null };
   }, [res]);
-  usePlot(ref, () => reachFigure({ T: res.T, share: goal.share, mark: goal.median }), [res, themeKey]);
+  usePlot(ref, () => reachFigure({ T: res.T, share: goal.share, mark: goal.median, age0: res.plan.start_age || 0 }), [res, themeKey]);
   const byHalf = goal.share[Math.floor(res.T / 2)];
   const reached = goal.hits.length;
   const fmtM = (m) => (m === null || m === undefined ? "—" : `${(m / 12).toFixed(1)} שנים`);
@@ -643,7 +645,7 @@ function LifecycleCard({ res, themeKey }) {
     const share = counts.map((c) => 100 - (100 * (acc += c)) / res.n);
     return { share, out };
   }, [res]);
-  usePlot(ref, () => reachFigure({ T: res.T, share: life.share, mark: raw.retire_month, name: "הכסף עוד לא נגמר" }),
+  usePlot(ref, () => reachFigure({ T: res.T, share: life.share, mark: raw.retire_month, name: "הכסף עוד לא נגמר", age0: res.plan.start_age || 0 }),
     [res, themeKey]);
   const retire = summarize(raw.retire_value);
   const solveMode = plan.solve_for !== "final";

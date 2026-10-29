@@ -113,6 +113,7 @@ export function CompareCard({ resA, resB, rangeA, rangeB, otherError, busy, net,
       <div class="compare-paired">
         ${!sameOutcome ? html`<p class="callout">כל תוכנית פותרת נעלם אחר או מוצגת ביחידות אחרות, ולכן אין הפרש לפי תרחיש.</p>`
           : paired?.why ? html`<p class="callout warn">${paired.why}</p>`
+          : paired && paired.n && paired.ties === paired.n ? html`<p class="callout">שתי התוכניות נותנות בדיוק אותה תוצאה בכל ${paired.n.toLocaleString("he-IL")} התרחישים המשותפים.</p>`
           : paired && paired.n ? html`
             <div class="compare-big"><b>${pct((100 * paired.better) / paired.n, 1)}</b>
               <span>מהתרחישים המשותפים תוכנית A ${oa.higher ? "נותנת יותר" : "דורשת פחות"} מתוכנית B</span></div>

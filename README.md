@@ -69,6 +69,9 @@ the UI — it is not real market history).
   withdrawn as an annuity (a switch on the withdrawal stage); in both the stage switches
   and rebalancing are tax-free, dividends are not taxed, and the gain on deposits above
   the yearly ceiling (the 2026 ceilings are one click away) is always taxed. Both tabs.
+- **Printable report** – a "דוח" button opens a one-page report of the plan being edited
+  (settings, stages, the main numbers, the fan chart, sequence risk and the A/B comparison);
+  the browser's print dialog saves it as a PDF.
 - **Retirement** – an age at the start of the plan (the charts then show age), other income
   from an age on (state pension, occupational pension) that pays part of the spending,
   advanced withdrawal methods per stage: Guyton-Klinger guardrails (skip the inflation
@@ -213,7 +216,7 @@ api/index.py           # Vercel entry point (vercel.json routes everything here)
 stockplan/
   data/                # market data providers + disk cache (Yahoo, demo)
   engine/              # pure numpy simulation engine and solvers
-    property.py        # apartment vs. capital market model (vectorized; fixed or history)
+    property/          # apartment vs. capital market model (vectorized; fixed, history or synthetic)
     property_data.py   # history paths for the apartment tab
   api.py               # FastAPI endpoints, serves the web UI
   web/                 # static UI: Preact + htm + Plotly + KaTeX (vendored, no build step)

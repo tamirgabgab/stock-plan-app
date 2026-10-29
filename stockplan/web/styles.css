@@ -709,3 +709,27 @@ fieldset.apt-fields:disabled > :not(.field-note) { opacity: 0.45; }
 .compare-big { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
 .compare-big b { font-size: 28px; color: var(--accent); }
 .compare h3 { margin: 14px 0 4px; font-size: 14px; }
+
+/* Report: an overlay on screen, the only thing printed */
+.report-root { position: fixed; inset: 0; z-index: 100; overflow: auto; background: var(--surface-2); padding: 16px; }
+.report-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: 820px; margin: 0 auto 12px; }
+.report { max-width: 820px; margin: 0 auto; background: var(--surface-1); border: 1px solid var(--border);
+          border-radius: var(--radius); padding: 24px 28px; display: flex; flex-direction: column; gap: 18px; }
+.report h1 { font-size: 22px; margin: 0; }
+.report h2 { font-size: 16px; margin: 0 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.report h3 { font-size: 14px; margin: 14px 0 4px; }
+.report-dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 18px; margin: 0; }
+.report-dl div { display: flex; gap: 8px; } .report-dl dt { color: var(--text-muted); min-width: 120px; } .report-dl dd { margin: 0; }
+.report-table { width: 100%; }
+.report-plot { width: 100%; overflow: hidden; }
+.report-compare .card { box-shadow: none; padding: 0; border: 0; }
+@media (max-width: 640px) { .report-dl { grid-template-columns: minmax(0, 1fr); } .report { padding: 16px; } }
+@media print {
+  body.report-open #app > *:not(.report-root) { display: none !important; }
+  body.report-open .report-root { position: static; padding: 0; background: #fff; overflow: visible; }
+  body.report-open .report-bar { display: none; }
+  body.report-open .report { border: 0; max-width: none; padding: 0; }
+  body.report-open .report-plot, body.report-open .report-table, body.report-open .report-dl,
+  body.report-open .compare-table, body.report-open .compare .plot { break-inside: avoid; }
+  body.report-open .report h2, body.report-open .report h3 { break-after: avoid; }
+}

@@ -161,3 +161,22 @@ def test_retirement_settings(server, browser):
     assert "גיל" in page.locator("section.card", has_text="שווי התיק לאורך זמן").inner_text()
     assert not errors, "\n".join(errors)
     page.close()
+
+
+def test_report(server, browser):
+    # The printable report opens with its charts and prints to a PDF.
+    page, errors = open_page(browser, server)
+    page.evaluate("localStorage.clear()")
+    page.reload()
+    page.wait_for_selector("#app .topbar")
+    settle(page, "accumulation")
+    page.get_by_role("button", name="דוח", exact=True).click()
+    page.wait_for_selector(".report-root .report-plot .main-svg", timeout=30_000)
+    assert "ההגדרות" in page.locator(".report").inner_text()
+    page.emulate_media(media="print")
+    assert len(page.pdf(format="A4")) > 10_000
+    page.emulate_media(media="screen")
+    page.keyboard.press("Escape")
+    assert page.locator(".report-root").count() == 0
+    assert not errors, "\n".join(errors)
+    page.close()

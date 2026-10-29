@@ -3,6 +3,7 @@ import { html, render, useEffect, useMemo, useRef, useState } from "../vendor/pr
 import { postJSON } from "./api.js";
 import { withDividends } from "./dividends.js";
 import { CompareBar, CompareCard } from "./compare.js";
+import { ReportView } from "./report.js";
 import { InputsPanel, newId, newStage, toPayload } from "./inputs.js";
 import { MathPage } from "./math.js";
 import { PropertyInputs, PropertyResults, defaultPropertyPlan, usePropertyRunner } from "./property.js";
@@ -259,6 +260,10 @@ function App() {
     else setPlan({ ...DEFAULT_PLAN, stages: [newStage(1)] });
   };
   const mainRef = useRef(null);
+  const [report, setReport] = useState(false);
+  const canReport = (view === "plan" || view === "trinity") && !!res;
+  const compareProps = comparing ? { resA: pair[0].res, resB: pair[1].res, rangeA: pair[0].range, rangeB: pair[1].range,
+                                     otherError: other.error, busy, net: tabKey === "plan" ? !!ui.net : true } : null;
   const nextTheme = { auto: "light", light: "dark", dark: "auto" }[theme];
   const themeLabel = { auto: "ערכת צבע: אוטומטית", light: "ערכת צבע: בהירה", dark: "ערכת צבע: כהה" }[theme];
 
@@ -279,6 +284,8 @@ function App() {
       <div class="actions">
         <${AutoRun} auto=${auto} setAuto=${setAuto} busy=${busy} onRun=${() => { run(); if (comparing) other.run(); }} />
         <button class="btn ghost" onClick=${share}>שתף קישור</button>
+        <button class="btn ghost" disabled=${!canReport} onClick=${() => setReport(true)}
+          title="דוח להדפסה או לשמירה כ-PDF: ההגדרות, המספרים והגרפים העיקריים">דוח</button>
         <button class="btn ghost" onClick=${reset}>איפוס</button>
         <button class="btn ghost icon" title=${themeLabel} aria-label=${themeLabel} onClick=${() => setTheme(nextTheme)}>
           ${theme === "dark" ? "☾" : theme === "light" ? "☀" : "◐"}</button>
@@ -296,8 +303,7 @@ function App() {
       <div class=${"main" + (busy ? " is-busy" : "")} ref=${mainRef}>
         ${error ? html`<div class="callout error" role="alert">${error}</div>` : null}
         ${busy ? html`<div class="busy" role="status"><span class="spinner"></span>מחשב...</div>` : null}
-        ${comparing ? html`<${CompareCard} resA=${pair[0].res} resB=${pair[1].res} rangeA=${pair[0].range} rangeB=${pair[1].range}
-            otherError=${other.error} busy=${busy} net=${tabKey === "plan" ? !!ui.net : true} themeKey=${themeKey} />` : null}
+        ${comparing ? html`<${CompareCard} ...${compareProps} themeKey=${themeKey} />` : null}
         ${view === "math" ? html`<${MathPage} plan=${mathAcc.plan} res=${mathAcc.res} tplan=${mathTri.plan} tres=${mathTri.res}
                                       initial=${prevView.current === "trinity" ? "withdrawals" : "deposits"} />`
           : view === "property"
@@ -312,6 +318,8 @@ function App() {
       </div>
     </main>
     <${ToResults} target=${mainRef} busy=${busy} />
+    ${report && canReport ? html`<${ReportView} res=${res} net=${tabKey === "plan" ? !!ui.net : true} tab=${tabKey} slot=${abTab.slot}
+        compare=${compareProps} meta=${meta} onClose=${() => setReport(false)} themeKey=${themeKey} />` : null}
     <footer class="foot muted">לצורכי מחקר ולימוד בלבד. אין לראות בכך ייעוץ השקעות.
       ${meta.version ? html` · גרסה <span dir="ltr">${meta.version}</span>` : null}</footer>`;
 }

@@ -139,3 +139,14 @@ def test_api_synthetic(monkeypatch):
     assert client.post("/api/trinity/simulate", json=tri).json()["n"] == 200
     assert client.post("/api/trinity/heatmap", json={"plan": tri, "years_to": 20}).status_code == 200
     assert client.post("/api/realization", json={"plan": body}).status_code == 400
+
+
+def test_a_longer_plan_extends_the_same_paths():
+    # A/B comparison of plans of different lengths: path r of the short plan is the start
+    # of path r of the long one.
+    data = FakeData({"A": wiggly()})
+    short = prepare_market(synth([Stage(months=30, holdings=A)], paths=40, block=12, seed=9), data)
+    long = prepare_market(synth([Stage(months=55, holdings=A)], paths=40, block=12, seed=9), data)
+    p_short = short.prices[0].reshape(40, 31)
+    p_long = long.prices[0].reshape(40, 56)
+    assert np.allclose(p_long[:, :31], p_short, rtol=1e-12)

@@ -59,7 +59,7 @@ export function prepareTrinityResult(raw, plan) {
 
 // ------------------------------------------------------------------------- inputs
 
-export function TrinityInputs({ plan, setPlan, range, rangeError, favorites }) {
+export function TrinityInputs({ plan, setPlan, range, rangeError, favorites, top = null }) {
   const sym = CURRENCY_SYMBOL[plan.currency];
   const set = (key) => (value) => setPlan((p) => ({ ...p, [key]: value }));
   const setStage = (id, fn) => setPlan((p) => ({ ...p, stages: p.stages.map((s) => (s.id === id ? fn(s) : s)) }));
@@ -73,6 +73,7 @@ export function TrinityInputs({ plan, setPlan, range, rangeError, favorites }) {
   const totalMonths = plan.stages.reduce((a, s) => a + (s.months || 0), 0);
 
   return html`<aside class="panel inputs" aria-label="הגדרות משיכה">
+    ${top}
     <${TickerList} favorites=${favorites} />
     <details open class="section">
       <summary>מה לחשב</summary>

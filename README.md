@@ -69,6 +69,11 @@ the UI — it is not real market history).
   withdrawn as an annuity (a switch on the withdrawal stage); in both the stage switches
   and rebalancing are tax-free, dividends are not taxed, and the gain on deposits above
   the yearly ceiling (the 2026 ceilings are one click away) is always taxed. Both tabs.
+- **A/B comparison** – two plans side by side in the accumulation or the Trinity tab: the
+  panel edits plan A or B (with a copy button), and a card above the results compares them
+  on the same scenarios (the shared start dates, or the same synthetic paths): percentiles,
+  success rate, IRR, the share of scenarios where A beats B, a histogram of A minus B and
+  both fans over time.
 - **Synthetic scenarios** – instead of the historical start dates, thousands of paths glued
   from blocks of consecutive historical months (a block bootstrap): every asset, the FX rate
   and the CPI of a month move together, so correlations, inflation and crashes stay real;

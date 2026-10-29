@@ -113,3 +113,24 @@ def test_phone_button_scrolls_to_the_results(server, browser):
     button.wait_for(state="detached")
     assert not errors, "\n".join(errors)
     page.close()
+
+
+def test_ab_comparison(server, browser):
+    # Plan B doubles the deposit: the card pairs the same start dates and B wins in all of them.
+    page, errors = open_page(browser, server)
+    page.evaluate("localStorage.clear()")
+    page.reload()
+    page.wait_for_selector("#app .topbar")
+    settle(page, "accumulation")
+    page.get_by_text("השוואה בין שתי תוכניות (A/B)").click()
+    settle(page, "A/B on")
+    click_option(page, "תוכנית B")
+    deposit = page.locator(".stage-card").first.locator("input[type=number]").nth(2)
+    deposit.fill("2000")
+    deposit.press("Tab")
+    settle(page, "plan B")
+    card = page.locator("section.compare")
+    card.get_by_text("תרחישים משותפים").first.wait_for()
+    assert "0.0%" in card.locator(".compare-big").inner_text()
+    assert not errors, "\n".join(errors)
+    page.close()

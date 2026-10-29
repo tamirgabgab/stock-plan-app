@@ -2,6 +2,7 @@
 import { html, render, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
 import { postJSON } from "./api.js";
 import { withDividends } from "./dividends.js";
+import { CompareBar, CompareCard } from "./compare.js";
 import { InputsPanel, newId, newStage, toPayload } from "./inputs.js";
 import { MathPage } from "./math.js";
 import { PropertyInputs, PropertyResults, defaultPropertyPlan, usePropertyRunner } from "./property.js";
@@ -13,6 +14,8 @@ const STORAGE_KEY = "stockplan.plan.v1";
 const TSTORAGE_KEY = "stockplan.trinity.v1";
 const THEME_KEY = "stockplan.theme";
 const PANEL_KEY = "stockplan.panelWidth";
+const AB_KEY = "stockplan.ab";       // A/B comparison per tab: on, which plan the panel edits, B created
+const AB_DEFAULT = { plan: { on: false, slot: "A", init: false }, trinity: { on: false, slot: "A", init: false } };
 const PANEL_MIN = 300, PANEL_MAX = 760, PANEL_DEFAULT = 400;
 
 const DEFAULT_PLAN = {
@@ -184,13 +187,44 @@ function App() {
   const [panelW, setPanelW] = useState(() => { try { return Number(localStorage.getItem(PANEL_KEY)) || PANEL_DEFAULT; } catch { return PANEL_DEFAULT; } });
   useEffect(() => { try { localStorage.setItem(PANEL_KEY, String(panelW)); } catch { /* ignore */ } }, [panelW]);
   const [heat, setHeat] = useState(DEFAULT_HEAT);
+  const [ab, setAbAll] = useState(() => { try { return { ...AB_DEFAULT, ...JSON.parse(localStorage.getItem(AB_KEY) || "{}") }; } catch { return AB_DEFAULT; } });
+  useEffect(() => { try { localStorage.setItem(AB_KEY, JSON.stringify(ab)); } catch { /* ignore */ } }, [ab]);
+  const accView = view === "plan" || view === "math";
   const acc = usePlanRunner({ storageKey: STORAGE_KEY, hashKey: "plan", defaults: DEFAULT_PLAN, api: "/api",
-                              prepare: prepareResult, auto, enabled: view === "plan" || view === "math" });
+                              prepare: prepareResult, auto, enabled: accView });
+  const accB = usePlanRunner({ storageKey: `${STORAGE_KEY}.b`, hashKey: "planb", defaults: DEFAULT_PLAN, api: "/api",
+                               prepare: prepareResult, auto, enabled: accView && ab.plan.on });
   const tri = usePlanRunner({ storageKey: TSTORAGE_KEY, hashKey: "trinity", defaults: DEFAULT_TPLAN, api: "/api/trinity",
                               prepare: prepareTrinityResult, auto, enabled: view === "trinity" });
+  const triB = usePlanRunner({ storageKey: `${TSTORAGE_KEY}.b`, hashKey: "trinityb", defaults: DEFAULT_TPLAN, api: "/api/trinity",
+                               prepare: prepareTrinityResult, auto, enabled: view === "trinity" && ab.trinity.on });
   const prop = usePropertyRunner({ auto, enabled: view === "property" });
-  const cur = view === "trinity" ? tri : view === "property" ? prop : acc;
-  const { plan, setPlan, range, rangeError, res, error, busy, ui, setUi, run } = cur;
+  // A/B: the panel and the results below the comparison card follow the plan being edited.
+  const tabKey = view === "trinity" ? "trinity" : "plan";
+  const abTab = ab[tabKey];
+  const pair = tabKey === "trinity" ? [tri, triB] : [acc, accB];
+  const editing = abTab.on && abTab.slot === "B" ? pair[1] : pair[0];
+  const other = editing === pair[0] ? pair[1] : pair[0];
+  const cur = view === "property" ? prop : editing;
+  const { plan, setPlan, range, rangeError, res, error, ui, setUi, run } = cur;
+  const comparing = abTab.on && view !== "property" && view !== "math";
+  const busy = cur.busy || (comparing && other.busy);
+  const copyPlan = (from, to) => {
+    const [src, dst] = from === "A" ? pair : [pair[1], pair[0]];
+    dst.setPlan(withIds(JSON.parse(JSON.stringify(src.plan))));
+  };
+  const setAb = (next) => {
+    if (next.on && !abTab.init) {           // the first comparison starts from a copy of A
+      pair[1].setPlan(withIds(JSON.parse(JSON.stringify(pair[0].plan))));
+      next = { ...next, init: true };
+    }
+    setAbAll((a) => ({ ...a, [tabKey]: next }));
+  };
+  // The math tab explains the plan being edited in each tab.
+  const mathAcc = ab.plan.on && ab.plan.slot === "B" ? accB : acc;
+  const mathTri = ab.trinity.on && ab.trinity.slot === "B" ? triB : tri;
+  const abBar = view === "plan" || view === "trinity"
+    ? html`<${CompareBar} ab=${abTab} setAb=${setAb} copy=${copyPlan} />` : null;
 
   useEffect(() => { fetch("/api/meta").then((r) => r.json()).then(setMeta).catch(() => {}); }, []);
 
@@ -241,7 +275,7 @@ function App() {
           onClick=${() => setView("math")}>הסבר מתמטי</button>
       </nav>
       <div class="actions">
-        <${AutoRun} auto=${auto} setAuto=${setAuto} busy=${busy} onRun=${() => run()} />
+        <${AutoRun} auto=${auto} setAuto=${setAuto} busy=${busy} onRun=${() => { run(); if (comparing) other.run(); }} />
         <button class="btn ghost" onClick=${share}>שתף קישור</button>
         <button class="btn ghost" onClick=${reset}>איפוס</button>
         <button class="btn ghost icon" title=${themeLabel} aria-label=${themeLabel} onClick=${() => setTheme(nextTheme)}>
@@ -253,14 +287,16 @@ function App() {
       : html`מצב הדגמה: הנתונים סינתטיים ואינם היסטוריה אמיתית. להרצה עם נתונים אמיתיים הפעל <code dir="ltr">python run.py</code> בלי <code dir="ltr">--demo</code>.`}</div>` : null}
     <main class="layout" style=${`--panel-w:${panelW}px`}>
       ${view === "trinity"
-        ? html`<${TrinityInputs} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} />`
+        ? html`<${TrinityInputs} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} top=${abBar} />`
         : view === "property" ? html`<${PropertyInputs} plan=${plan} setPlan=${setPlan} res=${res} errors=${prop.fieldErrors} />`
-        : html`<${InputsPanel} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} />`}
+        : html`<${InputsPanel} plan=${plan} setPlan=${setPlan} range=${range} rangeError=${rangeError} favorites=${meta.favorites} top=${abBar} />`}
       <${PanelResizer} width=${panelW} setWidth=${setPanelW} />
       <div class=${"main" + (busy ? " is-busy" : "")} ref=${mainRef}>
         ${error ? html`<div class="callout error" role="alert">${error}</div>` : null}
         ${busy ? html`<div class="busy" role="status"><span class="spinner"></span>מחשב...</div>` : null}
-        ${view === "math" ? html`<${MathPage} plan=${acc.plan} res=${acc.res} tplan=${tri.plan} tres=${tri.res}
+        ${comparing ? html`<${CompareCard} resA=${pair[0].res} resB=${pair[1].res} rangeA=${pair[0].range} rangeB=${pair[1].range}
+            otherError=${other.error} busy=${busy} net=${tabKey === "plan" ? !!ui.net : true} themeKey=${themeKey} />` : null}
+        ${view === "math" ? html`<${MathPage} plan=${mathAcc.plan} res=${mathAcc.res} tplan=${mathTri.plan} tres=${mathTri.res}
                                       initial=${prevView.current === "trinity" ? "withdrawals" : "deposits"} />`
           : view === "property"
             ? (res ? html`<${PropertyResults} res=${res} plan=${plan} setPlan=${setPlan} themeKey=${themeKey} stale=${prop.stale} />`

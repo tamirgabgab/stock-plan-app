@@ -222,7 +222,8 @@ def synthetic_market(req, md: MarketData) -> Market:
     Path r occupies calendar positions r*(T+1) .. r*(T+1)+T, with prices and CPI starting
     at 1, so ``day_idx`` simply walks along it. The calendar repeats the months from the
     end of the data, as the paths are possible futures that start today. ``req.only_path``
-    keeps a single path (the detail view) from the same draw.
+    keeps a single path (the detail view) from the same draw. With the same seed, number of
+    paths, block and sample window, a shorter plan's paths are the start of a longer one's.
     """
     raw, lo, hi, calendar, keys, prices, cpi_daily, _ = _daily(req, md)
     T = req.total_months
@@ -242,7 +243,9 @@ def synthetic_market(req, md: MarketData) -> Market:
     R = int(req.paths)
     rng = np.random.default_rng(int(req.seed))
     K = -(-T // block)
-    starts = rng.integers(0, N - block + 1, size=(R, K))
+    # Drawn block by block (all paths' k-th block, then the next), so a longer plan only
+    # appends blocks: two plans of different lengths share their paths (A/B comparison).
+    starts = rng.integers(0, N - block + 1, size=(K, R)).T
     src = (starts[:, :, None] + np.arange(block)).reshape(R, K * block)[:, :T]   # (R, T)
     if req.only_path is not None:
         src = src[[int(req.only_path)]]

@@ -465,3 +465,49 @@ export function reachFigure({ T, share, mark, name = "הגיעו ליעד" }) {
   });
   return { data, layout };
 }
+
+// ------------------------------------------------------------- A/B plan comparison
+
+// The median and the 10-90 band of plans A and B over time (each on its own length).
+export function compareFigure({ a, b, sym }) {
+  const t = theme();
+  const traces = [];
+  for (const [p, color, name] of [[a, t.blue, "A"], [b, t.orange, "B"]]) {
+    if (!p) continue;
+    const x = p.cols.map((_, i) => i / 12);
+    traces.push(
+      { x, y: p.cols.map((s) => quantileSorted(s, 10)), mode: "lines", line: { width: 0 }, hoverinfo: "skip", showlegend: false },
+      { x, y: p.cols.map((s) => quantileSorted(s, 90)), mode: "lines", line: { width: 0 }, fill: "tonexty",
+        fillcolor: toAlpha(color, 0.16), hoverinfo: "skip", name: `${name}: אחוזונים 10–90` },
+      { x, y: p.cols.map((s) => quantileSorted(s, 50)), mode: "lines", line: { width: 3, color }, name: `${name}: חציון`,
+        hovertemplate: `${name}: ${sym}%{y:,.0f}<extra></extra>` },
+    );
+  }
+  const layout = baseLayout(t, {
+    hovermode: "x unified", dragmode: false,
+    xaxis: axis(t, { title: { text: "שנים מתחילת התוכנית" }, fixedrange: true }),
+    yaxis: axis(t, { tickprefix: sym, tickformat: "~s", fixedrange: true, rangemode: "tozero" }),
+  });
+  return { data: traces, layout };
+}
+
+// Histogram of A minus B on the same scenarios, with the zero line.
+export function diffFigure({ diffs, prefix, suffix, label }) {
+  const t = theme();
+  const data = [{ type: "histogram", x: diffs, nbinsx: 40, marker: { color: t.violet, line: { width: 0 } },
+                  hovertemplate: `${prefix}%{x:,.0f}${suffix}: %{y}<extra></extra>`, name: label }];
+  const layout = baseLayout(t, {
+    showlegend: false, hovermode: "closest", dragmode: false, bargap: 0.04,
+    shapes: [{ type: "line", yref: "paper", y0: 0, y1: 1, x0: 0, x1: 0, line: { color: t.text2, width: 1.5, dash: "dash" } }],
+    xaxis: axis(t, { title: { text: label }, tickprefix: prefix, ticksuffix: suffix, tickformat: "~s", fixedrange: true }),
+    yaxis: axis(t, { title: { text: "תרחישים" }, fixedrange: true }),
+  });
+  return { data, layout };
+}
+
+function toAlpha(color, alpha) {
+  const m = /^#([0-9a-f]{6})$/i.exec(color.trim());
+  if (!m) return color;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}

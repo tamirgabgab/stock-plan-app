@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 
 from ..config import ON_VERCEL
 from .base import DataError, MarketData
@@ -9,6 +10,7 @@ from .yahoo import YahooMarketData
 
 _provider: MarketData | None = None
 _demo_reason: str | None = None     # "requested" (--demo) or "fallback" (Yahoo unreachable)
+_lock = threading.Lock()            # the hosted app serves concurrent requests: probe only once
 
 
 def _flag(name: str, default: bool = False) -> bool:
@@ -23,15 +25,18 @@ def get_market_data() -> MarketData:
     and the app switches to demo data when it does not answer, e.g. from a blocked cloud IP.
     """
     global _provider, _demo_reason
-    if _provider is None:
-        if _flag("STOCKPLAN_DEMO"):
-            _provider, _demo_reason = DemoMarketData(), "requested"
-        else:
-            yahoo = YahooMarketData()
-            if _flag("STOCKPLAN_DEMO_FALLBACK", ON_VERCEL) and not yahoo.reachable():
-                _provider, _demo_reason = DemoMarketData(), "fallback"
+    if _provider is not None:
+        return _provider
+    with _lock:
+        if _provider is None:
+            if _flag("STOCKPLAN_DEMO"):
+                _provider, _demo_reason = DemoMarketData(), "requested"
             else:
-                _provider = yahoo
+                yahoo = YahooMarketData()
+                if _flag("STOCKPLAN_DEMO_FALLBACK", ON_VERCEL) and not yahoo.reachable():
+                    _provider, _demo_reason = DemoMarketData(), "fallback"
+                else:
+                    _provider, _demo_reason = yahoo, None
     return _provider
 
 

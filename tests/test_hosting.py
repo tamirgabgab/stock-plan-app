@@ -130,3 +130,27 @@ def test_fred_gives_up_sooner_than_other_sources(monkeypatch):
         yahoo._http_get(yahoo.BOI_USD_ILS_URL)
     fred = seen[yahoo.FRED_CSV_URL.format(series="CPIAUCSL")]
     assert sum(fred) < sum(seen[yahoo.BOI_USD_ILS_URL]) and fred[1] <= 6
+
+
+def test_concurrent_first_requests_probe_yahoo_once(fresh_provider, monkeypatch):
+    """Two requests racing on a cold instance once left real data labelled as the demo fallback."""
+    import threading
+    import time
+
+    monkeypatch.setenv("STOCKPLAN_DEMO_FALLBACK", "1")
+    answers = iter([False, True, True, True, True, True, True, True])
+    probes = []
+
+    def reachable(self):
+        probes.append(1)
+        time.sleep(0.05)
+        return next(answers)
+
+    monkeypatch.setattr(yahoo.YahooMarketData, "reachable", reachable)
+    threads = [threading.Thread(target=data.get_market_data) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(probes) == 1
+    assert data.get_market_data().is_demo == (data.demo_reason() == "fallback")

@@ -28,6 +28,8 @@ from .base import DataError, normalize_daily, normalize_monthly
 log = logging.getLogger(__name__)
 
 HTTP_TIMEOUT = (5, 20)   # connect, read (seconds)
+FRED_TIMEOUT = (4, 6)    # FRED often hangs for servers in US data centres (Vercel); give up
+                         # sooner, since a cold start waits for it before the first result
 FAIL_TTL = 3600          # a source that failed is skipped for this long (seconds)
 USER_AGENT = "Mozilla/5.0 (stock-plan-app)"
 
@@ -118,14 +120,14 @@ def _manual_override(name: str) -> Optional[pd.Series]:
     return pd.Series(df.iloc[:, 1].astype(float).values, index=pd.to_datetime(df.iloc[:, 0]))
 
 
-def _http_get(url: str) -> requests.Response:
-    resp = requests.get(url, timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT})
+def _http_get(url: str, timeout=HTTP_TIMEOUT) -> requests.Response:
+    resp = requests.get(url, timeout=timeout, headers={"User-Agent": USER_AGENT})
     resp.raise_for_status()
     return resp
 
 
 def _fred_series(series_id: str) -> pd.Series:
-    df = pd.read_csv(io.StringIO(_http_get(FRED_CSV_URL.format(series=series_id)).text))
+    df = pd.read_csv(io.StringIO(_http_get(FRED_CSV_URL.format(series=series_id), FRED_TIMEOUT).text))
     # Column names changed over time ("DATE" vs "observation_date"); use positions.
     values = pd.to_numeric(df.iloc[:, 1], errors="coerce")
     return pd.Series(values.values, index=pd.to_datetime(df.iloc[:, 0])).dropna()

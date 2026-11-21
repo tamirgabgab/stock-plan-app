@@ -126,10 +126,7 @@ code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand p { font-size: 12px; }
-.logo {
-  display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px;
-  background: var(--accent); color: var(--accent-ink); font-size: 14px;
-}
+.logo { display: block; width: 32px; height: 32px; border-radius: 9px; }
 .tabs { display: flex; gap: 4px; margin-inline-start: 12px; }
 .tab {
   border: 0; background: transparent; color: var(--text-secondary); font: inherit;

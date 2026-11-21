@@ -269,8 +269,8 @@ function App() {
 
   return html`
     <header class="topbar">
-      <div class="brand"><span class="logo" aria-hidden="true">▲</span>
-        <div><h1>מתכנן השקעות היסטורי${meta.version ? html` <span class="version-badge" dir="ltr" title="גרסת האפליקציה">v${meta.version}</span>` : null}</h1><p class="muted">כל תאריך התחלה בהיסטוריה הוא ריאליזציה אחת</p></div></div>
+      <div class="brand"><img class="logo" src="icons/icon.svg" alt="" />
+        <div><h1>בית ותיק${meta.version ? html` <span class="version-badge" dir="ltr" title="גרסת האפליקציה">v${meta.version}</span>` : null}</h1><p class="muted">מתכנן השקעות היסטורי: דירה, שוק ההון ופרישה</p></div></div>
       <nav class="tabs" aria-label="מצבים">
         <button class=${"tab" + (view === "plan" ? " on" : "")} aria-current=${view === "plan" ? "page" : null}
           onClick=${() => setView("plan")}>צבירה</button>

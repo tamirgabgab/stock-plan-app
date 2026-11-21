@@ -114,3 +114,19 @@ def test_installable_on_a_phone_home_screen():
     assert {("192x192", "any"), ("512x512", "any"), ("512x512", "maskable")} <= purposes
     apple = re.search(r'<link rel="apple-touch-icon" href="([^"]+)"', page).group(1)
     assert png_size(apple) == (180, 180)
+
+
+def test_fred_gives_up_sooner_than_other_sources(monkeypatch):
+    seen = {}
+
+    def fake_get(url, timeout, headers):
+        seen[url] = timeout
+        raise yahoo.requests.ConnectionError("timed out")
+
+    monkeypatch.setattr(yahoo.requests, "get", fake_get)
+    with pytest.raises(yahoo.requests.ConnectionError):
+        yahoo._fred_series("CPIAUCSL")
+    with pytest.raises(yahoo.requests.ConnectionError):
+        yahoo._http_get(yahoo.BOI_USD_ILS_URL)
+    fred = seen[yahoo.FRED_CSV_URL.format(series="CPIAUCSL")]
+    assert sum(fred) < sum(seen[yahoo.BOI_USD_ILS_URL]) and fred[1] <= 6

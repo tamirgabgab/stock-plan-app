@@ -1,10 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#2a78d6"/>
-  <rect width="256" height="512" fill="#e2703a"/>
-  <g transform="translate(0 -22)" fill="none" stroke="#fff" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M50,262 L134,188 L218,262"/>
-    <path d="M74,246 L74,372 L194,372 L194,246"/>
-    <path d="M280,372 L324,318 L362,340 L438,232"/>
-    <path d="M398,228 L442,226 L440,270"/>
-  </g>
+<!-- Home (orange) beside a rising chart with axes (blue), each centred in its half. -->
+<rect width="512" height="512" fill="#2a78d6"/>
+<rect width="256" height="512" fill="#e2703a"/>
+<g transform="translate(128 257) scale(1.15) translate(-128 -257)">
+<g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="22">
+<path d="M50,252 L128,182 L206,252"/>
+<path d="M74,232 L74,332 L182,332 L182,232"/>
+</g>
+</g>
+<g transform="translate(384 257) scale(1.15) translate(-384 -257)">
+<path d="M306,182 L306,332 L462,332" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="16" stroke-opacity=".7"/>
+<g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="20">
+<path d="M334.0,304.0 L370.0,258.0 L398.0,282.0 L452.0,196.0"/>
+<path d="M413.5,206.9 L452.0,196.0 L458.9,235.4"/>
+</g>
+</g>
 </svg>

@@ -183,7 +183,8 @@ personal free quota is 120 core-hours a month (60 hours on the default 2-core ma
 The page ships a web app manifest (`stockplan/web/manifest.webmanifest`) and icons
 (`stockplan/web/icons/`), so a phone can install it on the home screen under the name
 **בית ותיק** ("home and portfolio"); it then opens full screen, without the browser's
-address bar. The icon is `icons/icon.svg` (a home on orange beside a rising chart on blue);
+address bar. The icon is `icons/icon.svg` (a home on orange beside a rising chart with axes on blue,
+each centred in its half and equally tall);
 the PNG sizes are rendered from it with headless Chromium. Open the hosted URL, then:
 
 - **iPhone (Safari):** Share → *Add to Home Screen*.

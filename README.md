@@ -1,4 +1,4 @@
-# 📈 Stock Plan App
+# 📈 Stock Plan App (בית ותיק)
 
 **Historical back-testing of long-term investment plans, with an interactive web UI.**
 
@@ -181,8 +181,10 @@ personal free quota is 120 core-hours a month (60 hours on the default 2-core ma
 ## On a phone
 
 The page ships a web app manifest (`stockplan/web/manifest.webmanifest`) and icons
-(`stockplan/web/icons/`), so a phone can install it on the home screen; it then opens
-full screen, without the browser's address bar. Open the hosted URL, then:
+(`stockplan/web/icons/`), so a phone can install it on the home screen under the name
+**בית ותיק** ("home and portfolio"); it then opens full screen, without the browser's
+address bar. The icon is `icons/icon.svg` (a home on orange beside a rising chart on blue);
+the PNG sizes are rendered from it with headless Chromium. Open the hosted URL, then:
 
 - **iPhone (Safari):** Share → *Add to Home Screen*.
 - **Android (Chrome):** ⋮ menu → *Add to Home screen* (or *Install app*).

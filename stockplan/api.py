@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import logging
 import math
+import mimetypes
 import time
 from datetime import date
 from pathlib import Path
@@ -25,6 +26,7 @@ from .engine import (DepositEvent, Holding, Income, PlanRequest, Stage, Withdraw
 from .engine.property import METRICS, STATS, InputError, PropertyRequest, row_of, run_property, solve_equal
 
 log = logging.getLogger(__name__)
+mimetypes.add_type("application/manifest+json", ".webmanifest")   # installable app (home screen)
 WEB_DIR = Path(__file__).resolve().parent / "web"
 STARTED = time.time()
 MAX_CELLS = 15_000_000   # realizations x months sent to the browser

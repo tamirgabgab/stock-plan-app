@@ -81,3 +81,36 @@ def test_status_endpoint(monkeypatch):
     from stockplan.api import app
     r = TestClient(app).get("/api/status")
     assert r.status_code == 200 and "sources" in r.json()
+
+
+def test_installable_on_a_phone_home_screen():
+    """The page links a web app manifest whose icons are served at their stated sizes."""
+    import re
+    import struct
+
+    from fastapi.testclient import TestClient
+
+    from stockplan.api import app
+
+    client = TestClient(app)
+
+    def png_size(path):
+        body = client.get("/" + path).content
+        assert body[:8] == b"\x89PNG\r\n\x1a\n"
+        return struct.unpack(">II", body[16:24])
+
+    page = client.get("/").text
+    href = re.search(r'<link rel="manifest" href="([^"]+)"', page).group(1)
+    assert 'rel="apple-touch-icon"' in page
+    r = client.get("/" + href)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/manifest+json")
+    manifest = r.json()
+    assert manifest["display"] == "standalone" and manifest["start_url"]
+    purposes = set()
+    for icon in manifest["icons"]:
+        assert "%dx%d" % png_size(icon["src"]) == icon["sizes"]
+        purposes.add((icon["sizes"], icon["purpose"]))
+    assert {("192x192", "any"), ("512x512", "any"), ("512x512", "maskable")} <= purposes
+    apple = re.search(r'<link rel="apple-touch-icon" href="([^"]+)"', page).group(1)
+    assert png_size(apple) == (180, 180)

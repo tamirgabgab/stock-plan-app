@@ -13,7 +13,11 @@ date, and every realization in a table. Hover any of them to see that path.
 
 ## Quick start
 
-**In the browser, nothing to install:**
+**Online:** https://stock-plan-app.vercel.app (rebuilt from every push to `main`). On a
+phone, add it to the home screen and it opens full screen like an app (see
+[On a phone](#on-a-phone)).
+
+**In your own codespace:**
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/tamirgabgab/stock-plan-app?quickstart=1)
 — the link opens (or resumes) your codespace, updates it to the latest `main`, starts the
 app and opens it in a new tab. Locally:
@@ -174,10 +178,23 @@ restarts the app on port 8000 and the port opens in a browser tab. The link
 codespace instead of creating a new one. Codespaces stop after 30 idle minutes; the
 personal free quota is 120 core-hours a month (60 hours on the default 2-core machine).
 
-## Hosting (Vercel, paused)
+## On a phone
 
-Automatic Vercel deployments are switched off (`"git": {"deploymentEnabled": false}` in
-`vercel.json`); the setup is kept for reference and can be re-enabled there.
+The page ships a web app manifest (`stockplan/web/manifest.webmanifest`) and icons
+(`stockplan/web/icons/`), so a phone can install it on the home screen; it then opens
+full screen, without the browser's address bar. Open the hosted URL, then:
+
+- **iPhone (Safari):** Share → *Add to Home Screen*.
+- **Android (Chrome):** ⋮ menu → *Add to Home screen* (or *Install app*).
+
+The icon only points at the URL, so the app still runs on the server: it needs a
+connection, and the first calculation after an idle spell waits for a cold start.
+
+## Hosting (Vercel)
+
+Every push to `main` deploys https://stock-plan-app.vercel.app. Branches named
+`claude/**` are not deployed (`"git": {"deploymentEnabled": {"claude/**": false}}` in
+`vercel.json`), because they would share the account's single build slot.
 
 - `api/index.py` exposes the FastAPI app; `vercel.json` routes every path to it.
 - Dependencies come from the `[project]` table in `pyproject.toml` (kept in step with

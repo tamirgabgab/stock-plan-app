@@ -4,6 +4,7 @@ import { CURRENCY_SYMBOL, dateHe, money, monthsLabel } from "./format.js";
 import { DatePicker, DualRange, Field, Hint, IconButton, NumberField, NumberInput, Segmented, SymbolPicker, Toggle } from "./ui.js";
 import { AgeIncomeSection, WithdrawFields } from "./withdrawal.js";
 import { defaultDividend } from "./dividends.js";
+import { InflationSection } from "./inflation.js";
 
 // Plan state -> API body: drop the UI ids and empty holdings (shared with the math tab).
 export function toPayload(plan) {
@@ -109,6 +110,7 @@ export function InputsPanel({ plan, setPlan, range, rangeError, favorites, top =
       <${RawPreset} plan=${plan} setPlan=${setPlan} indexKey="index_deposits" />
     </details>
 
+    <${InflationSection} plan=${plan} setPlan=${setPlan} />
     <${ScheduleSection} plan=${plan} set=${set} setPlan=${setPlan} sym=${sym} totalMonths=${totalMonths} />
     <${TaxSection} plan=${plan} set=${set} setPlan=${setPlan} deposits />
     <${RebalanceSection} plan=${plan} set=${set} />
@@ -300,7 +302,7 @@ export function PeriodSection({ plan, set, range, rangeError, totalMonths }) {
   return html`<details open class="section">
     <summary>${synthetic ? "תרחישי השוק" : "תקופת הבדיקה"}</summary>
     <${Segmented} label="מקור התרחישים" options=${MODE_OPTIONS} value=${plan.mode || "history"} onChange=${set("mode")}
-      hint="תאריכים היסטוריים: כל תאריך התחלה בהיסטוריה הוא תרחיש, ולכן לתוכנית ארוכה יש מעט תרחישים שחופפים זה לזה. מסלולים סינתטיים: כל מסלול מורכב מבלוקים של חודשים רצופים אמיתיים (כל הנכסים, שער הדולר והאינפלציה יחד) שנבחרים באקראי מההיסטוריה. כך יש אלפי תרחישים גם לתוכנית של 50 שנה, עם המתאמים והקריסות האמיתיים, אבל בסדר חדש." />
+      hint="תאריכים היסטוריים: כל תאריך התחלה בהיסטוריה הוא תרחיש, ולכן לתוכנית ארוכה יש מעט תרחישים שחופפים זה לזה. מסלולים סינתטיים: כל מסלול מורכב מבלוקים של חודשים רצופים אמיתיים (כל הנכסים, שער הדולר והאינפלציה יחד; בשקלים עם מודל אינפלציה, הבלוקים נותנים את התשואה הריאלית והאינפלציה מגיעה מהמודל) שנבחרים באקראי מההיסטוריה. כך יש אלפי תרחישים גם לתוכנית של 50 שנה, עם המתאמים והקריסות האמיתיים, אבל בסדר חדש." />
     ${synthetic ? html`<${SyntheticFields} plan=${plan} set=${set} range=${range} rangeError=${rangeError} totalMonths=${totalMonths} />`
       : html`<${HistoryFields} plan=${plan} set=${set} range=${range} rangeError=${rangeError} totalMonths=${totalMonths} />`}
   </details>`;

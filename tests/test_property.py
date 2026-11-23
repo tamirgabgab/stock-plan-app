@@ -516,3 +516,35 @@ def test_synthetic_solve_and_calibrate_api(monkeypatch):
     cal = client.post("/api/property/calibrate", json=req.model_dump()).json()
     assert set(cal["markets"]) == {"m", "a"} and len(cal["corr"]) == 10
     assert 0 < cal["housing_vol"] < 50 and cal["markets"]["m"]["volatility"] > 0
+
+
+def test_history_with_the_inflation_model():
+    """CPI off: the model's index replaces the CPI, and every historical series keeps its real
+    change (series / CPI history * model index); the rate follows Fisher."""
+    from stockplan.engine.inflation import InflationModel, date_keys, index_paths, yearly_rates
+    hist = build_paths(hist_request(), MD)
+    req = hist_request(cpi=False)
+    req.common.inflation = 3.0
+    req.common.inflation_model.sd = 1.5
+    req.common.inflation_model.phi = 0.3
+    model = build_paths(req, MD)
+    assert model.info["inflation_model"] and model.scale is None
+    common = np.isin(model.start_dates, hist.start_dates)
+    rows = hist.start_dates.get_indexer(model.start_dates[common])
+    m = InflationModel(mean=3.0, sd=1.5, phi=0.3)
+    C = index_paths(m, date_keys(model.start_dates.values), model.T, seed=req.common.synthetic.seed)
+    assert np.allclose(model.cpi, C)
+    real = lambda p, cpi: p / cpi                               # the real change is the same
+    assert np.allclose(real(model.home[common], model.cpi[common]), real(hist.home[rows], hist.cpi[rows]))
+    assert np.allclose(real(model.rent[common], model.cpi[common]), real(hist.rent[rows], hist.cpi[rows]))
+    gm, gh = next(iter(model.growth.values()))[common], next(iter(hist.growth.values()))[rows]
+    infl = lambda c: np.c_[np.ones(len(c)), c[:, 1:] / c[:, :-1]]
+    assert np.allclose(gm / infl(model.cpi[common]), gh / infl(hist.cpi[rows]))
+    pi = yearly_rates(m, date_keys(model.start_dates.values), model.T // 12 + 1, req.common.synthetic.seed) * 100
+    hc = hist.cpi[rows]
+    hist12 = (hc[:, 12:] / hc[:, :-12] - 1) * 100                    # months 12..T
+    model12 = pi[:, np.arange(12, model.T + 1) // 12][common]
+    want = np.maximum(hist.rate[rows][:, 12:] - hist12 + model12, 0)
+    assert np.allclose(model.rate[common][:, 12:], want) and np.all(model.rate >= 0)
+    res = run_property(req, MD)
+    assert np.isfinite(res["scenarios"][1]["net"]).all()

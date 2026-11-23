@@ -2,6 +2,7 @@
 import { html, render, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
 import { postJSON } from "./api.js";
 import { withDividends } from "./dividends.js";
+import { INFLATION_DEFAULTS } from "./inflation.js";
 import { CompareBar, CompareCard } from "./compare.js";
 import { ReportView } from "./report.js";
 import { InputsPanel, newId, newStage, toPayload } from "./inputs.js";
@@ -53,6 +54,7 @@ const DEFAULT_PLAN = {
   sample_to: null,
   start_age: 0,
   incomes: [],
+  inflation: INFLATION_DEFAULTS(),
   stages: [{ ...newStage(1), months: 240, monthly_deposit: 1000 }],
 };
 

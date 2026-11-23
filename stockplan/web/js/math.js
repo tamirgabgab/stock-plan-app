@@ -6,6 +6,7 @@ import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
 import { toPayload } from "./inputs.js";
 import { summarize } from "./stats.js";
 import { Segmented } from "./ui.js";
+import { InflationMath } from "./math_inflation.js";
 
 const S = String.raw;
 
@@ -32,9 +33,11 @@ export function MathPage({ plan, res, tplan, tres, initial }) {
     <div class="subtabs" role="tablist" aria-label="נושא">
       <button type="button" role="tab" aria-selected=${sub === "deposits"} class=${sub === "deposits" ? "on" : ""} onClick=${() => setSub("deposits")}>הפקדות (צבירה)</button>
       <button type="button" role="tab" aria-selected=${sub === "withdrawals"} class=${sub === "withdrawals" ? "on" : ""} onClick=${() => setSub("withdrawals")}>משיכות (טריניטי)</button>
+      <button type="button" role="tab" aria-selected=${sub === "inflation"} class=${sub === "inflation" ? "on" : ""} onClick=${() => setSub("inflation")}>אינפלציה</button>
     </div>
     ${sub === "deposits"
       ? html`<${DepositsMath} plan=${plan} res=${res} />`
+      : sub === "inflation" ? html`<${InflationMath} plan=${plan} tplan=${tplan} />`
       : html`<${WithdrawSection} tplan=${tplan} tres=${tres} />
              <${SolverSection} plan=${tplan} api="/api/trinity/solve_trace" kind="withdrawals" />`}
   </div>`;

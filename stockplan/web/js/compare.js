@@ -1,8 +1,9 @@
 // A/B comparison of two plans in the same tab (accumulation or Trinity): the bar that
 // switches between the plans, and the card above the results that compares them on the
 // same scenarios (the same start dates, or the same synthetic paths).
-import { html, useEffect, useRef } from "../vendor/preact-htm.module.js";
-import { compareFigure, diffFigure, observeResize, PLOT_CONFIG } from "./charts.js";
+import { html } from "../vendor/preact-htm.module.js";
+import { compareFigure, diffFigure } from "./charts.js";
+import { Plot } from "./plot.js";
 import { CURRENCY_SYMBOL, money, pct } from "./format.js";
 import { isSynthetic, modeWord, solvedLabel, withMode } from "./results.js";
 import { summarize } from "./stats.js";
@@ -127,19 +128,4 @@ export function CompareCard({ resA, resB, rangeA, rangeB, otherError, busy, net,
     ${sameCur ? html`<h3>השווי לאורך הזמן</h3>
       <${Plot} build=${() => compareFigure({ a: { cols: a.cs.sorted }, b: { cols: b.cs.sorted }, sym, age0: a.plan.start_age === b.plan.start_age ? a.plan.start_age || 0 : 0 })} deps=${[a, b, themeKey]} cls="plot" />` : null}
   </section>`;
-}
-
-function Plot({ build, deps, cls }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    const { data, layout } = build();
-    window.Plotly.react(ref.current, data, layout, PLOT_CONFIG);
-  }, deps);
-  useEffect(() => {
-    const gd = ref.current;
-    const off = observeResize(gd);
-    return () => { off(); if (gd) window.Plotly.purge(gd); };
-  }, []);
-  return html`<div ref=${ref} class=${cls}></div>`;
 }

@@ -730,3 +730,7 @@ fieldset.apt-fields:disabled > :not(.field-note) { opacity: 0.45; }
   body.report-open .compare-table, body.report-open .compare .plot { break-inside: avoid; }
   body.report-open .report h2, body.report-open .report h3 { break-after: avoid; }
 }
+
+/* Inflation model: the density preview in the settings panel. */
+.plot-mini { height: 150px; }
+.inflation-fields { display: grid; gap: 8px; }

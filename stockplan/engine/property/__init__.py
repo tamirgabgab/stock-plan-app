@@ -47,7 +47,7 @@ Conventions (all rates are annual, in percent, as entered):
 """
 from __future__ import annotations
 
-from .inputs import PURCHASE_SINGLE, PURCHASE_ADDITIONAL, SHEVACH_SINGLE_CEILING, RENT_EXEMPT_CEILING, DEFAULT_HOLDINGS, Bracket, _brackets, TaxTables, HoldingP, MarketParams, RatePoint, Track, Cost, Scenario, HistoryFlags, SYN_SERIES, DEFAULT_CORR, SyntheticParams, Common, PropertyRequest  # noqa: F401
+from .inputs import PURCHASE_SINGLE, PURCHASE_ADDITIONAL, SHEVACH_SINGLE_CEILING, RENT_EXEMPT_CEILING, DEFAULT_HOLDINGS, Bracket, _brackets, TaxTables, HoldingP, MarketParams, RatePoint, Track, Cost, Scenario, HistoryFlags, InflationShape, SYN_SERIES, DEFAULT_CORR, SyntheticParams, Common, PropertyRequest  # noqa: F401
 from .paths import _g, _sorted_brackets, bracket_tax, purchase_tax_rows, annuity, months_of, schedule_at, holdings_key, Paths, fixed_paths, corr_matrix, MAX_SYN_CELLS, synthetic_paths  # noqa: F401
 from .simulate import Account, simulate, _stack, _rows  # noqa: F401
 from .checks import Issue, InputError, _ils, _issue, check_common, alloc_bounds, check_scenario, check_result  # noqa: F401

@@ -539,3 +539,53 @@ export function sequenceFigure({ x, y, ok, sym, yTitle }) {
   });
   return { data, layout };
 }
+
+// Inflation model: the density of a year's inflation, with the 5th, 50th and 95th percentiles.
+export function inflationFigure({ pdf, quantiles, compact = false }) {
+  const t = theme();
+  const data = [{ type: "scatter", mode: "lines", x: pdf.x, y: pdf.y, fill: "tozeroy", fillcolor: toAlpha(t.blue, 0.18),
+                  line: { color: t.blue, width: 2 }, hovertemplate: "%{x:.2f}%<extra></extra>", name: "צפיפות" }];
+  const marks = [["p5", "5%"], ["p50", "חציון"], ["p95", "95%"]].map(([k, label]) => ({
+    type: "line", yref: "paper", y0: 0, y1: 1, x0: quantiles[k], x1: quantiles[k],
+    line: { color: k === "p50" ? t.text2 : t.muted, width: 1, dash: k === "p50" ? "solid" : "dot" } }));
+  const notes = [["p5", "5%"], ["p50", "חציון"], ["p95", "95%"]].map(([k, label]) => ({
+    x: quantiles[k], y: 1, yref: "paper", yanchor: "bottom", text: label, showarrow: false, font: { size: 10, color: t.muted } }));
+  const layout = baseLayout(t, {
+    showlegend: false, hovermode: "x", dragmode: false, shapes: marks, annotations: notes,
+    margin: { l: 16, r: 16, t: 18, b: compact ? 30 : 44 },
+    xaxis: axis(t, { ticksuffix: "%", fixedrange: true, title: compact ? undefined : { text: "האינפלציה בשנה אחת" } }),
+    yaxis: axis(t, { showticklabels: false, fixedrange: true, rangemode: "tozero" }),
+  });
+  return { data, layout };
+}
+
+// The same mean and spread in every family, for the math tab.
+export function inflationFamiliesFigure({ families, chosen, labels }) {
+  const t = theme();
+  const colors = { normal: t.text2, johnson: t.blue, cornish: t.orange, gennorm: t.violet };
+  const data = Object.entries(families).filter(([, f]) => f.pdf).map(([k, f]) => ({
+    type: "scatter", mode: "lines", x: f.pdf.x, y: f.pdf.y, name: labels[k],
+    line: { color: colors[k], width: k === chosen ? 3 : 1.5, dash: k === "normal" && k !== chosen ? "dot" : "solid" },
+    hovertemplate: `%{x:.2f}%<extra>${labels[k]}</extra>` }));
+  const layout = baseLayout(t, {
+    hovermode: "closest", dragmode: false,
+    xaxis: axis(t, { title: { text: "האינפלציה בשנה אחת" }, ticksuffix: "%", fixedrange: true }),
+    yaxis: axis(t, { title: { text: "צפיפות" }, fixedrange: true, rangemode: "tozero" }),
+  });
+  return { data, layout };
+}
+
+// A few yearly inflation paths drawn from the model: shows the persistence.
+export function inflationPathsFigure({ samples, mean }) {
+  const t = theme();
+  const data = samples.map((ys, i) => ({ type: "scatter", mode: "lines+markers", x: ys.map((_, k) => k + 1), y: ys,
+    name: `מסלול ${i + 1}`, line: { color: t.palette[i % t.palette.length], width: 1.5 }, marker: { size: 4 },
+    hovertemplate: "שנה %{x}: %{y:.2f}%<extra></extra>" }));
+  const layout = baseLayout(t, {
+    showlegend: false, hovermode: "closest", dragmode: false,
+    shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: mean, y1: mean, line: { color: t.text2, width: 1, dash: "dash" } }],
+    xaxis: axis(t, { title: { text: "שנה בתוכנית" }, fixedrange: true }),
+    yaxis: axis(t, { title: { text: "אינפלציה שנתית" }, ticksuffix: "%", fixedrange: true }),
+  });
+  return { data, layout };
+}

@@ -180,3 +180,33 @@ def test_report(server, browser):
     assert page.locator(".report-root").count() == 0
     assert not errors, "\n".join(errors)
     page.close()
+
+
+def test_inflation_model(server, browser):
+    """Shekel plans: the inflation section switches families (with the density preview), the
+    CBS history still works, the math tab explains the model, and the apartment tab's history
+    mode shows the model's fields."""
+    page, errors = open_page(browser, server)
+    page.evaluate("localStorage.clear()")
+    page.reload()
+    page.wait_for_selector("#app .topbar")
+    settle(page, "accumulation")
+    section = page.locator("details.section", has=page.locator("summary", has_text="אינפלציה")).first
+    for dist in ("ג'ונסון SU", "קורניש-פישר", "נורמלית מוכללת", "נורמלית"):
+        section.get_by_role("radio", name=dist, exact=True).click()
+        page.wait_for_selector(".inflation-fields .plot-mini .main-svg", timeout=30_000)
+        settle(page, dist)
+    section.get_by_role("radio", name='היסטוריה (למ"ס)', exact=True).click()
+    settle(page, "CBS history")
+    section.get_by_role("radio", name="מודל סטטיסטי", exact=True).click()
+    settle(page, "model again")
+    page.get_by_role("button", name="הסבר מתמטי", exact=True).click()
+    page.get_by_role("tab", name="אינפלציה").click()
+    page.wait_for_selector(".math .plot .main-svg", timeout=30_000)
+    assert page.locator(".math table.data tbody tr").count() == 4
+    page.get_by_role("button", name="דירה נגד שוק ההון", exact=True).click()
+    click_option(page, "היסטוריה")
+    settle(page, "apartment history")
+    assert page.locator("h3", has_text="מודל האינפלציה").count() == 1
+    assert not errors, "\n".join(errors)
+    page.close()

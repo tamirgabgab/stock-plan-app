@@ -6,6 +6,7 @@ import logging
 import math
 import mimetypes
 import time
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import List, Literal, Optional
@@ -23,7 +24,8 @@ from .data import DataError, demo_reason, get_market_data
 from .data.search import lookup, search
 from .engine import (DepositEvent, Holding, Income, PlanRequest, Stage, WithdrawRequest, WithdrawStage, available_range,
                      benchmark_path, realization_detail, run_plan, run_trinity, solve_trace, trinity_heatmap)
-from .engine.property import METRICS, STATS, InputError, PropertyRequest, row_of, run_property, solve_equal
+from .engine import inflation as inflation_model
+from .engine.property import METRICS, STATS, InflationShape, InputError, PropertyRequest, row_of, run_property, solve_equal
 
 log = logging.getLogger(__name__)
 mimetypes.add_type("application/manifest+json", ".webmanifest")   # installable app (home screen)
@@ -86,6 +88,16 @@ class IncomeIn(BaseModel):
     name: str = Field("", max_length=60)
 
 
+class InflationIn(InflationShape):
+    """Inflation of a shekel plan: the yearly model (mean, spread, shape, persistence; see
+    engine.inflation) or the CBS CPI history."""
+    source: Literal["model", "history"] = "model"
+    mean: float = Field(2.5, ge=-20, le=50)
+
+    def to_model(self) -> inflation_model.InflationModel:
+        return inflation_model.InflationModel(**self.model_dump())
+
+
 class Scenarios(BaseModel):
     """Where the market scenarios come from: every historical start date, or synthetic
     paths made of blocks of historical months (see engine.market.synthetic_market)."""
@@ -98,6 +110,7 @@ class Scenarios(BaseModel):
     # Retirement: the age at the start of the plan (0 = not set) and other income by age.
     start_age: float = Field(0.0, ge=0, le=120)
     incomes: List[IncomeIn] = Field(default_factory=list, max_length=20)
+    inflation: InflationIn = Field(default_factory=InflationIn)
 
 
 def _incomes(incomes) -> list:
@@ -141,7 +154,8 @@ class PlanIn(Scenarios):
                   for s in self.stages]
         events = [DepositEvent(**e.model_dump()) for e in self.events]
         return PlanRequest(stages=stages, events=events, incomes=_incomes(self.incomes),
-                           **self.model_dump(exclude={"stages", "events", "incomes"}))
+                           inflation=self.inflation.to_model(),
+                           **self.model_dump(exclude={"stages", "events", "incomes", "inflation"}))
 
 
 class WithdrawStageIn(WithdrawRule):
@@ -173,7 +187,8 @@ class TrinityIn(Scenarios):
     def to_request(self) -> WithdrawRequest:
         stages = [WithdrawStage(holdings=_holdings(s.holdings), **s.model_dump(exclude={"holdings"}))
                   for s in self.stages]
-        return WithdrawRequest(stages=stages, incomes=_incomes(self.incomes), **self.model_dump(exclude={"stages", "incomes"}))
+        return WithdrawRequest(stages=stages, incomes=_incomes(self.incomes), inflation=self.inflation.to_model(),
+                               **self.model_dump(exclude={"stages", "incomes", "inflation"}))
 
 
 class HeatmapIn(BaseModel):
@@ -346,6 +361,32 @@ def plan_benchmark(body: BenchmarkIn):
 @app.post("/api/trinity/realization/benchmark")
 def trinity_benchmark(body: TrinityBenchmarkIn):
     return _bench(body.plan.to_request(), body)
+
+
+class InflationPreviewIn(InflationIn):
+    seed: int = Field(1, ge=0, le=2**31 - 1)
+
+
+@app.post("/api/inflation/preview")
+def inflation_preview(body: InflationPreviewIn):
+    """The yearly inflation's density, moments and fitted parameters for the chosen family,
+    the same mean and spread in the other families (the math tab's comparison) and a few
+    sample paths that show the persistence."""
+    m = inflation_model.from_dict(body.model_dump(exclude={"seed"}))
+    try:
+        inflation_model.validate(m)
+        out = inflation_model.describe(m)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    out["samples"] = inflation_model.sample_paths(m, years=30, n=5, seed=body.seed)
+    others = {}
+    for dist in inflation_model.DISTS:
+        try:
+            others[dist] = inflation_model.describe(replace(m, dist=dist), points=161)
+        except ValueError as exc:
+            others[dist] = {"error": str(exc)}
+    out["families"] = others
+    return out
 
 
 @app.post("/api/range")

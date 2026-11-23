@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import List, Optional
 
+from .inflation import InflationModel
+
 MODES = ("history", "synthetic")
 
 SOLVE_FINAL = "final"
@@ -152,6 +154,8 @@ class PlanRequest:
     # incomes start.
     start_age: float = 0.0
     incomes: List[Income] = field(default_factory=list)
+    # Inflation of a shekel plan: a statistical model (default) or the CBS CPI history.
+    inflation: InflationModel = field(default_factory=InflationModel)
 
     @property
     def total_months(self) -> int:
@@ -308,6 +312,7 @@ class WithdrawRequest:
     # incomes start.
     start_age: float = 0.0
     incomes: List[Income] = field(default_factory=list)
+    inflation: InflationModel = field(default_factory=InflationModel)
 
     @property
     def total_months(self) -> int:

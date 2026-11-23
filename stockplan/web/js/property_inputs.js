@@ -2,6 +2,7 @@
 import { html, useState } from "../vendor/preact-htm.module.js";
 import { postJSON } from "./api.js";
 import { dateHe, pct } from "./format.js";
+import { InflationFields } from "./inflation.js";
 import { HoldingsTable, newId } from "./inputs.js";
 import { Field, Hint, IconButton, NumberField, NumberInput, Segmented, Toggle } from "./ui.js";
 import { DEFAULT_CORR, DEFAULT_TAXES, MAX_SCENARIOS, SERIES, SYM, SYN_ORDER, Swatch, m, mc, newCost, newScenario, newTrack, propertyPayload, purchaseOf, scheduleAt } from "./property_common.js";
@@ -46,6 +47,11 @@ export function PropertyInputs({ plan, setPlan, res, errors = {} }) {
         <div class="series-flags">${SERIES.map((sr) => html`<${Toggle} label=${sr.label} hint=${sr.hint} checked=${c.history[sr.key]}
             onChange=${(v) => setPlan((p) => ({ ...p, common: { ...p.common, history: { ...p.common.history, [sr.key]: v } } }))} />`)}</div>
         <p class="muted small">סדרה כבויה נשארת על הפרמטר הקבוע. טווח התאריכים הוא החיתוך של הסדרות הדלוקות, ולכן כיבוי של סדרה קצרה (דירות, ריבית) מאריך אותו.</p>
+        ${!c.history.cpi ? html`<div class="subsection"><h3>מודל האינפלציה</h3>
+          <p class="muted small">המדד כבוי, ולכן כל שנה מוגרלת אינפלציה: התוחלת היא "אינפלציה שנתית" בחלק של האדם, והשאר כאן. הסדרות ההיסטוריות שומרות על השינוי הריאלי שלהן.</p>
+          <${InflationFields} value=${c.inflation_model} showMean=${false} onChange=${(x) => setPlan((p) => ({ ...p, common: { ...p.common, inflation_model: { ...p.common.inflation_model, ...x } } }))}
+            seed=${c.synthetic.seed} setSeed=${(s) => setPlan((p) => ({ ...p, common: { ...p.common, synthetic: { ...p.common.synthetic, seed: s } } }))} />
+          </div>` : null}
         ${info ? html`<p class="callout">תאריכי התחלה: <b>${dateHe(info.min_start)}</b> עד <b>${dateHe(info.max_start)}</b> (${info.n} ריאליזציות)
             <br /><span class="muted">${Object.entries(info.ranges).map(([k, [a, b]]) => `${k}: ${dateHe(a)}–${dateHe(b)}`).join(" · ")}</span></p>` : null}
         ${c.history.market ? html`<${NumberField} label="עלות מינוף שנתית" value=${c.leverage_cost} onChange=${setC("leverage_cost")} step=${0.25} max=${30} suffix="%"
@@ -54,7 +60,7 @@ export function PropertyInputs({ plan, setPlan, res, errors = {} }) {
 
     <details open class="section">
       <summary>האדם (משותף לכל התרחישים)</summary>
-      <p class="muted small">כל תרחיש מתחיל מאותו אדם: הון עצמי שכבר יש לו, וסכום חודשי שהוא מייעד להשקעה. כל תרחיש מחלק את ההון העצמי בין דירה לשוק ההון, וממה שנשאר מהתקציב אחרי ההוצאות על הדירה מפקידים בשוק ההון.${hist ? " במצב היסטורי כל הסכומים הם בכסף של היום, ומוקטנים לרמת המחירים של כל תאריך התחלה." : ""}</p>
+      <p class="muted small">כל תרחיש מתחיל מאותו אדם: הון עצמי שכבר יש לו, וסכום חודשי שהוא מייעד להשקעה. כל תרחיש מחלק את ההון העצמי בין דירה לשוק ההון, וממה שנשאר מהתקציב אחרי ההוצאות על הדירה מפקידים בשוק ההון.${hist ? (c.history.cpi ? " במצב היסטורי כל הסכומים הם בכסף של היום, ומוקטנים לרמת המחירים של כל תאריך התחלה." : " במצב היסטורי עם מודל אינפלציה כל הסכומים הם בכסף של תחילת התקופה.") : ""}</p>
       <div class="grid-2">
         <${NumberField} label="הון עצמי" value=${c.equity} onChange=${setC("equity")} step=${10000} suffix=${SYM} note=${m(c.equity)}
           error=${errors["common.equity"]} />
@@ -65,7 +71,7 @@ export function PropertyInputs({ plan, setPlan, res, errors = {} }) {
           error=${errors["common.years"]}
           hint="נקודת הזמן T שבה מסתיימת ההשוואה. בכל חודש עד T מחושב השווי נטו אם היו מממשים הכול באותו רגע." />
         <${NumberField} label="אינפלציה שנתית" value=${c.inflation} onChange=${setC("inflation")} step=${0.1} min=${-20} suffix="%"
-          disabled=${H("cpi")} note=${H("cpi") ? "מהיסטוריה" : Y("cpi") ? "החציון; התנודתיות בהגדרות הסינתטיות" : null} />
+          disabled=${H("cpi")} note=${H("cpi") ? "מהיסטוריה" : Y("cpi") ? "החציון; התנודתיות בהגדרות הסינתטיות" : hist ? "התוחלת של מודל האינפלציה" : null} />
       </div>
       <${Toggle} label="התקציב החודשי צמוד למדד" checked=${c.index_budget} onChange=${setC("index_budget")}
         hint="דלוק: הסכום החודשי גדל עם האינפלציה (כמו משכורת צמודה). כבוי: אותו סכום נומינלי כל התקופה." />

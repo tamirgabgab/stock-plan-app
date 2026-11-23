@@ -1,6 +1,5 @@
 // Results pages: labels, gross/net views, realization names, the active (hovered or pinned) realization and the detail modal.
 import { html, useEffect, useMemo, useState } from "../vendor/preact-htm.module.js";
-import { observeResize, PLOT_CONFIG } from "./charts.js";
 import { dateHe, pct } from "./format.js";
 import { nearestToQuantile, sortedFinite } from "./stats.js";
 import { RealizationDetail } from "./detail.js";
@@ -36,24 +35,7 @@ export function addMonths(iso, m) {
   return `${ny}-${String(nm + 1).padStart(2, "0")}-${String(Math.min(d, dim)).padStart(2, "0")}`;
 }
 
-export function usePlot(ref, build, deps, bind) {
-  useEffect(() => {
-    if (!ref.current) return;
-    const { data, layout } = build();
-    window.Plotly.react(ref.current, data, layout, PLOT_CONFIG);
-  }, deps);
-  useEffect(() => {
-    const gd = ref.current;
-    if (!gd || !bind) return;
-    const off = bind(gd);
-    return () => { off && off(); };
-  }, [deps[0]]);
-  useEffect(() => {
-    const gd = ref.current;
-    const off = observeResize(gd);
-    return () => { off(); if (gd) window.Plotly.purge(gd); };
-  }, []);
-}
+export { usePlot } from "./plot.js";
 
 // A realization's name: its start date, or its number among the synthetic paths.
 export const isSynthetic = (res) => !!res.raw.synthetic;

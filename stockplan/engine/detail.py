@@ -14,8 +14,7 @@ import numpy as np
 import pandas as pd
 
 from ..data.base import DataError, MarketData
-from .inflation import InflationModel
-from .market import model_inflation, prepare_market
+from .market import prepare_market
 from .models import SOLVE_FINAL, WithdrawRequest
 
 MAX_POINTS = 5000   # basket chart samples (daily, thinned for long plans)
@@ -77,10 +76,8 @@ def realization_detail(req, md: MarketData, start: date | None, path: int | None
     path_gross = out.paths_gross[0] * deflate
     # The basket and the exchange rate come from the daily historical market: with the inflation
     # model the plan's market holds only month points and a model-scaled rate (dollar prices
-    # are the same in both). Real mode: no nominal-shekel limit on the start date.
-    view = market
-    if model_inflation(one) and not market.synthetic:
-        view = prepare_market(replace(one, inflation=InflationModel(source="history"), real=True), md)
+    # are the same in both).
+    view = market.daily or market
     vidx = view.day_idx[0]
     fx = view.fx_daily
     if fx is None and not view.synthetic:     # dollars: still offer the shekel view when the rate is available
@@ -89,8 +86,8 @@ def realization_detail(req, md: MarketData, start: date | None, path: int | None
             fx = s.reindex(s.index.union(view.calendar)).ffill().reindex(view.calendar).to_numpy()
         except (DataError, Exception):  # noqa: BLE001 - the shekel view is optional
             fx = None
-    to_usd = (1.0 / market.fx_daily) if market.fx_daily is not None else np.ones(len(market.calendar))
-    view_usd = (1.0 / view.fx_daily) if view.fx_daily is not None else np.ones(len(view.calendar))
+    usd_per_unit = lambda mk: (1.0 / mk.fx_daily) if mk.fx_daily is not None else np.ones(len(mk.calendar))
+    to_usd, view_usd = usd_per_unit(market), usd_per_unit(view)
 
     W = _stage_weights(one, market)
     stage_starts = np.cumsum([0] + [s.months for s in one.stages])

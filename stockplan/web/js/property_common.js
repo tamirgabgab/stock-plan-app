@@ -1,9 +1,9 @@
 // Apartment vs. capital market tab: defaults, the saved plan and its payload, and helpers shared by its panels.
-import { html, useEffect } from "../vendor/preact-htm.module.js";
-import { observeResize, PLOT_CONFIG } from "./charts.js";
+import { html } from "../vendor/preact-htm.module.js";
 import { money, monthsLabel } from "./format.js";
 import { INFLATION_DEFAULTS } from "./inflation.js";
 import { newId } from "./inputs.js";
+import { usePlot } from "./plot.js";
 import { Tex } from "./math.js";
 import { quantileSorted, sortedFinite } from "./stats.js";
 export const PSTORAGE_KEY = "stockplan.property.v1";
@@ -261,23 +261,11 @@ export function probBetter(xs, ys) {
 export const STAT_LABEL = { median: "חציון", mean: "ממוצע" };
 
 export function usePlotly(ref, build, deps, onClick) {
-  useEffect(() => {
-    if (!ref.current) return;
-    const { data, layout } = build();
-    window.Plotly.react(ref.current, data, layout, PLOT_CONFIG);
-  }, deps);
-  useEffect(() => {
-    const gd = ref.current;
-    if (!gd || !onClick) return;
+  usePlot(ref, build, deps, onClick && ((gd) => {
     const h = (ev) => { const p = ev.points && ev.points[0]; if (p) onClick(p); };
     gd.on?.("plotly_click", h);
     return () => gd.removeListener?.("plotly_click", h);
-  }, [deps[0]]);
-  useEffect(() => {
-    const gd = ref.current;
-    const off = observeResize(gd);
-    return () => { off(); if (gd) window.Plotly.purge(gd); };
-  }, []);
+  }));
 }
 
 export const Swatch = ({ color }) => html`<span class="pswatch" style=${`background:var(--series-${(color % 8) + 1})`} aria-hidden="true"></span>`;

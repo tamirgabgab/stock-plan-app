@@ -41,3 +41,6 @@ export function monthsLabel(m) {
   if (!r) return y === 1 ? "שנה" : `${y} שנים`;
   return `${y} שנים ו-${r} חודשים`;
 }
+
+// A plain number with fixed decimals ("?" when missing): statistics and LaTeX values.
+export const fixed = (v, digits = 4) => (Number.isFinite(v) ? Number(v).toFixed(digits) : "?");

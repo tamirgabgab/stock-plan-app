@@ -1,7 +1,7 @@
 // Left-hand (right-hand in RTL) panel: global settings, test period and the stages editor.
 import { html } from "../vendor/preact-htm.module.js";
 import { CURRENCY_SYMBOL, dateHe, money, monthsLabel } from "./format.js";
-import { DatePicker, DualRange, Field, Hint, IconButton, NumberField, NumberInput, Segmented, SymbolPicker, Toggle } from "./ui.js";
+import { DatePicker, DualRange, Field, Hint, IconButton, NumberField, NumberInput, SeedField, Segmented, SymbolPicker, Toggle } from "./ui.js";
 import { AgeIncomeSection, WithdrawFields } from "./withdrawal.js";
 import { defaultDividend } from "./dividends.js";
 import { InflationSection } from "./inflation.js";
@@ -326,9 +326,7 @@ function SyntheticFields({ plan, set, range, rangeError, totalMonths }) {
         hint="יותר מסלולים נותנים אחוזונים יציבים יותר, ולוקחים יותר זמן. 2,000 מספיקים בדרך כלל." />
       <${NumberField} label="אורך בלוק" value=${block} onChange=${set("block")} step=${6} min=${1} max=${120} suffix="חודשים"
         hint="כמה חודשים רצופים נלקחים מההיסטוריה בכל פעם. בלוק ארוך שומר יותר על מחזורי שוק (ירידה ואחריה התאוששות), וקצר נותן יותר גיוון. 12 עד 36 הם בחירה מקובלת." />
-      <div class="field"><span class="field-label">זרע אקראי <${Hint} text="המספר שקובע את ההגרלה. אותו זרע נותן בדיוק אותם מסלולים; 'הגרל' מחליף אותו." /></span>
-        <div class="seed-row"><${NumberInput} value=${plan.seed ?? 1} onChange=${set("seed")} step=${1} min=${0} />
-          <button type="button" class="btn ghost small" onClick=${() => set("seed")(Math.floor(Math.random() * 1e6))}>הגרל</button></div></div>
+      <${SeedField} value=${plan.seed ?? 1} onChange=${set("seed")} hint="המספר שקובע את ההגרלה. אותו זרע נותן בדיוק אותם מסלולים; 'הגרל' מחליף אותו." />
     </div>
     <div class="grid-2">
       <${Field} label="דגימה מתאריך">

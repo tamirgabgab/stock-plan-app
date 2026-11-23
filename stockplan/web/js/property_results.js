@@ -200,7 +200,9 @@ const marketParams = (prefix, tag = "") => [
 // Parameters a history series replaces are not offered as unknowns (they would change nothing).
 const UNUSED_IN_HISTORY = { market: ["annual_return"], cpi: ["inflation"], housing: ["appreciation"],
                             rent: ["rent_growth", "housing_rent_growth"] };
-const usedParams = (params, H) => params.filter((p) => !Object.entries(UNUSED_IN_HISTORY)
+// In history mode the CPI path is built once, from the history or from the inflation model
+// (whose mean is the inflation parameter), so the inflation is never a usable unknown there.
+const usedParams = (params, H, hist = false) => params.filter((p) => !(hist && p.key === "inflation") && !Object.entries(UNUSED_IN_HISTORY)
   .some(([k, keys]) => H(k) && keys.includes(p.key.split(".").pop())));
 
 function scenarioParams(sc, plan) {
@@ -289,12 +291,10 @@ const SOLVE_STATS = [{ value: "median", label: "חציון" }, { value: "mean", 
 function SolvePanel({ plan, setPlan, A, B, def, themeKey, hist, over }) {
   const sv = plan.solve;
   const c = plan.common;
-  // In history mode the CPI path is built once, from the history or from the inflation model
-  // (whose mean is the inflation parameter), so the inflation is never a usable unknown there.
-  const H = (k) => c.mode === "history" && (k === "cpi" || c.history[k]);
+  const H = (k) => c.mode === "history" && c.history[k];
   const scA = plan.scenarios.find((s) => s.id === A.id), scB = plan.scenarios.find((s) => s.id === B.id);
   const groups = [
-    { scope: "common", title: "משותף", params: [...usedParams(COMMON_PARAMS, H), ...SYN_PARAMS.filter((p) => synOn(plan, p.series))] },
+    { scope: "common", title: "משותף", params: [...usedParams(COMMON_PARAMS, H, c.mode === "history"), ...SYN_PARAMS.filter((p) => synOn(plan, p.series))] },
     { scope: "a", title: `A: ${A.name}`, params: usedParams(scenarioParams(scA, plan), H) },
     { scope: "b", title: `B: ${B.name}`, params: usedParams(scenarioParams(scB, plan), H) },
   ];

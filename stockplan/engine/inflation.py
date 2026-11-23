@@ -31,12 +31,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional
+from functools import lru_cache
+from typing import Callable, Dict
 
 import numpy as np
 
 DISTS = ("normal", "johnson", "cornish", "gennorm")
-SOURCES = ("model", "history")
 FLOOR = -0.5                       # lowest yearly inflation (keeps the index positive)
 
 
@@ -94,6 +94,7 @@ def _bisect(f, lo: float, hi: float, n: int = 200) -> float:
     return 0.5 * (lo + hi)
 
 
+@lru_cache(maxsize=64)                 # the fit takes ~25 ms and a request asks for it several times
 def johnson_shape(skew: float, kurt: float) -> Shape:
     """Johnson SU with exactly this skewness and excess kurtosis."""
     if abs(skew) < 1e-9 and abs(kurt) < 1e-9:
@@ -101,8 +102,9 @@ def johnson_shape(skew: float, kurt: float) -> Shape:
     target = kurt + 3.0
     # The smallest w whose lognormal reaches the skewness: below it no SU has that skewness.
     w_lo = 1.0 if abs(skew) < 1e-12 else _bisect(lambda w: _lognormal_line(w)[0] - abs(skew), 1.0 + 1e-12, 20.0)
-    if target <= _lognormal_line(w_lo)[1] + 1e-6:
-        need = _lognormal_line(w_lo)[1] - 3
+    edge = _lognormal_line(w_lo)[1]
+    if target <= edge + 1e-6:
+        need = edge - 3
         raise ValueError(f"בהתפלגות ג'ונסון, צידוד {skew:g} דורש גבנוניות עודפת גדולה מ-{need:.2f}")
 
     def omega_for(w: float) -> float:      # gamma / delta giving the skewness at this w
@@ -126,16 +128,9 @@ def johnson_shape(skew: float, kurt: float) -> Shape:
                  {"gamma": gamma, "delta": delta, "m": m1, "s": s})
 
 
-def cornish_coeffs(skew: float, kurt: float):
-    """c1..c3 of z + S/6 (z^2 - 1) + K/24 (z^3 - 3z) - S^2/36 (2z^3 - 5z) = c1 z + c2 (z^2-1) + c3 z^3."""
-    c1 = 1 - kurt / 8 + 5 * skew ** 2 / 36
-    c2 = skew / 6
-    c3 = kurt / 24 - skew ** 2 / 18
-    return c1, c2, c3
-
-
 def cornish_shape(skew: float, kurt: float) -> Shape:
-    c1, c2, c3 = cornish_coeffs(skew, kurt)
+    # z + S/6 (z^2 - 1) + K/24 (z^3 - 3z) - S^2/36 (2z^3 - 5z) = c1 z + c2 (z^2 - 1) + c3 z^3
+    c1, c2, c3 = 1 - kurt / 8 + 5 * skew ** 2 / 36, skew / 6, kurt / 24 - skew ** 2 / 18
     # g'(z) = c1 + 2 c2 z + 3 c3 z^2 must stay positive, or the expansion folds over.
     monotone = (c3 > 0 and (2 * c2) ** 2 < 12 * c3 * c1) or (c3 == 0 and c2 == 0 and c1 > 0)
     if not monotone:
@@ -162,8 +157,11 @@ def _phi_cdf(z: np.ndarray) -> np.ndarray:
 
 
 Z_GRID = np.linspace(-8.5, 8.5, 6801)
+U_GRID = _phi_cdf(Z_GRID)
+HERMITE = np.polynomial.hermite_e.hermegauss(120)          # nodes and weights for E f(Z), Z ~ N(0, 1)
 
 
+@lru_cache(maxsize=64)
 def gennorm_shape(k: float, asym: float) -> Shape:
     if not 0.5 <= k <= 10:
         raise ValueError("המקדם בחזקה K חייב להיות בין 0.5 ל-10")
@@ -176,7 +174,7 @@ def gennorm_shape(k: float, asym: float) -> Shape:
     var = (pp * ap ** 2 + pm * am ** 2) * mom(2) - mean ** 2
     s = math.sqrt(var)
     y, cdf = _gennorm_table(k)
-    u = _phi_cdf(Z_GRID)
+    u = U_GRID
     x = np.where(u < pm, -am * np.interp(1 - u / pm, cdf, y), ap * np.interp((u - pm) / pp, cdf, y))
     x_std = (x - mean) / s
     return Shape(lambda z: np.interp(z, Z_GRID, x_std),
@@ -196,7 +194,7 @@ def shape_of(m: InflationModel) -> Shape:
 
 
 def validate(m: InflationModel) -> None:
-    if m.source not in SOURCES:
+    if m.source not in ("model", "history"):
         raise ValueError(f"מקור אינפלציה לא מוכר: {m.source}")
     if not m.is_model:
         return
@@ -206,19 +204,19 @@ def validate(m: InflationModel) -> None:
         raise ValueError("סטיית התקן של האינפלציה חייבת להיות בין 0 ל-30 נקודות אחוז")
     if not 0 <= m.phi < 1:
         raise ValueError("ההתמדה חייבת להיות בין 0 ל-1 (לא כולל 1)")
-    shape_of(m)
+    if m.dist not in DISTS:
+        raise ValueError(f"התפלגות אינפלציה לא מוכרת: {m.dist}")
+    if m.sd > 0:                   # a constant inflation never uses the family's shape
+        shape_of(m)
 
 
 # ----------------------------------------------------------------------- the draws
 
-_M64 = np.uint64(0xFFFFFFFFFFFFFFFF)
-
-
 def _splitmix(x: np.ndarray) -> np.ndarray:
-    with np.errstate(over="ignore"):
-        x = (x + np.uint64(0x9E3779B97F4A7C15)) & _M64
-        x = ((x ^ (x >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)) & _M64
-        x = ((x ^ (x >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)) & _M64
+    with np.errstate(over="ignore"):              # uint64 arithmetic wraps mod 2^64, as intended
+        x = x + np.uint64(0x9E3779B97F4A7C15)
+        x = (x ^ (x >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
+        x = (x ^ (x >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
         return x ^ (x >> np.uint64(31))
 
 
@@ -263,9 +261,15 @@ def index_paths(m: InflationModel, keys, months: int, seed: int) -> np.ndarray:
     return out
 
 
+def reprice(C: np.ndarray, hist: np.ndarray) -> np.ndarray:
+    """(R, T+1) factor that keeps a historical series' real change and puts the model's
+    inflation on top: C_m * I_0 / I_m, where I is the CPI history on the same months."""
+    return C * hist[:, :1] / hist
+
+
 def date_keys(dates) -> np.ndarray:
     """The realization key of a start date: days since 1970-01-01."""
-    return np.asarray(np.asarray(dates, dtype="datetime64[D]").astype(np.int64))
+    return np.asarray(dates, dtype="datetime64[D]").astype(np.int64)
 
 
 # ------------------------------------------------------------- the preview and the math tab
@@ -273,8 +277,12 @@ def date_keys(dates) -> np.ndarray:
 def describe(m: InflationModel, points: int = 241) -> dict:
     """The density of the yearly inflation, its moments (by Gauss-Hermite quadrature on g)
     and the fitted parameters, for the input panel's chart and the math tab."""
+    if m.sd == 0:                  # a constant inflation: no density, and the shape is unused
+        return {"dist": m.dist, "params": {}, "pdf": None,
+                "moments": {"mean": m.mean, "sd": 0.0, "skew": 0.0, "kurt": 0.0},
+                "quantiles": {q: m.mean for q in ("p5", "p50", "p95")}, "floor_share": 0.0}
     shape = shape_of(m)
-    zq, wq = np.polynomial.hermite_e.hermegauss(120)
+    zq, wq = HERMITE
     wq = wq / wq.sum()
     gq = shape.g(zq)
     mean = float((wq * gq).sum())
@@ -285,34 +293,26 @@ def describe(m: InflationModel, points: int = 241) -> dict:
         "dist": m.dist, "params": {k: (None if not math.isfinite(v) else round(float(v), 6)) for k, v in shape.params.items()},
         "moments": {"mean": m.mean, "sd": m.sd, "skew": round(sk, 4), "kurt": round(ku, 4)},
     }
-    if m.sd == 0:
-        out["pdf"] = None
-        out["quantiles"] = {q: m.mean for q in ("p5", "p50", "p95")}
-        return out
     z = np.linspace(-5.5, 5.5, 4001)
     g = shape.g(z)
     dg = np.gradient(g, z)
     x = m.mean + m.sd * g                                  # percent
     dens = np.exp(-z * z / 2) / math.sqrt(2 * math.pi) / np.maximum(m.sd * dg, 1e-12)
-    lo, hi = np.interp([0.0005, 0.9995], _phi_cdf(z), x)
+    lo, hi = np.interp([-3.2905, 3.2905], z, x)              # x rises with z: 0.05% and 99.95%
     grid = np.linspace(lo, hi, points)
     order = np.argsort(x)
     y = np.interp(grid, x[order], dens[order])
     out["pdf"] = {"x": [round(float(v), 4) for v in grid], "y": [round(float(v), 6) for v in y]}
-    qs = np.interp(_phi_cdf(np.array([-1.6448536, 0.0, 1.6448536])), _phi_cdf(z), x)
-    out["quantiles"] = {"p5": round(float(qs[0]), 3), "p50": round(float(qs[1]), 3), "p95": round(float(qs[2]), 3)}
+    qs = np.interp([-1.6448536, 0.0, 1.6448536], z, x)
+    out["quantiles"] = dict(zip(("p5", "p50", "p95"), np.round(qs, 3).tolist()))
+    # Draws below the floor are clipped to it, which lifts the drawn mean a little.
+    floor = FLOOR * 100
+    out["floor_share"] = float(_phi_cdf(np.interp([floor], x, z))[0]) if x[0] < floor else 0.0
     return out
 
 
-def sample_paths(m: InflationModel, years: int = 30, n: int = 5, seed: int = 1) -> list:
+def sample_paths(m: InflationModel, years: int, n: int, seed: int) -> list:
     """A few yearly inflation paths (percent), to show what the persistence looks like."""
     keys = np.arange(n, dtype=np.int64) + 1_000_000
     return (yearly_rates(m, keys, years, seed) * 100).round(3).tolist()
 
-
-def from_dict(d: Optional[dict]) -> InflationModel:
-    if d is None:
-        return InflationModel()
-    if isinstance(d, InflationModel):
-        return d
-    return InflationModel(**{k: v for k, v in dict(d).items() if k in InflationModel.__dataclass_fields__})

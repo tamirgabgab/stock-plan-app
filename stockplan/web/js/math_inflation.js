@@ -3,13 +3,9 @@
 import { html } from "../vendor/preact-htm.module.js";
 import { inflationFamiliesFigure, inflationPathsFigure } from "./charts.js";
 import { DIST_LABELS, INFLATION_DEFAULTS, useInflationPreview } from "./inflation.js";
-import { Tex } from "./math.js";
+import { fixed as f } from "./format.js";
+import { D, S, T } from "./math.js";
 import { Plot } from "./plot.js";
-
-const S = String.raw;
-const T = (tex) => html`<${Tex} tex=${tex} />`;
-const D = (tex) => html`<${Tex} tex=${tex} display />`;
-const f = (v, d = 4) => (Number.isFinite(v) ? Number(v).toFixed(d) : "?");
 
 export function InflationMath({ plan, tplan }) {
   const owner = plan.currency === "ILS" ? { p: plan, name: "תוכנית הצבירה" }
@@ -17,7 +13,6 @@ export function InflationMath({ plan, tplan }) {
   const m = { ...INFLATION_DEFAULTS(), ...(owner?.p.inflation || {}) };
   const shown = { ...m, sd: m.sd > 0 ? m.sd : 1 };              // the charts need some spread
   const { data, error } = useInflationPreview({ ...shown, source: "model" }, owner?.p.seed ?? 1);
-  const mu = m.mean, sg = m.sd, phi = m.phi;
   const p = data?.params || {};
 
   return html`<div class="math">
@@ -35,12 +30,13 @@ export function InflationMath({ plan, tplan }) {
       <p>לכל שנה בתוכנית, ${T("y = 0, 1, 2, \\dots")}, האינפלציה היא</p>
       ${D(S`\pi_y = \mu + \sigma \, g(z_y), \qquad \pi_y \ge -50\%`)}
       <p>כאן ${T(S`\mu`)} התוחלת, ${T(S`\sigma`)} סטיית התקן, ו-${T(S`g`)} פונקציה שהופכת משתנה נורמלי סטנדרטי ${T("z")} למשתנה
-        עם תוחלת 0, שונות 1 והצורה של המשפחה שנבחרה. לכן התוחלת וסטיית התקן של ${T(S`\pi_y`)} הן בדיוק מה שהוזן, בכל משפחה.
-        עם המספרים הנוכחיים: ${T(S`\mu = ${mu}\%,\ \sigma = ${sg}\%`)}.</p>
+        עם תוחלת 0, שונות 1 והצורה של המשפחה שנבחרה. לכן התוחלת וסטיית התקן של ${T(S`\pi_y`)} הן בדיוק מה שהוזן, בכל משפחה,
+        חוץ מהחיתוך ב-‎-50% (שמונע מהמדד להתאפס): כשסטיית התקן גדולה מאוד, השנים שנחתכות מעלות מעט את התוחלת בפועל, והפאנל מציין כמה שנים כאלה יש.
+        עם המספרים הנוכחיים: ${T(S`\mu = ${m.mean}\%,\ \sigma = ${m.sd}\%`)}.</p>
       <h3>ההתמדה בין השנים</h3>
       ${D(S`z_0 = \eta_0, \qquad z_y = \varphi\, z_{y-1} + \sqrt{1-\varphi^2}\;\eta_y, \qquad \eta_y \sim N(0,1)\ \text{i.i.d.}`)}
       <p>זה תהליך AR(1) נורמלי. השונות של כל ${T("z_y")} נשארת 1, ולכן כל שנה לבדה מתפלגת בדיוק לפי ההתפלגות שנבחרה, וההתמדה
-        ${T(S`\varphi = ${phi}`)} קובעת רק את הרצפים: המתאם בין ${T("z")} של שנים עוקבות הוא ${T(S`\varphi`)}, ובין שנים במרחק ${T("k")} הוא ${T(S`\varphi^k`)}
+        ${T(S`\varphi = ${m.phi}`)} קובעת רק את הרצפים: המתאם בין ${T("z")} של שנים עוקבות הוא ${T(S`\varphi`)}, ובין שנים במרחק ${T("k")} הוא ${T(S`\varphi^k`)}
         (שיטה שנקראת קופולה גאוסית). במשפחה לא נורמלית המתאם בין האינפלציות עצמן קרוב ל-${T(S`\varphi`)}, מעט נמוך ממנו.</p>
       <h3>ממודל שנתי למדד חודשי</h3>
       ${D(S`C_0 = 1, \qquad C_m = \prod_{k=0}^{m-1} \left(1 + \pi_{\lfloor k/12 \rfloor}\right)^{1/12}`)}
@@ -102,7 +98,7 @@ export function InflationMath({ plan, tplan }) {
           <tbody>${Object.entries(data.families).map(([k, v]) => html`<tr><td>${DIST_LABELS[k]}</td>
             ${v.error ? html`<td colspan="2" class="muted">${v.error}</td>` : html`<td dir="ltr">${f(v.moments.skew, 3)}</td><td dir="ltr">${f(v.moments.kurt, 3)}</td>`}</tr>`)}</tbody></table>
         <h3>חמישה מסלולים לדוגמה</h3>
-        <p>האינפלציה של 30 שנה בחמישה תרחישים, מההתפלגות שנבחרה ועם ההתמדה ${T(S`\varphi = ${phi}`)}. הקו המקווקו הוא התוחלת.</p>
+        <p>האינפלציה של 30 שנה בחמישה תרחישים, מההתפלגות שנבחרה ועם ההתמדה ${T(S`\varphi = ${m.phi}`)}. הקו המקווקו הוא התוחלת.</p>
         <${Plot} build=${() => inflationPathsFigure({ samples: data.samples, mean: shown.mean })} deps=${[data]} cls="plot" />` : null}
     </section>
   </div>`;

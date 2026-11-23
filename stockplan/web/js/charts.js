@@ -541,19 +541,19 @@ export function sequenceFigure({ x, y, ok, sym, yTitle }) {
 }
 
 // Inflation model: the density of a year's inflation, with the 5th, 50th and 95th percentiles.
-export function inflationFigure({ pdf, quantiles, compact = false }) {
+export function inflationFigure({ pdf, quantiles }) {
   const t = theme();
   const data = [{ type: "scatter", mode: "lines", x: pdf.x, y: pdf.y, fill: "tozeroy", fillcolor: toAlpha(t.blue, 0.18),
                   line: { color: t.blue, width: 2 }, hovertemplate: "%{x:.2f}%<extra></extra>", name: "צפיפות" }];
-  const marks = [["p5", "5%"], ["p50", "חציון"], ["p95", "95%"]].map(([k, label]) => ({
-    type: "line", yref: "paper", y0: 0, y1: 1, x0: quantiles[k], x1: quantiles[k],
+  const Q = [["p5", "5%"], ["p50", "חציון"], ["p95", "95%"]];
+  const marks = Q.map(([k]) => ({ type: "line", yref: "paper", y0: 0, y1: 1, x0: quantiles[k], x1: quantiles[k],
     line: { color: k === "p50" ? t.text2 : t.muted, width: 1, dash: k === "p50" ? "solid" : "dot" } }));
-  const notes = [["p5", "5%"], ["p50", "חציון"], ["p95", "95%"]].map(([k, label]) => ({
+  const notes = Q.map(([k, label]) => ({
     x: quantiles[k], y: 1, yref: "paper", yanchor: "bottom", text: label, showarrow: false, font: { size: 10, color: t.muted } }));
   const layout = baseLayout(t, {
     showlegend: false, hovermode: "x", dragmode: false, shapes: marks, annotations: notes,
-    margin: { l: 16, r: 16, t: 18, b: compact ? 30 : 44 },
-    xaxis: axis(t, { ticksuffix: "%", fixedrange: true, title: compact ? undefined : { text: "האינפלציה בשנה אחת" } }),
+    margin: { l: 16, r: 16, t: 18, b: 30 },
+    xaxis: axis(t, { ticksuffix: "%", fixedrange: true }),
     yaxis: axis(t, { showticklabels: false, fixedrange: true, rangemode: "tozero" }),
   });
   return { data, layout };

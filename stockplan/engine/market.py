@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 from ..data.base import DataError, MarketData
-from .inflation import date_keys, index_paths
+from .inflation import date_keys, index_paths, reprice
 from .models import PlanRequest
 
 AssetKey = Tuple[str, float]
@@ -40,6 +40,7 @@ class Market:
     fx_daily: Optional[np.ndarray] = None   # (n_days,) USD/ILS when the display currency is ILS
     synthetic: bool = False             # block-bootstrap paths instead of start dates
     cpi_ref: Optional[float] = None     # "today's" CPI when it is not the last calendar day
+    daily: Optional["Market"] = None    # inflation model: the historical daily market it was re-priced from
 
     @property
     def cpi_base(self) -> float:
@@ -93,14 +94,13 @@ def load_series(req: PlanRequest, md: MarketData):
             raise DataError(f"אין מספיק נתונים עבור {t}")
     fx = md.fx_usd_ils() if req.currency == "ILS" else None
     # The inflation model still needs the CPI history: it takes the real returns from it.
-    cpi = md.cpi("IL" if req.currency == "ILS" else "US") if (req.needs_cpi or model_inflation(req)) else None
+    cpi = md.cpi("IL" if req.currency == "ILS" else "US") if (req.needs_cpi or uses_model_inflation(req)) else None
     return raw, fx, cpi
 
 
-def model_inflation(req):
-    """The inflation model when a shekel plan uses it instead of the CPI history, else None."""
-    m = getattr(req, "inflation", None)
-    return m if (req.currency == "ILS" and m is not None and m.is_model) else None
+def uses_model_inflation(req) -> bool:
+    """A shekel plan on the inflation model instead of the CPI history."""
+    return req.currency == "ILS" and req.inflation.is_model
 
 
 def available_range(req: PlanRequest, md: MarketData) -> dict:
@@ -133,7 +133,7 @@ ILS_NOMINAL_NOTE = (
 
 def _nominal_ils(req: PlanRequest) -> bool:
     """Nominal shekels of the CPI history (the inflation model has no hyperinflation)."""
-    return req.currency == "ILS" and not req.real and model_inflation(req) is None
+    return req.currency == "ILS" and not req.real and not uses_model_inflation(req)
 
 
 def _calendar_bounds(raw, fx, cpi) -> tuple[pd.Timestamp, pd.Timestamp]:
@@ -205,7 +205,7 @@ def _history_market(req, md: MarketData) -> Market:
     market = Market(calendar=calendar, asset_keys=keys, prices=prices, cpi_daily=cpi_daily,
                     start_dates=starts, day_idx=day_idx,
                     first_dates={t: s.index[0].date() for t, s in raw.items()}, fx_daily=fx_daily)
-    return _with_model_inflation(market, req, date_keys(starts.values)) if model_inflation(req) else market
+    return _with_model_inflation(market, req, date_keys(starts.values)) if uses_model_inflation(req) else market
 
 
 def _with_model_inflation(market: Market, req, keys: np.ndarray) -> Market:
@@ -216,20 +216,23 @@ def _with_model_inflation(market: Market, req, keys: np.ndarray) -> Market:
     price and I the historical CPI. As the paths differ by realization, every realization gets
     its own stretch of the calendar holding its month points (as in synthetic mode), with C as
     its CPI and money of the plan's start as "today" (C_0 = 1). The exchange rate is scaled by
-    the same factor, so a price divided by it is still the asset's dollar price.
+    the same factor, so a price divided by it is still the asset's dollar price. The daily
+    market stays on ``daily`` (the detail view's basket and historical exchange rate).
     """
     idx = market.day_idx
     R, T1 = idx.shape
     C = index_paths(req.inflation, keys, T1 - 1, int(req.seed))
-    hist = market.cpi_daily[idx]
-    adj = C * hist[:, :1] / hist                                    # (R, T+1), 1 at month 0
+    adj = reprice(C, market.cpi_daily[idx])                         # (R, T+1), 1 at month 0
     A = len(market.asset_keys)
-    prices = (market.prices[:, idx] * adj[None]).reshape(A, R * T1)
+    prices = market.prices[:, idx]
+    prices *= adj[None]                                             # in place: one (A, R, T+1) array
+    prices = prices.reshape(A, R * T1)
     fx = (market.fx_daily[idx] * adj).reshape(R * T1) if market.fx_daily is not None else None
     return Market(calendar=pd.DatetimeIndex(market.calendar.values[idx].reshape(R * T1)),
                   asset_keys=market.asset_keys, prices=prices, cpi_daily=C.reshape(R * T1),
                   start_dates=market.start_dates, day_idx=np.arange(R * T1, dtype=np.int64).reshape(R, T1),
-                  first_dates=market.first_dates, fx_daily=fx, synthetic=market.synthetic, cpi_ref=1.0)
+                  first_dates=market.first_dates, fx_daily=fx, synthetic=market.synthetic, cpi_ref=1.0,
+                  daily=market)
 
 
 # ------------------------------------------------------------------ synthetic paths
@@ -298,10 +301,10 @@ def synthetic_market(req, md: MarketData) -> Market:
     if cpi_daily is not None:
         c = cpi_daily[pos]
         syn_cpi = paths_of(c[1:] / c[:-1]).reshape(R * (T + 1))
-        if model_inflation(req):            # real returns from the blocks, inflation from the model
-            C = index_paths(req.inflation, path_keys, T, int(req.seed)).reshape(R * (T + 1))
-            syn_prices = syn_prices / syn_cpi[None] * C
-            syn_cpi = C
+        if uses_model_inflation(req):       # real returns from the blocks, inflation from the model
+            C = index_paths(req.inflation, path_keys, T, int(req.seed))
+            syn_prices = syn_prices * reprice(C, syn_cpi.reshape(R, T + 1)).reshape(R * (T + 1))
+            syn_cpi = C.reshape(R * (T + 1))
     today = pd.Timestamp(hi).to_period("M").to_timestamp()
     months = pd.DatetimeIndex(month_grid(pd.DatetimeIndex([today]), T)[0])
     return Market(calendar=pd.DatetimeIndex(np.tile(months.values, R)), asset_keys=keys, prices=syn_prices,

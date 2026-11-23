@@ -521,7 +521,7 @@ def test_synthetic_solve_and_calibrate_api(monkeypatch):
 def test_history_with_the_inflation_model():
     """CPI off: the model's index replaces the CPI, and every historical series keeps its real
     change (series / CPI history * model index); the rate follows Fisher."""
-    from stockplan.engine.inflation import InflationModel, date_keys, index_paths, yearly_rates
+    from stockplan.engine.inflation import InflationModel, date_keys, index_paths
     hist = build_paths(hist_request(), MD)
     req = hist_request(cpi=False)
     req.common.inflation = 3.0
@@ -540,10 +540,9 @@ def test_history_with_the_inflation_model():
     gm, gh = next(iter(model.growth.values()))[common], next(iter(hist.growth.values()))[rows]
     infl = lambda c: np.c_[np.ones(len(c)), c[:, 1:] / c[:, :-1]]
     assert np.allclose(gm / infl(model.cpi[common]), gh / infl(hist.cpi[rows]))
-    pi = yearly_rates(m, date_keys(model.start_dates.values), model.T // 12 + 1, req.common.synthetic.seed) * 100
-    hc = hist.cpi[rows]
-    hist12 = (hc[:, 12:] / hc[:, :-12] - 1) * 100                    # months 12..T
-    model12 = pi[:, np.arange(12, model.T + 1) // 12][common]
+    hc, mc = hist.cpi[rows], model.cpi[common]
+    hist12 = (hc[:, 12:] / hc[:, :-12] - 1) * 100                    # trailing 12 months, months 12..T
+    model12 = (mc[:, 12:] / mc[:, :-12] - 1) * 100
     want = np.maximum(hist.rate[rows][:, 12:] - hist12 + model12, 0)
     assert np.allclose(model.rate[common][:, 12:], want) and np.all(model.rate >= 0)
     res = run_property(req, MD)

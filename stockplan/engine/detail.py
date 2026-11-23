@@ -74,14 +74,20 @@ def realization_detail(req, md: MarketData, start: date | None, path: int | None
     cpi = market.cpi_daily[idx] if market.cpi_daily is not None else None
     deflate = (market.cpi_base / cpi) if (req.real and cpi is not None) else np.ones(T + 1)
     path_gross = out.paths_gross[0] * deflate
-    fx = market.fx_daily
-    if fx is None and not market.synthetic:   # dollars: still offer the shekel view when the rate is available
+    # The basket and the exchange rate come from the daily historical market: with the inflation
+    # model the plan's market holds only month points and a model-scaled rate (dollar prices
+    # are the same in both).
+    view = market.daily or market
+    vidx = view.day_idx[0]
+    fx = view.fx_daily
+    if fx is None and not view.synthetic:     # dollars: still offer the shekel view when the rate is available
         try:
             s = md.fx_usd_ils()
-            fx = s.reindex(s.index.union(market.calendar)).ffill().reindex(market.calendar).to_numpy()
+            fx = s.reindex(s.index.union(view.calendar)).ffill().reindex(view.calendar).to_numpy()
         except (DataError, Exception):  # noqa: BLE001 - the shekel view is optional
             fx = None
-    to_usd = (1.0 / market.fx_daily) if market.fx_daily is not None else np.ones(len(market.calendar))
+    usd_per_unit = lambda mk: (1.0 / mk.fx_daily) if mk.fx_daily is not None else np.ones(len(mk.calendar))
+    to_usd, view_usd = usd_per_unit(market), usd_per_unit(view)
 
     W = _stage_weights(one, market)
     stage_starts = np.cumsum([0] + [s.months for s in one.stages])
@@ -105,7 +111,7 @@ def realization_detail(req, md: MarketData, start: date | None, path: int | None
             "m": m, "date": dates[m].strftime("%Y-%m-%d"), "stage": int(stage_of_month[m]),
             "ctx": e["ctx"], "kind": e["kind"], "asset": a,
             "price": _num(price), "price_usd": _num(price * to_usd[day]),
-            "fx": _num(fx[day]) if fx is not None else None,
+            "fx": _num(fx[vidx[m]]) if fx is not None else None,
             "amount": _num(e["amount"] * deflate[m]), "tax": _num(e["tax"] * deflate[m]),
             "units": _num(units),
         }
@@ -123,20 +129,20 @@ def realization_detail(req, md: MarketData, start: date | None, path: int | None
 
     synthetic = market.synthetic
     # Basket price: per day, the weights of the stage that holds that day (history only).
-    d0, d1 = int(idx[0]), int(idx[T])
+    d0, d1 = int(vidx[0]), int(vidx[T])
     days = np.arange(d0, d1 + 1)
-    stage_day = np.searchsorted(idx[stage_starts[1:-1]], days, side="right") if len(one.stages) > 1 \
+    stage_day = np.searchsorted(vidx[stage_starts[1:-1]], days, side="right") if len(one.stages) > 1 \
         else np.zeros(len(days), dtype=int)
-    usd = market.prices[:, days] * to_usd[days]               # (A, n)
+    usd = view.prices[:, days] * view_usd[days]               # (A, n)
     basket = (W[stage_day].T * usd).sum(axis=0)
     step = max(1, int(np.ceil(len(days) / MAX_POINTS)))
     keep = np.unique(np.r_[np.arange(0, len(days), step), len(days) - 1])
-    marker_days = sorted({int(idx[t["m"]]) for t in trades if t["kind"] == "buy"})
-    sale_days = sorted({int(idx[t["m"]]) for t in trades if t["kind"] == "sell"})
+    marker_days = sorted({int(vidx[t["m"]]) for t in trades if t["kind"] == "buy"})
+    sale_days = sorted({int(vidx[t["m"]]) for t in trades if t["kind"] == "sell"})
 
     def series_at(ds):
         ds = np.asarray(ds, dtype=int)
-        return {"dates": [d.strftime("%Y-%m-%d") for d in market.calendar[ds]],
+        return {"dates": [d.strftime("%Y-%m-%d") for d in view.calendar[ds]],
                 "basket_usd": [_num(v) for v in basket[ds - d0]],
                 "fx": [_num(v) for v in fx[ds]] if fx is not None else None}
 

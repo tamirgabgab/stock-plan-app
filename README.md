@@ -43,7 +43,8 @@ the UI — it is not real market history).
   process (persistence `phi`) and `g` standardizes one of four families: normal,
   Johnson SU (skewness and excess kurtosis matched exactly), Cornish-Fisher (the same four
   moments, approximately) and an asymmetric generalized normal with a power `K` (tails)
-  and an asymmetry. `sigma = 0` is a constant inflation. The model's price index replaces
+  and an asymmetry. `sigma = 0` is a constant inflation. A year is floored at -50% (the
+  settings say how many years a wide spread clips, which lifts the drawn mean). The model's price index replaces
   the CPI everywhere (real view, indexation, tax on real gains) and nominal shekel plans
   can start before 1985. The settings show the density; the math tab gives every formula,
   the fitted parameters and the families side by side. The CBS history stays available,

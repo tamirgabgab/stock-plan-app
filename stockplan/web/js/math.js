@@ -2,13 +2,13 @@
 // general equations next to a version that plugs in the current plan and its results.
 import { html, useEffect, useMemo, useRef, useState } from "../vendor/preact-htm.module.js";
 import { observeResize, solverFigure, PLOT_CONFIG } from "./charts.js";
-import { CURRENCY_SYMBOL, dateHe, money, monthsLabel, pct } from "./format.js";
+import { CURRENCY_SYMBOL, dateHe, fixed, money, monthsLabel, pct } from "./format.js";
 import { toPayload } from "./inputs.js";
 import { summarize } from "./stats.js";
 import { Segmented } from "./ui.js";
 import { InflationMath } from "./math_inflation.js";
 
-const S = String.raw;
+export const S = String.raw;
 
 export function Tex({ tex, display }) {
   const ref = useRef(null);
@@ -19,13 +19,13 @@ export function Tex({ tex, display }) {
   }, [tex, display]);
   return html`<span ref=${ref} class=${display ? "tex-block" : "tex"} dir="ltr"></span>`;
 }
-const T = (tex) => html`<${Tex} tex=${tex} />`;
-const D = (tex) => html`<${Tex} tex=${tex} display />`;
+export const T = (tex) => html`<${Tex} tex=${tex} />`;
+export const D = (tex) => html`<${Tex} tex=${tex} display />`;
 
 // Numbers inside LaTeX: thousands separators without the extra math spacing.
 const n = (v, digits = 0) => (Number.isFinite(v)
   ? v.toLocaleString("en-US", { maximumFractionDigits: digits }).replace(/,/g, "{,}") : "?");
-const fr = (v, digits = 4) => (Number.isFinite(v) ? v.toFixed(digits) : "?");
+const fr = fixed;
 
 export function MathPage({ plan, res, tplan, tres, initial }) {
   const [sub, setSub] = useState(initial || "deposits");

@@ -4,7 +4,7 @@ import { postJSON } from "./api.js";
 import { dateHe, pct } from "./format.js";
 import { InflationFields } from "./inflation.js";
 import { HoldingsTable, newId } from "./inputs.js";
-import { Field, Hint, IconButton, NumberField, NumberInput, Segmented, Toggle } from "./ui.js";
+import { Hint, IconButton, NumberField, NumberInput, SeedField, Segmented, Toggle } from "./ui.js";
 import { DEFAULT_CORR, DEFAULT_TAXES, MAX_SCENARIOS, SERIES, SYM, SYN_ORDER, Swatch, m, mc, newCost, newScenario, newTrack, propertyPayload, purchaseOf, scheduleAt } from "./property_common.js";
 // ------------------------------------------------------------------------- inputs
 
@@ -14,6 +14,7 @@ export function PropertyInputs({ plan, setPlan, res, errors = {} }) {
   const H = (k) => hist && c.history[k];
   const Y = (k) => c.mode === "synthetic" && c.synthetic.series[k];
   const setC = (k) => (v) => setPlan((p) => ({ ...p, common: { ...p.common, [k]: v } }));
+  const patchC = (k) => (x) => setPlan((p) => ({ ...p, common: { ...p.common, [k]: { ...p.common[k], ...x } } }));
   const setSc = (id, fn) => setPlan((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === id ? fn(s) : s)) }));
   const add = (alloc) => setPlan((p) => {
     const n = p.scenarios.filter((s) => (s.alloc > 0) === (alloc > 0)).length + 1;
@@ -45,12 +46,12 @@ export function PropertyInputs({ plan, setPlan, res, errors = {} }) {
       ${c.mode === "synthetic" ? html`<${SyntheticSection} plan=${plan} setPlan=${setPlan} errors=${errors} />` : null}
       ${hist ? html`
         <div class="series-flags">${SERIES.map((sr) => html`<${Toggle} label=${sr.label} hint=${sr.hint} checked=${c.history[sr.key]}
-            onChange=${(v) => setPlan((p) => ({ ...p, common: { ...p.common, history: { ...p.common.history, [sr.key]: v } } }))} />`)}</div>
+            onChange=${(v) => patchC("history")({ [sr.key]: v })} />`)}</div>
         <p class="muted small">סדרה כבויה נשארת על הפרמטר הקבוע. טווח התאריכים הוא החיתוך של הסדרות הדלוקות, ולכן כיבוי של סדרה קצרה (דירות, ריבית) מאריך אותו.</p>
         ${!c.history.cpi ? html`<div class="subsection"><h3>מודל האינפלציה</h3>
           <p class="muted small">המדד כבוי, ולכן כל שנה מוגרלת אינפלציה: התוחלת היא "אינפלציה שנתית" בחלק של האדם, והשאר כאן. הסדרות ההיסטוריות שומרות על השינוי הריאלי שלהן.</p>
-          <${InflationFields} value=${c.inflation_model} showMean=${false} onChange=${(x) => setPlan((p) => ({ ...p, common: { ...p.common, inflation_model: { ...p.common.inflation_model, ...x } } }))}
-            seed=${c.synthetic.seed} setSeed=${(s) => setPlan((p) => ({ ...p, common: { ...p.common, synthetic: { ...p.common.synthetic, seed: s } } }))} />
+          <${InflationFields} value=${{ ...c.inflation_model, mean: c.inflation }} showMean=${false} onChange=${patchC("inflation_model")}
+            seed=${c.synthetic.seed} setSeed=${(s) => patchC("synthetic")({ seed: s })} />
           </div>` : null}
         ${info ? html`<p class="callout">תאריכי התחלה: <b>${dateHe(info.min_start)}</b> עד <b>${dateHe(info.max_start)}</b> (${info.n} ריאליזציות)
             <br /><span class="muted">${Object.entries(info.ranges).map(([k, [a, b]]) => `${k}: ${dateHe(a)}–${dateHe(b)}`).join(" · ")}</span></p>` : null}
@@ -179,10 +180,8 @@ function SyntheticSection({ plan, setPlan, errors }) {
     <div class="grid-2">
       <${NumberField} label="מספר מסלולים" value=${sp.n} onChange=${(v) => setS("n")(Math.round(v))} step=${100} min=${10} max=${5000}
         error=${errors["common.synthetic.n"]} hint="יותר מסלולים: אחוזונים יציבים יותר, וחישוב איטי יותר. 1,000 מספיק בדרך כלל." />
-      <${Field} label="זרע אקראי" hint="מספר שקובע את ההגרלה. אותו זרע = אותם מסלולים. 'הגרל מחדש' בוחר זרע חדש, כדי לראות כמה התוצאה תלויה בהגרלה עצמה.">
-        <div class="seed-row"><${NumberInput} value=${sp.seed} step=${1} onChange=${(v) => setS("seed")(Math.round(v))} />
-          <button type="button" class="btn ghost small" onClick=${() => setS("seed")(Math.floor(Math.random() * 1e9))}>הגרל מחדש</button></div>
-      </${Field}>
+      <${SeedField} value=${sp.seed} onChange=${setS("seed")}
+        hint="מספר שקובע את ההגרלה. אותו זרע = אותם מסלולים. 'הגרל' בוחר זרע חדש, כדי לראות כמה התוצאה תלויה בהגרלה עצמה." />
     </div>
     <div class="series-flags">${SERIES.map((sr) => html`<${Toggle} label=${sr.label} hint=${SYN_HINT[sr.key]} checked=${sp.series[sr.key]} onChange=${setSeries(sr.key)} />`)}</div>
     <p class="muted small">סדרה כבויה נשארת קבועה לפי הפרמטר שלה.</p>

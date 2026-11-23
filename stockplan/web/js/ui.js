@@ -31,6 +31,14 @@ export function Field({ label, hint, children, note, disabled, error }) {
   </label>`;
 }
 
+// A random seed: the number, and a button that draws a new one.
+export function SeedField({ value, onChange, hint }) {
+  return html`<${Field} label="זרע אקראי" hint=${hint}>
+    <div class="seed-row"><${NumberInput} value=${value} onChange=${(v) => onChange(Math.round(v))} step=${1} min=${0} />
+      <button type="button" class="btn ghost small" onClick=${() => onChange(Math.floor(Math.random() * 1e6))}>הגרל</button></div>
+  </${Field}>`;
+}
+
 export function NumberInput({ value, onChange, step = 1, min = 0, max, disabled, suffix }) {
   return html`<div class="input-wrap">
     <input type="number" dir="ltr" value=${value} step=${step} min=${min} max=${max} disabled=${disabled}

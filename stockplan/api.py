@@ -372,21 +372,19 @@ def inflation_preview(body: InflationPreviewIn):
     """The yearly inflation's density, moments and fitted parameters for the chosen family,
     the same mean and spread in the other families (the math tab's comparison) and a few
     sample paths that show the persistence."""
-    m = inflation_model.from_dict(body.model_dump(exclude={"seed"}))
+    m = inflation_model.InflationModel(**body.model_dump(exclude={"seed"}))
     try:
         inflation_model.validate(m)
-        out = inflation_model.describe(m)
+        chosen = inflation_model.describe(m)
     except ValueError as exc:
         raise _bad_request(exc)
-    out["samples"] = inflation_model.sample_paths(m, years=30, n=5, seed=body.seed)
-    others = {}
+    families = {}
     for dist in inflation_model.DISTS:
         try:
-            others[dist] = inflation_model.describe(replace(m, dist=dist), points=161)
+            families[dist] = chosen if dist == m.dist else inflation_model.describe(replace(m, dist=dist), points=161)
         except ValueError as exc:
-            others[dist] = {"error": str(exc)}
-    out["families"] = others
-    return out
+            families[dist] = {"error": str(exc)}
+    return {**chosen, "samples": inflation_model.sample_paths(m, years=30, n=5, seed=body.seed), "families": families}
 
 
 @app.post("/api/range")

@@ -119,6 +119,19 @@ class HistoryFlags(BaseModel):
     rate: bool = True
 
 
+class InflationShape(BaseModel):
+    """The yearly inflation model's family and shape (see ``engine.inflation``); the mean is
+    the inflation parameter. In history mode it replaces the CPI history when the CPI is not
+    on history: the other historical series keep their real changes and take this inflation."""
+    dist: Literal["normal", "johnson", "cornish", "gennorm"] = "normal"
+    sd: float = Field(1.0, ge=0, le=30)
+    skew: float = Field(0.0, ge=-5, le=5)
+    kurt: float = Field(0.0, ge=-2, le=50)
+    power: float = Field(2.0, ge=0.5, le=10)
+    asym: float = Field(0.0, ge=-0.95, le=0.95)
+    phi: float = Field(0.5, ge=0, lt=1)
+
+
 SYN_SERIES = ("market", "cpi", "housing", "rent", "rate")
 DEFAULT_CORR = {"market|cpi": 0.0, "market|housing": 0.1, "market|rent": 0.0, "market|rate": -0.1,
                 "cpi|housing": 0.3, "cpi|rent": 0.5, "cpi|rate": 0.4, "housing|rent": 0.5,
@@ -157,7 +170,8 @@ class Common(BaseModel):
     income: float = Field(0.0, ge=0)                 # monthly net income, only for the payment-to-income warning
     real: bool = False
     mode: Literal["fixed", "history", "synthetic"] = "fixed"
-    history: HistoryFlags = Field(default_factory=HistoryFlags)
+    history: HistoryFlags = Field(default_factory=lambda: HistoryFlags(cpi=False))
+    inflation_model: InflationShape = Field(default_factory=InflationShape)
     synthetic: SyntheticParams = Field(default_factory=SyntheticParams)
     leverage_cost: float = Field(0.0, ge=0, le=30)
     rate_path: List[RatePoint] = Field(default_factory=lambda: [RatePoint(year=0, rate=4.5)])

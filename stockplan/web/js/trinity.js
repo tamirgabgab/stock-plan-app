@@ -10,6 +10,7 @@ import { columnStats, decodeMatrix, summarize } from "./stats.js";
 import { NumberField, Segmented, Toggle } from "./ui.js";
 import { AgeIncomeSection, WithdrawFields } from "./withdrawal.js";
 import { SequenceCard } from "./retirement.js";
+import { INFLATION_DEFAULTS, InflationSection } from "./inflation.js";
 
 export const TRINITY_SOLVE_OPTIONS = [
   { value: "final", label: "יתרה סופית" },
@@ -31,7 +32,7 @@ export const DEFAULT_TPLAN = {
   index_withdrawals: true, tax_rate: 25, tax_basis: "nominal", tax_on_switch: false, annual_fee: 0,
   leverage_cost: 0, min_start: null, max_start: null, step: "M", rebalance: "none", rebalance_band: 5,
   account: "regular", start_age: 0, incomes: [], mode: "history", paths: 2000, block: 12, seed: 1, sample_from: null, sample_to: null,
-  stages: [newWithdrawStage(1)],
+  inflation: INFLATION_DEFAULTS(), stages: [newWithdrawStage(1)],
 };
 
 export const DEFAULT_HEAT = { rate_from: 2, rate_to: 8, rate_step: 0.25, years_from: 10, years_to: 40, years_step: 5, kind: "survival" };
@@ -101,6 +102,7 @@ export function TrinityInputs({ plan, setPlan, range, rangeError, favorites, top
         hint="דלוק (כמו במחקר טריניטי): המשיכה הקבועה שומרת על כוח הקנייה שלה וגדלה עם האינפלציה. כבוי: הסכום הנומינלי קבוע." />
       <${RawPreset} plan=${plan} setPlan=${setPlan} indexKey="index_withdrawals" />
     </details>
+    <${InflationSection} plan=${plan} setPlan=${setPlan} />
     <${TaxSection} plan=${plan} set=${set} />
     <${RebalanceSection} plan=${plan} set=${set} />
     <${AgeIncomeSection} plan=${plan} setPlan=${setPlan} sym=${sym} />

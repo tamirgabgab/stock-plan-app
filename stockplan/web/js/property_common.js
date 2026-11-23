@@ -2,6 +2,7 @@
 import { html, useEffect } from "../vendor/preact-htm.module.js";
 import { observeResize, PLOT_CONFIG } from "./charts.js";
 import { money, monthsLabel } from "./format.js";
+import { INFLATION_DEFAULTS } from "./inflation.js";
 import { newId } from "./inputs.js";
 import { Tex } from "./math.js";
 import { quantileSorted, sortedFinite } from "./stats.js";
@@ -34,11 +35,13 @@ export const SYN_ORDER = ["market", "cpi", "housing", "rent", "rate"];
 export const DEFAULT_CORR = () => ({ "market|cpi": 0, "market|housing": 0.1, "market|rent": 0, "market|rate": -0.1,
                               "cpi|housing": 0.3, "cpi|rent": 0.5, "cpi|rate": 0.4, "housing|rent": 0.5,
                               "housing|rate": -0.2, "rent|rate": 0.1 });
+// The inflation model's shape when the CPI is not on history (its mean is the inflation field).
+const INFLATION_SHAPE = () => { const { source, mean, ...shape } = INFLATION_DEFAULTS(); return shape; };
 const SYN_DEFAULTS = () => ({ n: 1000, seed: 1, series: { ...HISTORY_ALL }, cpi_vol: 1.5, housing_vol: 6, rent_vol: 3, rate_vol: 1,
                               corr: DEFAULT_CORR() });
 export const SERIES = [
   { key: "market", label: "תשואות שוק ההון", hint: "התיק של שוק ההון בכל תרחיש, לפי טבלת הנכסים, בשקלים לפי שער הדולר של כל יום." },
-  { key: "cpi", label: "אינפלציה (מדד המחירים)", hint: "הצמדות, תקציב צמוד, מסלולים צמודים, מס ריאלי ותצוגה ריאלית לפי המדד בפועל." },
+  { key: "cpi", label: "אינפלציה (מדד המחירים)", hint: "דלוק: מדד המחירים של הלמ\"ס כמו שהוא, כולל מאות האחוזים של שנות ה-80. כבוי: מודל אינפלציה סטטיסטי שהתוחלת שלו היא 'אינפלציה שנתית', והסדרות ההיסטוריות האחרות (שוק ההון, דירות, שכר דירה, ריבית) שומרות על השינוי הריאלי שלהן ומקבלות את האינפלציה מהמודל." },
   { key: "housing", label: "מחירי דירות", hint: "שווי הדירה לפי מדד מחירי הדירות של הלמ\"ס, במקום עליית ערך קבועה." },
   { key: "rent", label: "שכר דירה", hint: "השכירות ושכר הדירה שהאדם משלם, לפי רכיב שכר הדירה במדד, במקום קצב קבוע." },
   { key: "rate", label: "ריבית בנק ישראל", hint: "הריבית ההיסטורית לכל חודש, שממנה נגזרים מסלולי הפריים והמשתנה, במקום לוח הריבית." },
@@ -68,7 +71,7 @@ export function newScenario(name = "דירה", alloc = 100) {
 const DEFAULT_COMMON = () => ({
   years: 25, equity: 800_000, budget: 8_000, index_budget: true, inflation: 2.5, housing_rent: 0,
   housing_rent_growth: 2.5, discount_rate: 4, income: 0, real: false,
-  mode: "fixed", history: { ...HISTORY_ALL }, synthetic: SYN_DEFAULTS(), leverage_cost: 0,
+  mode: "fixed", history: { ...HISTORY_ALL, cpi: false }, inflation_model: INFLATION_SHAPE(), synthetic: SYN_DEFAULTS(), leverage_cost: 0,
   rate_path: [{ year: 0, rate: 4.5 }], prime_spread: 1.5, rate_shift: 0,
 });
 
@@ -87,7 +90,8 @@ export function defaultPropertyPlan() {
 function normalize(p) {
   const d = defaultPropertyPlan();
   const ps = p.common?.synthetic || {};
-  const plan = { ...d, ...p, common: { ...d.common, ...(p.common || {}), history: { ...HISTORY_ALL, ...(p.common?.history || {}) },
+  const plan = { ...d, ...p, common: { ...d.common, ...(p.common || {}), history: { ...d.common.history, ...(p.common?.history || {}) },
+                                       inflation_model: { ...INFLATION_SHAPE(), ...(p.common?.inflation_model || {}) },
                                        synthetic: { ...SYN_DEFAULTS(), ...ps, series: { ...HISTORY_ALL, ...(ps.series || {}) },
                                                     corr: { ...DEFAULT_CORR(), ...(ps.corr || {}) } } },
                  taxes: { ...d.taxes, ...(p.taxes || {}) }, compare: { ...d.compare, ...(p.compare || {}) },

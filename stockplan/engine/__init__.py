@@ -6,6 +6,8 @@ from dataclasses import replace
 import numpy as np
 
 from ..data.base import DataError, MarketData
+from .inflation import InflationModel
+from .inflation import validate as validate_inflation
 from .market import MAX_PATHS, Market, available_range, prepare_market
 from .models import (ACCOUNTS, DEPOSIT_EVERY, MODES, REBALANCE_RULES, DepositEvent, SOLVE_AMOUNT, SOLVE_WITHDRAWAL, SOLVE_FINAL, SOLVE_MODES, SOLVE_MONTHLY, SOLVE_RATE, SOLVE_START,
                      TRINITY_SOLVE_MODES, Holding, Income, PlanRequest, SimulationResult, Stage,
@@ -121,6 +123,8 @@ def _validate_account(req) -> None:
 def _validate_mode(req) -> None:
     if req.mode not in MODES:
         raise ValueError(f"מקור תרחישים לא מוכר: {req.mode}")
+    if req.currency == "ILS":
+        validate_inflation(req.inflation)
     if req.mode != "synthetic":
         return
     if not 1 <= req.paths <= MAX_PATHS:
@@ -551,4 +555,5 @@ from .detail import benchmark_path, realization_detail  # noqa: E402  (uses run_
 
 __all__ = ["DepositEvent", "Income", "SOLVE_WITHDRAWAL", "benchmark_path", "realization_detail", "Holding", "Stage", "PlanRequest", "SimulationResult", "run_plan", "available_range",
            "SOLVE_FINAL", "SOLVE_MONTHLY", "SOLVE_START", "SOLVE_RATE", "SOLVE_AMOUNT",
-           "WithdrawStage", "WithdrawRequest", "WithdrawResult", "run_trinity", "trinity_heatmap", "solve_trace"]
+           "WithdrawStage", "WithdrawRequest", "WithdrawResult", "run_trinity", "trinity_heatmap", "solve_trace",
+           "InflationModel"]

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stockplan.engine import Holding, PlanRequest, Stage, run_plan
+from stockplan.engine import Holding, InflationModel, PlanRequest, Stage, run_plan
 from stockplan.engine.market import apply_leverage, month_grid
 from stockplan.engine.solve import irr_annual
 
@@ -152,7 +152,8 @@ def test_indexed_deposits_grow_with_cpi():
 def test_ils_conversion_uses_daily_fx():
     fx = pd.Series(np.where(DAYS >= pd.Timestamp("2000-06-01"), 4.0, 3.0), index=DAYS)
     data = FakeData({"A": step_series({})}, fx=fx)
-    res = one([Stage(months=12, holdings=[Holding("A", 100)])], data, start_amount=3000, currency="ILS")
+    res = one([Stage(months=12, holdings=[Holding("A", 100)])], data, start_amount=3000, currency="ILS",
+              inflation=InflationModel(source="history"))
     assert res.final[0] == pytest.approx(4000)
 
 
@@ -278,9 +279,13 @@ def test_nominal_shekels_start_after_stabilization_plan():
     cpi = pd.Series(100.0, index=pd.date_range(days[0], days[-1], freq="MS"))
     data = FakeData({"A": prices}, fx=pd.Series(1.0, index=days), cpi=cpi)
     stages = [Stage(months=12, holdings=[Holding("A", 100)], monthly_deposit=100)]
-    nominal = run_plan(PlanRequest(stages=stages, currency="ILS"), data)
+    cbs = InflationModel(source="history")
+    nominal = run_plan(PlanRequest(stages=stages, currency="ILS", inflation=cbs), data)
     assert nominal.start_dates[0] >= pd.Timestamp("1985-07-01")
-    real = run_plan(PlanRequest(stages=stages, currency="ILS", real=True), data)
+    # The inflation model has no hyperinflation, so nominal shekels can start at any date.
+    modelled = run_plan(PlanRequest(stages=stages, currency="ILS"), data)
+    assert modelled.start_dates[0] < pd.Timestamp("1981-01-01")
+    real = run_plan(PlanRequest(stages=stages, currency="ILS", real=True, inflation=cbs), data)
     assert real.start_dates[0] < pd.Timestamp("1981-01-01")
     usd = run_plan(PlanRequest(stages=stages, currency="USD"), data)
     assert usd.start_dates[0] < pd.Timestamp("1981-01-01")

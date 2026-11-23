@@ -36,6 +36,20 @@ the UI — it is not real market history).
 
 ## Features
 
+- **Inflation model for shekel plans (default)** – the CBS CPI of the 1980s and 1990s
+  (hundreds, then tens of percent a year) would swamp any shekel plan that runs through it.
+  Instead, every scenario keeps each asset's *real* return from history and draws its own
+  yearly inflation: `pi_y = mu + sigma * g(z_y)`, where `z` is a standard-normal AR(1)
+  process (persistence `phi`) and `g` standardizes one of four families: normal,
+  Johnson SU (skewness and excess kurtosis matched exactly), Cornish-Fisher (the same four
+  moments, approximately) and an asymmetric generalized normal with a power `K` (tails)
+  and an asymmetry. `sigma = 0` is a constant inflation. The model's price index replaces
+  the CPI everywhere (real view, indexation, tax on real gains) and nominal shekel plans
+  can start before 1985. The settings show the density; the math tab gives every formula,
+  the fitted parameters and the families side by side. The CBS history stays available,
+  and dollar plans keep the US CPI. The apartment tab's history mode uses the same model
+  when its CPI series is off (housing, rent and the market keep their real changes; the
+  Bank of Israel rate is adjusted with Fisher's equation).
 - **Multi-stage plans** – each stage has its own duration, deposits and portfolio
   (any Yahoo ticker, weights, daily-rebalanced leverage).
 - **Solve for the missing parameter** – final balance, required monthly deposit or
@@ -238,6 +252,7 @@ stockplan/
   engine/              # pure numpy simulation engine and solvers
     property/          # apartment vs. capital market model (vectorized; fixed, history or synthetic)
     property_data.py   # history paths for the apartment tab
+    inflation.py       # the yearly inflation model (families, AR(1) draws, price index)
   api.py               # FastAPI endpoints, serves the web UI
   web/                 # static UI: Preact + htm + Plotly + KaTeX (vendored, no build step)
 tests/                 # pytest: engine and API

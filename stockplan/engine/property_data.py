@@ -10,6 +10,12 @@ switched to history this module builds an ``(R, T+1)`` path on the month grid
 * housing / rent: the CBS housing price index and rent index relative to the start month;
 * rate: the Bank of Israel rate (annual percent) of each month.
 
+When the CPI is not on history, inflation comes from the model of ``engine.inflation`` (mean:
+the inflation parameter) and every historical series keeps its real change: a price or index
+is divided by the historical CPI and multiplied by the model's index, and the rate becomes
+``rate - (12-month historical inflation) + (the model's inflation that year)`` (Fisher,
+floored at 0). Money is then that of the start month (no scaling to old shekels).
+
 The start dates are those for which every chosen series covers the whole horizon.
 """
 from __future__ import annotations
@@ -20,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from ..data.base import DataError
+from .inflation import InflationModel, date_keys, index_paths, yearly_rates
 from .market import apply_leverage, month_grid
 from .property import Paths, PropertyRequest, fixed_paths, holdings_key, months_of, synthetic_paths
 
@@ -83,6 +90,13 @@ def build_paths(req: PropertyRequest, md, scenarios: Optional[List[dict]] = None
             cpi_all = md.cpi("IL").dropna()
         except DataError:
             cpi_all = None
+    # The inflation model takes the place of the CPI: the other series need the CPI history
+    # to keep only their real changes.
+    model = not flags.cpi and any(getattr(flags, k) for k in ("market", "housing", "rent", "rate"))
+    if model:
+        if cpi_all is None:
+            raise DataError("כדי להפריד בין התשואה הריאלית לאינפלציה צריך את מדד המחירים ההיסטורי, והוא לא זמין כרגע")
+        ranges["cpi"] = (cpi_all.index[0] + pd.DateOffset(months=12), cpi_all.index[-1] + pd.offsets.MonthEnd(0))
 
     raw: Dict[str, pd.Series] = {}
     fx = None
@@ -125,7 +139,28 @@ def build_paths(req: PropertyRequest, md, scenarios: Optional[List[dict]] = None
         paths.rent = v / v[:, :1]
     if "rate" in monthly:
         paths.rate = _monthly_values(monthly["rate"], grid)
-    if cpi_all is not None and cpi_all.index[0] <= starts[0]:
+    adj = None
+    if model:
+        im = c.inflation_model
+        infl = InflationModel(dist=im.dist, mean=float(c.inflation), sd=im.sd, skew=im.skew, kurt=im.kurt,
+                              power=im.power, asym=im.asym, phi=im.phi)
+        keys = date_keys(starts.values)
+        seed = int(c.synthetic.seed)
+        Cm = index_paths(infl, keys, T, seed)
+        hist = _monthly_values(cpi_all, grid)
+        adj = Cm * hist[:, :1] / hist                      # real change kept, model inflation on top
+        paths.cpi = Cm
+        if paths.home is not None:
+            paths.home = paths.home * adj
+        if paths.rent is not None:
+            paths.rent = paths.rent * adj
+        if paths.rate is not None:
+            year_ago = (grid.astype("datetime64[M]") - np.timedelta64(12, "M")).astype("datetime64[D]")
+            hist12 = (hist / _monthly_values(cpi_all, year_ago) - 1) * 100
+            pi_y = yearly_rates(infl, keys, -(-T // 12) + 1, seed) * 100
+            model12 = pi_y[:, np.minimum(np.arange(T + 1) // 12, pi_y.shape[1] - 1)]
+            paths.rate = np.maximum(paths.rate - np.nan_to_num(hist12) + model12, 0.0)
+    elif cpi_all is not None and cpi_all.index[0] <= starts[0]:
         at_start = _monthly_values(cpi_all, grid[:, :1])[:, 0]
         paths.scale = at_start / float(cpi_all.iloc[-1])
 
@@ -149,6 +184,8 @@ def build_paths(req: PropertyRequest, md, scenarios: Optional[List[dict]] = None
                     cache[k] = np.nan_to_num(ratio, nan=1.0, posinf=1.0)
                 g += h["weight"] / total * cache[k]
             g[:, 0] = 1.0
+            if adj is not None:
+                g[:, 1:] *= adj[:, 1:] / adj[:, :-1]
             paths.growth[key] = g
 
     paths.info = {
@@ -156,6 +193,7 @@ def build_paths(req: PropertyRequest, md, scenarios: Optional[List[dict]] = None
         "ranges": {SERIES_LABELS.get(k, k): [a.strftime("%Y-%m-%d"), b.strftime("%Y-%m-%d")] for k, (a, b) in ranges.items()},
         "series": [k for k in ("market", "cpi", "housing", "rent", "rate") if getattr(flags, k)],
         "nominal_scaled": paths.scale is not None,
+        "inflation_model": bool(model),
     }
     return paths
 

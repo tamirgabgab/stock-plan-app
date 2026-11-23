@@ -198,3 +198,22 @@ def test_preview_and_plan_api():
     plan["inflation"] = {"dist": "johnson", "sd": 1, "skew": 1, "kurt": 0}
     r = client.post("/api/simulate", json=plan)
     assert r.status_code == 400 and "ג'ונסון" in r.json()["detail"]
+
+
+def test_constant_inflation_ignores_the_hidden_shape_and_the_floor_is_reported():
+    bad_shape = InflationModel(dist="cornish", skew=3.0, kurt=0.0, sd=0.0)
+    inf.validate(bad_shape)                                       # the shape is unused at sd = 0
+    assert inf.describe(bad_shape)["pdf"] is None
+    wide = inf.describe(InflationModel(mean=2.5, sd=30.0))
+    assert wide["floor_share"] == pytest.approx(0.5 * math.erfc(52.5 / 30 / math.sqrt(2)), rel=1e-3)
+    assert inf.describe(InflationModel(sd=1.0))["floor_share"] == 0.0
+
+
+def test_detail_keeps_the_daily_basket_and_the_real_exchange_rate():
+    md = Hyper()
+    req = _plan(inflation=InflationModel(sd=1.0))
+    res = run_plan(req, md)
+    d = realization_detail(req, md, res.start_dates[0].date())
+    assert len(d["basket"]["dates"]) > 1000                        # daily, not monthly
+    assert all(t["fx"] == pytest.approx(1.0) for t in d["trades"])  # the historical rate
+    assert d["summary"]["final"] == pytest.approx(res.final[0])

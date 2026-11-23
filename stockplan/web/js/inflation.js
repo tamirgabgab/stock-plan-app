@@ -40,7 +40,7 @@ const fmt = (v, d = 2) => (Number.isFinite(v) ? Number(v).toFixed(d) : "?");
 
 // The model's fields. ``mean``/``onMean`` let the apartment tab keep its own inflation field.
 export function InflationFields({ value, onChange, showMean = true, seed, setSeed }) {
-  const v = { ...INFLATION_DEFAULTS(), ...value };
+  const v = value;
   const set = (k) => (x) => onChange({ [k]: x });
   const { data, error } = useInflationPreview(v, seed ?? 1);
   const random = Number(v.sd) > 0;
@@ -77,15 +77,16 @@ export function InflationFields({ value, onChange, showMean = true, seed, setSee
     ${random && data?.pdf && !error ? html`
       <${Plot} build=${() => inflationFigure({ pdf: data.pdf, quantiles: data.quantiles, compact: true })} deps=${[data]} cls="plot plot-mini" />
       <p class="muted small">ב-90% מהשנים האינפלציה בין <b>${fmt(data.quantiles.p5, 1)}%</b> ל-<b>${fmt(data.quantiles.p95, 1)}%</b>, והחציון ${fmt(data.quantiles.p50, 1)}%.
-        צידוד בפועל ${fmt(data.moments.skew)}, גבנוניות עודפת ${fmt(data.moments.kurt)}. הנוסחאות בלשונית "הסבר מתמטי".</p>` : null}
+        צידוד בפועל ${fmt(data.moments.skew)}, גבנוניות עודפת ${fmt(data.moments.kurt)}. הנוסחאות בלשונית "הסבר מתמטי".</p>
+      ${data.floor_share > 0.001 ? html`<p class="callout warn">ב-${fmt(data.floor_share * 100, 1)}% מהשנים ההגרלה יוצאת נמוכה מ-‎-50% ונחתכת שם (אחרת המדד היה מתאפס), ולכן התוחלת בפועל מעט גבוהה מזו שהוזנה.</p>` : null}` : null}
   </div>`;
 }
 
 // The accumulation and Trinity panels: the model or the CPI history, for shekel plans.
 export function InflationSection({ plan, setPlan }) {
   if (plan.currency !== "ILS") return null;
-  const infl = { ...INFLATION_DEFAULTS(), ...(plan.inflation || {}) };
-  const patch = (x) => setPlan((p) => ({ ...p, inflation: { ...INFLATION_DEFAULTS(), ...(p.inflation || {}), ...x } }));
+  const infl = plan.inflation;
+  const patch = (x) => setPlan((p) => ({ ...p, inflation: { ...p.inflation, ...x } }));
   const synthetic = plan.mode === "synthetic";
   return html`<details open class="section">
     <summary>אינפלציה</summary>

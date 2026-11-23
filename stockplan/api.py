@@ -372,7 +372,7 @@ def inflation_preview(body: InflationPreviewIn):
     """The yearly inflation's density, moments and fitted parameters for the chosen family,
     the same mean and spread in the other families (the math tab's comparison) and a few
     sample paths that show the persistence."""
-    m = inflation_model.from_dict(body.model_dump(exclude={"seed"}))
+    m = inflation_model.InflationModel(**body.model_dump(exclude={"seed"}))
     try:
         inflation_model.validate(m)
         out = inflation_model.describe(m)

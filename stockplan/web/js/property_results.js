@@ -289,7 +289,9 @@ const SOLVE_STATS = [{ value: "median", label: "חציון" }, { value: "mean", 
 function SolvePanel({ plan, setPlan, A, B, def, themeKey, hist, over }) {
   const sv = plan.solve;
   const c = plan.common;
-  const H = (k) => c.mode === "history" && c.history[k];
+  // In history mode the CPI path is built once, from the history or from the inflation model
+  // (whose mean is the inflation parameter), so the inflation is never a usable unknown there.
+  const H = (k) => c.mode === "history" && (k === "cpi" || c.history[k]);
   const scA = plan.scenarios.find((s) => s.id === A.id), scB = plan.scenarios.find((s) => s.id === B.id);
   const groups = [
     { scope: "common", title: "משותף", params: [...usedParams(COMMON_PARAMS, H), ...SYN_PARAMS.filter((p) => synOn(plan, p.series))] },

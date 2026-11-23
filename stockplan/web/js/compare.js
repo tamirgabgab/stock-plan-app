@@ -49,6 +49,12 @@ function pairs(a, b, rangeA, rangeB) {
     const n = Math.min(a.n, b.n);
     return { list: Array.from({ length: n }, (_, i) => [i, i]) };
   }
+  // A shekel plan on the inflation model draws each start date's inflation from its seed:
+  // with different seeds the same date is not the same scenario.
+  const modelInfl = (p) => p.currency === "ILS" && (p.inflation?.source ?? "model") === "model";
+  if (modelInfl(a.plan) && modelInfl(b.plan) && (a.plan.seed ?? 1) !== (b.plan.seed ?? 1)) {
+    return { list: null, why: "לשתי התוכניות זרע אקראי שונה למודל האינפלציה, ולכן באותו תאריך התחלה הן מקבלות אינפלציה שונה ואין תרחישים משותפים." };
+  }
   const idx = new Map(b.raw.start_dates.map((d, i) => [d, i]));
   const list = [];
   a.raw.start_dates.forEach((d, i) => { if (idx.has(d)) list.push([i, idx.get(d)]); });

@@ -49,7 +49,7 @@ export function PropertyInputs({ plan, setPlan, res, errors = {} }) {
         <p class="muted small">סדרה כבויה נשארת על הפרמטר הקבוע. טווח התאריכים הוא החיתוך של הסדרות הדלוקות, ולכן כיבוי של סדרה קצרה (דירות, ריבית) מאריך אותו.</p>
         ${!c.history.cpi ? html`<div class="subsection"><h3>מודל האינפלציה</h3>
           <p class="muted small">המדד כבוי, ולכן כל שנה מוגרלת אינפלציה: התוחלת היא "אינפלציה שנתית" בחלק של האדם, והשאר כאן. הסדרות ההיסטוריות שומרות על השינוי הריאלי שלהן.</p>
-          <${InflationFields} value=${c.inflation_model} showMean=${false} onChange=${(x) => setPlan((p) => ({ ...p, common: { ...p.common, inflation_model: { ...p.common.inflation_model, ...x } } }))}
+          <${InflationFields} value=${{ ...c.inflation_model, mean: c.inflation }} showMean=${false} onChange=${(x) => setPlan((p) => ({ ...p, common: { ...p.common, inflation_model: { ...p.common.inflation_model, ...x } } }))}
             seed=${c.synthetic.seed} setSeed=${(s) => setPlan((p) => ({ ...p, common: { ...p.common, synthetic: { ...p.common.synthetic, seed: s } } }))} />
           </div>` : null}
         ${info ? html`<p class="callout">תאריכי התחלה: <b>${dateHe(info.min_start)}</b> עד <b>${dateHe(info.max_start)}</b> (${info.n} ריאליזציות)

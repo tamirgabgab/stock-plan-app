@@ -13,8 +13,8 @@ switched to history this module builds an ``(R, T+1)`` path on the month grid
 When the CPI is not on history, inflation comes from the model of ``engine.inflation`` (mean:
 the inflation parameter) and every historical series keeps its real change: a price or index
 is divided by the historical CPI and multiplied by the model's index, and the rate becomes
-``rate - (12-month historical inflation) + (the model's inflation that year)`` (Fisher,
-floored at 0). Money is then that of the start month (no scaling to old shekels).
+``rate - (12-month historical inflation) + (the model's 12-month inflation)`` (Fisher,
+floored at 0; in the first year the model's is that year's rate). Money is then that of the start month (no scaling to old shekels).
 
 The start dates are those for which every chosen series covers the whole horizon.
 """
@@ -157,8 +157,10 @@ def build_paths(req: PropertyRequest, md, scenarios: Optional[List[dict]] = None
         if paths.rate is not None:
             year_ago = (grid.astype("datetime64[M]") - np.timedelta64(12, "M")).astype("datetime64[D]")
             hist12 = (hist / _monthly_values(cpi_all, year_ago) - 1) * 100
-            pi_y = yearly_rates(infl, keys, -(-T // 12) + 1, seed) * 100
-            model12 = pi_y[:, np.minimum(np.arange(T + 1) // 12, pi_y.shape[1] - 1)]
+            # Both trailing 12 months; before the start the model has only its first year.
+            model12 = np.empty_like(Cm)
+            model12[:, 12:] = (Cm[:, 12:] / Cm[:, :-12] - 1) * 100
+            model12[:, :12] = yearly_rates(infl, keys, 1, seed) * 100
             paths.rate = np.maximum(paths.rate - np.nan_to_num(hist12) + model12, 0.0)
     elif cpi_all is not None and cpi_all.index[0] <= starts[0]:
         at_start = _monthly_values(cpi_all, grid[:, :1])[:, 0]

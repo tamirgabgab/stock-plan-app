@@ -99,8 +99,7 @@ def load_series(req: PlanRequest, md: MarketData):
 
 def model_inflation(req):
     """The inflation model when a shekel plan uses it instead of the CPI history, else None."""
-    m = getattr(req, "inflation", None)
-    return m if (req.currency == "ILS" and m is not None and m.is_model) else None
+    return req.inflation if (req.currency == "ILS" and req.inflation.is_model) else None
 
 
 def available_range(req: PlanRequest, md: MarketData) -> dict:
